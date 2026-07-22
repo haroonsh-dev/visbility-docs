@@ -497,6 +497,13 @@ export const getDocumentProcessing = async (req: Request, res: Response, next: N
             }
         }
 
+        const cvScore =
+            doc.metadata?.cvScore != null
+                ? Number(doc.metadata.cvScore)
+                : aiDocument?.cv_score != null
+                  ? Number(aiDocument.cv_score)
+                  : null;
+
         res.json({
             success: true,
             data: {
@@ -505,6 +512,9 @@ export const getDocumentProcessing = async (req: Request, res: Response, next: N
                 status: doc.status,
                 aiProcessingStatus: doc.aiProcessingStatus,
                 aiErrorMessage: doc.aiErrorMessage,
+                cvScore,
+                classification: doc.classification || null,
+                metadata: doc.metadata || null,
                 job: aiJob,
                 aiDocument,
             },
@@ -722,9 +732,28 @@ export const getDocumentSimilar = async (req: Request, res: Response, next: Next
         const limit = Math.min(20, Math.max(1, parseInt((req.query.limit as string) || '5', 10)));
         const results = await getSimilarDocuments(doc.pythonDocumentId, orgId, limit);
 
+        const pythonIds = [...new Set(results.map((r) => r.document_id).filter(Boolean))];
+        const nodeDocs = pythonIds.length
+            ? await Document.find(
+                  await buildDocumentFilter(req.user, { pythonDocumentId: { $in: pythonIds } })
+              ).lean()
+            : [];
+        const pythonToNode = new Map(
+            nodeDocs.filter((d) => d.pythonDocumentId).map((d) => [d.pythonDocumentId as string, d])
+        );
+
+        const enriched = results.map((hit) => {
+            const nodeDoc = pythonToNode.get(hit.document_id);
+            return {
+                ...hit,
+                nodeDocumentId: nodeDoc?.documentId || null,
+                previewDocumentId: nodeDoc?.documentId || hit.document_id,
+            };
+        });
+
         res.json({
             success: true,
-            data: { results, total: results.length },
+            data: { results: enriched, total: enriched.length },
         });
     } catch (error) {
         next(error);

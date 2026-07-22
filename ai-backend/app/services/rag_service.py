@@ -21,6 +21,16 @@ def _get_patterns():
 
 # Field-label detection: lines like "Suggestive Language:", "Required Language:",
 # "Example:", "Note:", "Background:" etc. that act as sub-headings inside a section.
+_PAGE_MARKER_RE = re.compile(r'<!--\s*Page\s+(\d+)\s*-->')
+
+def _extract_page_from_content(text: str, default: int = None) -> int | None:
+    """Extract the page number from a chunk's content by scanning for ``<!-- Page N -->`` markers."""
+    matches = _PAGE_MARKER_RE.findall(text or "")
+    if matches:
+        return int(matches[0])
+    return default
+
+
 _LABEL_COLON_RE = None
 _TITLECASE_RE = None
 
@@ -1101,9 +1111,10 @@ class RAGService:
                 m = _re.match(r'^(\d+(?:\.\d+)*)', heading.strip())
                 if m:
                     sec_num = m.group(1)
+            chunk_page = _extract_page_from_content(c["content"], page_number)
             chunk_metadata.append({
                 "heading": heading,
-                "page_number": page_number,
+                "page_number": chunk_page,
                 "document_type": document_type,
                 "section": c.get("chunk_type", ""),
                 "section_number": sec_num,
@@ -1133,7 +1144,7 @@ class RAGService:
                 chunk_records.append({
                     "organization_id": organization_id,
                     "document_id": document_id,
-                    "page_id": page_number,
+                    "page_id": cm.get("page_number"),
                     "chunk_index": chunk.get("chunk_index", 0),
                     "chunk_type": ctype,
                     "heading": heading,
@@ -1634,6 +1645,13 @@ class RAGService:
                 capped.append(r)
             results = capped
 
+        # ── Enrich missing page numbers from chunk content ──
+        for r in results:
+            if r.get("page_number") is None:
+                pn = _extract_page_from_content(r.get("chunk_text", ""))
+                if pn:
+                    r["page_number"] = pn
+
         final = results[offset:offset + limit]
         chat_log.info(f"Total after RRF+filter: {len(final)} chunks (from {len(results)} unique)")
         top_scores = [f"{r['document_title'][:30]}: {r['score']:.3f}" for r in final[:3]]
@@ -1738,6 +1756,112 @@ class RAGService:
             import logging
             logging.getLogger("visibility-docs").error(f"find_similar error: {e}")
             return []
+
+    def _list_org_document_ids(self, organization_id: str, limit: int = 150,
+                                document_type: str = None,
+                                phase3_agent: str = None) -> list[str]:
+        """List document IDs for an organization, up to ``limit``."""
+        try:
+            filters = {"organization_id": organization_id}
+            if document_type:
+                filters["document_type"] = document_type
+            if phase3_agent:
+                filters["phase3_agent"] = phase3_agent
+            result = SupabaseDB.select("documents",
+                columns="id",
+                filters=filters,
+            )
+            data = getattr(result, "data", result if isinstance(result, list) else [])
+            if isinstance(data, list):
+                return [row["id"] for row in data[:limit] if isinstance(row, dict) and row.get("id")]
+            return []
+        except Exception:
+            return []
+
+    def _fetch_any_chunks(self, document_ids: list[str], org_id: str, limit_per_doc: int = 1) -> list[dict]:
+        """Fast fallback: grab the first chunk(s) from each doc via direct DB query,
+        with proper document titles."""
+        if not document_ids:
+            return []
+        # Batch-fetch document titles
+        title_map = self._fetch_doc_titles(document_ids, org_id)
+        results = []
+        try:
+            for did in document_ids:
+                rows = SupabaseDB.select("document_chunks",
+                    columns="id, document_id, content, chunk_index, page_id",
+                    filters={"document_id": did, "organization_id": org_id},
+                    limit=limit_per_doc,
+                )
+                data = getattr(rows, "data", rows if isinstance(rows, list) else [])
+                if isinstance(data, list):
+                    for row in data[:limit_per_doc]:
+                        if isinstance(row, dict):
+                            raw_title, dtype, _ = title_map.get(did, ("", "", ""))
+                            title = raw_title or did  # fallback to ID only if title is truly empty
+                            results.append({
+                                "document_id": row.get("document_id", did),
+                                "document_title": title,
+                                "document_type": dtype,
+                                "chunk_text": row.get("content", ""),
+                                "page_number": row.get("page_id", ""),
+                                "score": 0.0,
+                            })
+        except Exception:
+            pass
+        return results
+
+    def aggregate_search(self, query: str, organization_id: str,
+                         document_ids: list = None,
+                         max_docs: int = 150) -> list[dict]:
+        """
+        Fast cross-document search that guarantees every document contributes
+        at least 1 chunk.  Uses a single broad search + lazy fallback (no
+        per-doc loops), so it's fast even for 100+ documents.
+        """
+        from .orchestration_logger import get_chat_logger
+        chat_log = get_chat_logger()
+
+        target_ids = document_ids or self._list_org_document_ids(organization_id, limit=max_docs)
+        if not target_ids:
+            return []
+        chat_log.info(f"Aggregate search targeting {len(target_ids)} docs")
+
+        # Phase 1 – single broad search
+        broad_limit = min(len(target_ids) * 2, 200)  # cap at 200 for speed
+        broad_results = self.hybrid_search(
+            query=query,
+            organization_id=organization_id,
+            document_ids=target_ids,
+            limit=broad_limit,
+            aggregate=True,
+        )
+
+        # Phase 2 – per-doc guarantee: keep best chunk per doc
+        best_per_doc = {}
+        for r in broad_results:
+            did = r["document_id"]
+            score = r.get("score", 0)
+            if did not in best_per_doc or score > best_per_doc[did].get("score", 0):
+                best_per_doc[did] = r
+
+        # Phase 3 – lazy fallback for any uncovered doc
+        uncovered = [did for did in target_ids if did not in best_per_doc]
+        if uncovered:
+            fallback = self._fetch_any_chunks(uncovered, organization_id)
+            for fb in fallback:
+                did = fb["document_id"]
+                if did not in best_per_doc:
+                    best_per_doc[did] = fb
+            chat_log.info(f"Fallback covered {len(fallback)}/{len(uncovered)} uncovered docs")
+
+        # Phase 4 – rerank
+        merged = list(best_per_doc.values())
+        if merged:
+            merged = self._rerank(merged, query, len(merged))
+        merged = self._fetch_neighbor_chunks(merged, organization_id)
+        chat_log.info(f"Aggregate final: {len(merged)} chunks across {len(set(r['document_id'] for r in merged))} docs")
+        return merged
 
 
 rag_service = RAGService()

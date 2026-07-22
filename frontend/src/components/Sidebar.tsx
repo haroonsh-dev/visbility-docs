@@ -6,7 +6,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
     FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
-    X, Building2, ChevronDown, Settings, LayoutDashboard, User,
+    X, Building2, ChevronDown, Settings, LayoutDashboard, User, Search,
 } from "lucide-react";
 import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
@@ -47,6 +47,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     const nav: { href: string; label: string; icon: React.ElementType; roles: string[]; allow?: () => boolean }[] = [
         { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["superAdmin", "admin", "team", "service_account"] },
         { href: "/documents", label: "Documents", icon: FileText, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canViewDocs() || canUpload() || role === "admin" || role === "superAdmin" },
+        // { href: "/search", label: "Search", icon: Search, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canViewDocs() || role === "admin" || role === "superAdmin" },
         { href: "/admin/documents", label: "All Documents", icon: FolderOpen, roles: ["superAdmin"] },
         { href: "/activity", label: "Activity", icon: Activity, roles: ["superAdmin", "admin", "team"] },
         { href: "/admin/admins", label: "Admins", icon: Shield, roles: ["superAdmin"] },
@@ -57,7 +58,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
     const visibleNav = nav
         .filter((n) => n.roles.includes(role) && (n.allow ? n.allow() : true))
-        .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/chat", "/activity", "/admin/admins", "/admin/settings"].includes(n.href));
+        .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/settings"].includes(n.href));
 
     const logout = () => { clearAuthState(); router.replace("/login"); };
 
@@ -76,18 +77,16 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             />
 
             <aside className={cn(
-                "w-[260px] h-full app-sidebar flex flex-col overflow-hidden",
-                "shadow-[4px_0_24px_rgba(0,0,0,0.35)] relative",
+                "w-[220px] h-full app-sidebar flex flex-col overflow-hidden",
+                "shadow-[8px_0_32px_rgba(8,20,30,0.45)] relative",
                 "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out",
                 "lg:static lg:z-10 lg:translate-x-0 lg:shrink-0",
                 open ? "translate-x-0" : "-translate-x-full"
             )}>
-                <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-teal-500/[0.04] via-transparent to-cyan-500/[0.02]" />
-
                 {/* Logo */}
-                <div className="px-4 py-4 border-b border-white/[0.06] relative z-[1] flex items-center justify-between">
+                <div className="px-3 py-3 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
                     <Link href="/dashboard" className="flex-1 flex items-center justify-center">
-                        <Image src={SiteLogo} alt="Visibility Bots" className="h-20 w-auto" priority />
+                        <Image src={SiteLogo} alt="Visibility Bots" className="h-14 w-auto" priority />
                     </Link>
                     <button type="button" onClick={onClose}
                         className="lg:hidden rounded-lg p-2 min-h-9 min-w-9 flex items-center justify-center shrink-0 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"

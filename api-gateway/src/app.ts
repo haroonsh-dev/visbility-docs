@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import authRoutes from './routes/auth';
 import documentsRoutes from './routes/documents';
 import chatRoutes from './routes/chat';
+import searchRoutes from './routes/search';
 import healthRoutes from './routes/health';
 import teamRoutes from './routes/team';
 import superAdminRoutes from './routes/superAdmin';
@@ -56,6 +57,7 @@ app.post('/api/docs/documents/:id/process', authenticate, reprocessDocument);
 // Namespaced for easy merge into Visibility Live app.ts as one mount
 app.use('/api/docs/documents', documentsRoutes);
 app.use('/api/docs/chat', chatRoutes);
+app.use('/api/docs/search', searchRoutes);
 app.use('/api/docs/team', teamRoutes);
 app.use('/api/docs/activity', activityRoutes);
 app.use('/api/docs/groq', groqRoutes);

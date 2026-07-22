@@ -141,6 +141,31 @@ class ConversationService:
         if context:
             self.set_last_context(session_id, context)
 
+        # Inject last assistant response for conversational continuity
+        if context:
+            try:
+                h = get_session_history(session_id or "default")
+                for m in reversed(h.messages):
+                    if isinstance(m, AIMessage):
+                        txt = m.content.strip()
+                        if txt and txt not in context:
+                            context += f"\n--\n[Previous Response]\n{txt}\n[/Previous Response]"
+                            chain_inputs["context"] = context
+                        break
+            except Exception:
+                pass
+
+        # Trim history to stay within Groq free-tier TPM limits
+        try:
+            hist = get_session_history(session_id or "default")
+            if hist is not None and len(hist.messages) > 16:
+                kept = hist.messages[-16:]
+                hist.clear()
+                for m in kept:
+                    hist.add_message(m)
+        except Exception:
+            pass
+
         chat_log.info(f"Invoking LangChain chain: model=llama-3.3-70b-versatile, followup={is_followup}")
         _logger.info(f"[CHAT] session={session_id}, context_len={len(context)}, is_followup={is_followup}")
         t0 = time.time()

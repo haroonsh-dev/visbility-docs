@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Download, Loader2, Star, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Download, Loader2, RefreshCw, Star, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/apiClient";
 import { inferDocTypeFromFilename } from "@/lib/documentAgents";
-import { appendAuthToken } from "@/lib/documents";
+import { appendAuthToken, getDocumentAiImageUrl } from "@/lib/documents";
 
 type DocRecord = {
     documentId: string;
@@ -18,6 +19,20 @@ type DocRecord = {
     pageCount?: number;
     createdAt: string;
     metadata?: { cvScore?: number; phase3Agent?: string } | null;
+};
+
+type SimilarHit = {
+    document_id?: string;
+    document_title?: string;
+    score?: number;
+    nodeDocumentId?: string | null;
+    previewDocumentId?: string | null;
+};
+
+type ImageItem = {
+    page?: number;
+    image_path?: string;
+    description?: string;
 };
 
 function scoreColor(score: number) {
@@ -52,6 +67,13 @@ function statusLabel(status: string) {
     if (status === "ready") return "processed";
     if (status === "uploaded") return "processing";
     return status;
+}
+
+function formatBytes(n: number) {
+    if (!n) return "—";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function hasModelData(ai?: Record<string, unknown> | null) {
@@ -135,6 +157,8 @@ export default function DocumentDetailPanel({
     onDelete,
     showDelete = false,
     analyzing = false,
+    allowReprocess,
+    onReprocessDone,
 }: {
     doc: DocRecord;
     ai?: Record<string, unknown> | null;
@@ -143,8 +167,14 @@ export default function DocumentDetailPanel({
     onDelete?: () => void;
     showDelete?: boolean;
     analyzing?: boolean;
+    allowReprocess?: boolean;
+    onReprocessDone?: () => void;
 }) {
     const [descFileUrl, setDescFileUrl] = useState("");
+    const [images, setImages] = useState<ImageItem[]>([]);
+    const [similar, setSimilar] = useState<SimilarHit[]>([]);
+    const [reclassifying, setReclassifying] = useState(false);
+    const [reprocessMsg, setReprocessMsg] = useState<string | null>(null);
 
     const inferredType = inferDocTypeFromFilename(doc.originalFilename);
     const docType = String(ai?.document_type || doc.classification || inferredType || "unknown");
@@ -156,6 +186,10 @@ export default function DocumentDetailPanel({
     const tableExtractions = extractions.filter((ext) => String(ext?.extraction_type || "") === "table_extraction");
     const displayStatus = statusLabel(String(ai?.status || doc.status));
     const finished = isAnalysisFinished(ai, undefined, doc.status);
+    const canReprocess =
+        allowReprocess !== undefined
+            ? allowReprocess
+            : finished && (doc.status === "ready" || doc.status === "failed" || !!doc.pythonDocumentId);
 
     const downloadTablesMarkdown = () => {
         const parts = tableExtractions.map((table, index) => {
@@ -178,20 +212,60 @@ export default function DocumentDetailPanel({
     const showSkeleton = isProcessing || (analyzing && !hasModelData(ai));
 
     useEffect(() => {
-        if (!doc.documentId || !hasModelData(ai)) {
+        if (!doc.documentId) {
             setDescFileUrl("");
+            setImages([]);
+            setSimilar([]);
             return;
         }
+        let cancelled = false;
         apiRequest(`/docs/documents/${doc.documentId}/images`)
-            .then((d) => setDescFileUrl(d?.data?.descriptions_file || ""))
-            .catch(() => setDescFileUrl(""));
-    }, [doc.documentId, ai]);
+            .then((d) => {
+                if (cancelled) return;
+                setDescFileUrl(d?.data?.descriptions_file || "");
+                setImages(Array.isArray(d?.data?.images) ? d.data.images : []);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setDescFileUrl("");
+                    setImages([]);
+                }
+            });
+        apiRequest(`/docs/documents/${doc.documentId}/similar?limit=5`)
+            .then((d) => {
+                if (cancelled) return;
+                const results = Array.isArray(d?.data?.results) ? d.data.results : [];
+                setSimilar(results.slice(0, 5));
+            })
+            .catch(() => {
+                if (!cancelled) setSimilar([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [doc.documentId]);
+
+    const reclassify = async () => {
+        setReclassifying(true);
+        setReprocessMsg(null);
+        try {
+            await apiRequest(`/docs/documents/${doc.documentId}/reprocess`, { method: "POST" });
+            setReprocessMsg("Reclassification started — refresh in a few seconds");
+            onReprocessDone?.();
+        } catch (e: any) {
+            setReprocessMsg(e?.message || "Reclassification failed");
+        } finally {
+            setReclassifying(false);
+        }
+    };
 
     const cardClass = "surface-card !rounded-xl";
 
     if (showSkeleton) {
         return <DetailSkeleton />;
     }
+
+    const pageCount = doc.pageCount ?? (typeof ai?.page_count === "number" ? Number(ai.page_count) : undefined);
 
     return (
         <div className="space-y-5 w-full max-w-4xl animate-fade-in-up">
@@ -207,7 +281,7 @@ export default function DocumentDetailPanel({
                         </span>
                         {showCv && !Number.isNaN(cvScore) && (
                             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold border ${scoreColor(cvScore)}`}>
-                                Score: {cvScore}
+                                Score: {cvScore}/100
                             </span>
                         )}
                     </div>
@@ -218,6 +292,38 @@ export default function DocumentDetailPanel({
                     </button>
                 )}
             </div>
+
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                {[
+                    ["Pages", pageCount != null ? String(pageCount) : "—"],
+                    ["Size", formatBytes(doc.sizeBytes)],
+                    ["Created", doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : "—"],
+                ].map(([label, value]) => (
+                    <div key={label} className={`${cardClass} !rounded-xl px-3 py-2.5 sm:px-4 sm:py-3`}>
+                        <p className={`text-[10px] font-semibold uppercase tracking-wider ${colors.textMuted}`}>{label}</p>
+                        <p className={`text-sm font-semibold mt-0.5 truncate ${colors.textPrimary}`}>{value}</p>
+                    </div>
+                ))}
+            </div>
+
+            {canReprocess && (
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={reclassify}
+                        disabled={reclassifying}
+                        className="btn-secondary rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2 disabled:opacity-50"
+                    >
+                        {reclassifying ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                        {reclassifying ? "Reclassifying…" : "Reclassify with AI"}
+                    </button>
+                    {reprocessMsg && (
+                        <span className={`text-xs ${reprocessMsg.includes("fail") ? "text-rose-400" : "text-teal-400"}`}>
+                            {reprocessMsg}
+                        </span>
+                    )}
+                </div>
+            )}
 
             {finished && !hasModelData(ai) && (
                 <div className="surface-card px-4 py-3 text-sm text-[var(--foreground-secondary)] border border-[var(--border)]">
@@ -232,7 +338,11 @@ export default function DocumentDetailPanel({
                         <span className="flex items-center gap-3 shrink-0">
                             {descFileUrl && (
                                 <a
-                                    href={appendAuthToken(descFileUrl)}
+                                    href={appendAuthToken(
+                                        descFileUrl.startsWith("http")
+                                            ? descFileUrl
+                                            : `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5100/api"}${descFileUrl.replace(/^\/api/, "")}`
+                                    )}
                                     target="_blank"
                                     rel="noreferrer"
                                     onClick={(e) => e.stopPropagation()}
@@ -247,6 +357,40 @@ export default function DocumentDetailPanel({
                     <div className={`max-h-96 overflow-y-auto px-5 pb-5 text-xs font-mono leading-relaxed whitespace-pre-wrap border-t border-[var(--border)] pt-4 ${colors.textMuted}`}>
                         {rawText.slice(0, 10000)}
                         {rawText.length > 10000 && "…"}
+                    </div>
+                </details>
+            )}
+
+            {images.length > 0 && (
+                <details className={`${cardClass} overflow-hidden group`}>
+                    <summary className={`px-5 py-4 text-sm font-semibold cursor-pointer list-none flex items-center justify-between gap-3 ${colors.textPrimary}`}>
+                        <span>Image Previews ({images.length})</span>
+                        <span className="text-[var(--foreground-muted)] text-xs group-open:rotate-180 transition-transform">▼</span>
+                    </summary>
+                    <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
+                        {images.map((img, i) => {
+                            const src = img.image_path
+                                ? getDocumentAiImageUrl(doc.documentId, img.image_path)
+                                : "";
+                            return (
+                                <div key={i} className="p-4 sm:p-5">
+                                    <p className={`text-xs font-medium mb-2 ${colors.textMuted}`}>
+                                        Page {img.page ?? i + 1}
+                                    </p>
+                                    {src && (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={src}
+                                            alt={`Page ${img.page ?? i + 1}`}
+                                            className="max-h-48 rounded-lg border border-[var(--border)] mb-2 object-contain bg-white/5"
+                                        />
+                                    )}
+                                    {img.description && (
+                                        <p className={`text-xs leading-relaxed ${colors.textMuted}`}>{img.description}</p>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                 </details>
             )}
@@ -383,6 +527,34 @@ export default function DocumentDetailPanel({
             {showCv && !cvData && finished && (
                 <div className="surface-card px-5 py-8 text-center text-sm text-[var(--foreground-muted)]">
                     No CV evaluation data available for this document.
+                </div>
+            )}
+
+            {similar.length > 0 && (
+                <div>
+                    <h3 className={`text-sm font-semibold mb-3 ${colors.textPrimary}`}>Similar Documents</h3>
+                    <div className="space-y-2">
+                        {similar.map((s, i) => {
+                            const targetId = s.nodeDocumentId || s.previewDocumentId || "";
+                            const title = s.document_title || s.document_id?.slice(0, 12) || "Document";
+                            const pct = s.score != null ? `${Math.round(Number(s.score) * 100)}% match` : "";
+                            const rowClass = `${cardClass} !rounded-xl px-4 py-3 flex items-center justify-between gap-3 transition-colors hover:border-[rgba(45,212,191,0.35)]`;
+                            if (targetId) {
+                                return (
+                                    <Link key={i} href={`/documents/details?doc=${targetId}`} className={rowClass}>
+                                        <span className={`text-sm truncate ${colors.textPrimary}`}>{title}</span>
+                                        {pct && <span className={`text-xs shrink-0 text-teal-400`}>{pct}</span>}
+                                    </Link>
+                                );
+                            }
+                            return (
+                                <div key={i} className={rowClass}>
+                                    <span className={`text-sm truncate ${colors.textPrimary}`}>{title}</span>
+                                    {pct && <span className={`text-xs shrink-0 ${colors.textMuted}`}>{pct}</span>}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             )}
         </div>

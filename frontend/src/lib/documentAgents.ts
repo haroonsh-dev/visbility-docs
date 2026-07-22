@@ -30,6 +30,29 @@ export const AGENT_FILTER_OPTIONS = [
     ...AGENT_OPTIONS.filter((o) => o.value),
 ];
 
+export const DOC_TYPE_LABELS: Record<string, string> = {
+    resume: "Resume / CV",
+    hr_document: "HR document",
+    invoice: "Invoice",
+    purchase_order: "Purchase order",
+    quotation: "Quotation",
+    financial_statement: "Financial statement",
+    contract: "Contract",
+    transcript: "Transcript",
+    audit_report: "Audit report",
+    quality_report: "Quality report",
+    certificate: "Certificate",
+    sop: "SOP",
+    maintenance_report: "Maintenance report",
+    engineering_drawing: "Engineering drawing",
+    unclassified: "Unclassified",
+    other: "Other",
+};
+
+export function docTypeLabel(type: string): string {
+    return DOC_TYPE_LABELS[type] || type.replace(/_/g, " ");
+}
+
 export function agentLabel(agent: string): string {
     const found = AGENT_OPTIONS.find((o) => o.value === agent);
     return found?.label || agent.replace(/_/g, " ");

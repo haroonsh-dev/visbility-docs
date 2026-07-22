@@ -150,6 +150,7 @@ class ChatRequest(BaseModel):
     date_to: Optional[str] = None
     chat_history: Optional[list[dict]] = None
     session_id: Optional[str] = None
+    selected_text: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

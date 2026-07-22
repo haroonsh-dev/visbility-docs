@@ -29,7 +29,9 @@ const PermissionsContext = createContext<PermissionsContextValue | null>(null);
 export function PermissionsProvider({ children }: { children: React.ReactNode }) {
     const [permissions, setPermissions] = useState<Record<string, boolean>>(() => getUserPermissions());
     const [role, setRole] = useState(() => getUserRole());
-    const [ready, setReady] = useState(false);
+    // Start ready when we already have a cached session so the shell/sidebar
+    // never flash-hides while /auth/me refreshes in the background.
+    const [ready, setReady] = useState(() => Boolean(getUserRole() || Object.keys(getUserPermissions()).length));
 
     const reload = useCallback(async () => {
         try {

@@ -75,6 +75,7 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         chat_history=request.chat_history,
         session_id=request.session_id,
         user_id=request.user_id,
+        selected_text=request.selected_text,
     )
 
     return ChatResponse(
@@ -108,6 +109,7 @@ async def chat_all_documents(request: ChatRequest = Body(...)):
         chat_history=request.chat_history,
         session_id=request.session_id,
         user_id=request.user_id,
+        selected_text=request.selected_text,
     )
 
     return ChatResponse(

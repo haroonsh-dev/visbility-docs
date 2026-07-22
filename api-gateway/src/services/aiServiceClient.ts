@@ -124,6 +124,7 @@ export async function chatWithAi(params: {
     sessionId?: string;
     chatHistory?: Array<{ role: string; content: string }>;
     userId?: string;
+    selectedText?: string;
 }): Promise<AiChatResult> {
     if (!ENABLED) {
         throw new Error('AI service is disabled');
@@ -137,6 +138,7 @@ export async function chatWithAi(params: {
     if (params.sessionId) body.session_id = params.sessionId;
     if (params.chatHistory?.length) body.chat_history = params.chatHistory;
     if (params.userId) body.user_id = params.userId;
+    if (params.selectedText) body.selected_text = params.selectedText;
 
     const path = params.documentIds?.length ? '/api/v1/chat' : '/api/v1/chat/all';
     const res = await client().post(path, body);
@@ -164,6 +166,8 @@ export async function searchWithAi(params: {
     organizationId: string;
     query: string;
     documentType?: string;
+    phase3Agent?: string;
+    status?: string;
     limit?: number;
     offset?: number;
 }): Promise<AiSearchResult> {
@@ -175,6 +179,8 @@ export async function searchWithAi(params: {
         query: params.query,
         organization_id: params.organizationId,
         document_type: params.documentType || undefined,
+        phase3_agent: params.phase3Agent || undefined,
+        status: params.status || undefined,
         limit: params.limit ?? 20,
         offset: params.offset ?? 0,
     });

@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7860:3000"   # Frontend (HF Spaces default port)
+      - "8000:8000"   # Backend API (optional direct access)
+    volumes:
+      - ./uploads:/app/backend/uploads
+      - ./processed:/app/backend/processed
+      - ./docs_ai.db:/app/backend/docs_ai.db
+    env_file:
+      - ./backend/.env
+    environment:
+      - USE_GPU=false
+    restart: unless-stopped

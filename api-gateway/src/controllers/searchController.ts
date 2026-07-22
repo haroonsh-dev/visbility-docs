@@ -31,6 +31,8 @@ export const searchDocuments = async (req: Request, res: Response, next: NextFun
 
         const organizationId = resolveAiOrganizationId(req.user);
         const documentType = (req.body.documentType || req.query.documentType || '').toString() || undefined;
+        const phase3Agent = (req.body.phase3Agent || req.query.phase3Agent || req.body.phase3_agent || req.query.phase3_agent || '').toString() || undefined;
+        const statusFilter = (req.body.status || req.query.status || '').toString() || undefined;
         const limit = Math.min(100, parseInt((req.body.limit || req.query.limit || '20') as string, 10));
         const offset = Math.max(0, parseInt((req.body.offset || req.query.offset || '0') as string, 10));
 
@@ -39,6 +41,8 @@ export const searchDocuments = async (req: Request, res: Response, next: NextFun
                 organizationId,
                 query,
                 documentType,
+                phase3Agent,
+                status: statusFilter,
                 limit,
                 offset,
             });

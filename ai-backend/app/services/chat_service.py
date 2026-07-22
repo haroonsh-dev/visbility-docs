@@ -209,6 +209,61 @@ class ChatService:
         if is_first:
             self._auto_title(session_id, question)
 
+    def _fetch_raw_text(self, document_ids: list, organization_id: str,
+                        max_chars: int = 28000, titles: list = None) -> str:
+        """Fetch raw_text (full document text) for selected docs. Critical for Excel/table docs
+        where chunks may be missing or extraction truncates data."""
+        if not document_ids:
+            return ""
+        try:
+            unique_ids = set(document_ids)
+            title_set = set((t or "").lower().strip() for t in (titles or []))
+            result = SupabaseDB.select("documents",
+                columns="id, title, document_type, raw_text",
+                filters={"organization_id": organization_id},
+                limit=200,
+            )
+            data = getattr(result, "data", result if isinstance(result, list) else [])
+            parts = []
+            total = 0
+            matched_any = False
+            for row in (data or []):
+                raw = row.get("raw_text") or ""
+                if not raw:
+                    continue
+                doc_id = row.get("id", "")
+                doc_title = (row.get("title") or "").lower().strip()
+                # Match by ID or by title
+                id_match = doc_id in unique_ids
+                title_match = doc_title in title_set if title_set else False
+                if not id_match and not title_match:
+                    continue
+                matched_any = True
+                display = row.get("title") or doc_id
+                remaining = max_chars - total
+                if remaining <= 0:
+                    break
+                truncated = raw[:remaining]
+                parts.append(f"[Document: {display} (Full Source Text)]:\n{truncated}")
+                total += len(truncated)
+            # Fallback: if no match by ID or title, include ALL org docs with raw_text
+            # This handles ID mismatches between local/remote databases
+            if not matched_any:
+                for row in (data or []):
+                    raw = row.get("raw_text") or ""
+                    if not raw:
+                        continue
+                    display = row.get("title") or row.get("id", "")
+                    remaining = max_chars - total
+                    if remaining <= 0:
+                        break
+                    truncated = raw[:remaining]
+                    parts.append(f"[Document: {display} (Full Source Text)]:\n{truncated}")
+                    total += len(truncated)
+            return "\n\n".join(parts) if parts else ""
+        except Exception:
+            return ""
+
     def _fetch_extraction_summary(self, document_ids: list, organization_id: str) -> str:
         if not document_ids:
             return ""
@@ -309,7 +364,7 @@ class ChatService:
                            document_type: str = None, phase3_agent: str = None,
                            status: str = None, date_from: str = None, date_to: str = None,
                            chat_history: list[dict] = None, session_id: str = None,
-                           user_id: str = None) -> dict:
+                           user_id: str = None, selected_text: str = None) -> dict:
         chat_log = get_chat_logger()
         chat_log.chat_start(question, session_id=session_id or "", doc_count=len(document_ids or []))
         t_start = time.time()
@@ -317,6 +372,13 @@ class ChatService:
         sid, resolved_ids, is_first = self._get_or_create_session(
             session_id, organization_id, document_ids, user_id=user_id
         )
+
+        # ── Focused Q&A on a selected excerpt (ChatGPT-style "ask about this") ──
+        if selected_text and selected_text.strip():
+            return self._answer_on_excerpt(
+                question=question, selected_text=selected_text.strip(),
+                organization_id=organization_id, sid=sid, is_first=is_first,
+            )
 
         # Greetings / small-talk → reply without searching documents
         if self._is_chitchat(question):
@@ -363,7 +425,18 @@ class ChatService:
             limit=60 if cross_doc else 15,
             aggregate=cross_doc,
         )
-        search_results = rag_service.hybrid_search(**hybrid_kwargs)
+        if cross_doc:
+            chat_log.info("Cross-doc intent detected — using aggregate_search")
+            search_results = rag_service.aggregate_search(
+                query=question,
+                organization_id=organization_id,
+                document_ids=resolved_ids if resolved_ids else None,
+                max_docs=150,
+            )
+            if not search_results:
+                search_results = rag_service.hybrid_search(**hybrid_kwargs)
+        else:
+            search_results = rag_service.hybrid_search(**hybrid_kwargs)
 
         q_lower = question.lower()
         is_resume_query = any(
@@ -418,6 +491,9 @@ class ChatService:
             finance_context = ""
             if is_finance_query and resolved_ids:
                 finance_context = self._fetch_extraction_summary(resolved_ids, organization_id)
+                raw_text_block = self._fetch_raw_text(resolved_ids, organization_id)
+                if raw_text_block:
+                    finance_context = (finance_context + "\n\n" + raw_text_block) if finance_context else raw_text_block
             if finance_context:
                 chat_log.search_strategy("Structured Extraction Fallback", "no vector matches, using invoice metadata")
                 finance_prompt = (
@@ -533,6 +609,12 @@ class ChatService:
             if extraction_summary:
                 context = extraction_summary + "\n\n" + context if context else extraction_summary
                 chat_log.info(f"Injected structured extraction summary for {len(resolved_ids)} documents")
+            # Also inject raw source text for table/finance data — critical for Excel docs
+            # where chunks may be truncated or IDs mismatch between local/remote DBs.
+            raw_text_block = self._fetch_raw_text(resolved_ids, organization_id)
+            if raw_text_block:
+                context = context + "\n\n" + raw_text_block if context else raw_text_block
+                chat_log.info(f"Injected raw text: {len(raw_text_block)} chars")
 
         chat_log.search_strategy("Context Building", f"{len(search_results)} chunks → {context_len} chars")
         doc_types_seen = {}
@@ -709,6 +791,48 @@ class ChatService:
             "answer": answer,
             "sources": sources,
             "document_id": sources[0]["document_id"] if sources else "",
+            "history": history,
+            "session_id": sid,
+        }
+
+    def _answer_on_excerpt(self, question: str, selected_text: str, organization_id: str,
+                           sid: str, is_first: bool) -> dict:
+        """Answer a follow-up question grounded STRICTLY on a user-selected excerpt.
+
+        Used for the ChatGPT-style "highlight a response → ask about it" flow. No
+        document retrieval is performed; the model may only use the excerpt.
+        """
+        chat_log = get_chat_logger()
+        excerpt_context = (
+            "The following is an excerpt the user selected from a previous answer. "
+            "Answer the user's question using ONLY this excerpt.\n\n"
+            f"[Selected Excerpt]\n{selected_text}\n[/Selected Excerpt]"
+        )
+        system_prompt = (
+            "You are a helpful assistant for Visibility Docs AI.\n\n"
+            "The user selected a specific portion of a previous response and is asking a "
+            "follow-up question about it. Answer the question using ONLY the provided "
+            "[Selected Excerpt]. Do not use any outside knowledge or other documents.\n\n"
+            "Base every claim on the excerpt — quote or reference the relevant part when useful. "
+            "If the excerpt does not contain the information needed, say so naturally and "
+            "ask one short clarifying question about what they would like to know instead. "
+            "Keep the answer concise. Reply in the same language as the user's question. "
+            "Do not invent facts.\n"
+        )
+        chat_log.info(f"Focused excerpt Q&A — excerpt {len(selected_text)} chars, question {len(question)} chars")
+        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0)
+        llm_t0 = time.time()
+        answer = conversation_service.chat(
+            question, excerpt_context, session_id=sid,
+            is_followup=not is_first, system_prompt=system_prompt,
+        )
+        chat_log.llm_response(time.time() - llm_t0, len(answer))
+        self._save_exchange(sid, question, answer, [], is_first)
+        history = conversation_service.get_history(sid)
+        return {
+            "answer": answer,
+            "sources": [],
+            "document_id": "",
             "history": history,
             "session_id": sid,
         }

@@ -139,6 +139,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 sessionId,
                 chatHistory: Array.isArray(req.body.chatHistory) ? req.body.chatHistory : undefined,
                 userId: req.user.userId,
+                selectedText: (req.body.selected_text || req.body.selectedText || '').toString().trim() || undefined,
             });
 
             const seenCite = new Set<string>();

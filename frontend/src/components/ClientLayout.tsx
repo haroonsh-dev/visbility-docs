@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
@@ -13,6 +13,7 @@ import { clearAuthState, hasValidAccessToken, canRefreshSession, getAuthValue } 
 const PAGE_TITLES: Record<string, string> = {
     "/dashboard": "Dashboard",
     "/documents": "Documents",
+    "/search": "Search",
     "/chat": "AI Chat",
     "/activity": "Activity",
     "/profile": "Profile",
@@ -26,6 +27,7 @@ function resolvePageTitle(pathname: string | null): string {
     if (!pathname) return "Docs AI";
     if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
     if (pathname.startsWith("/documents")) return "Documents";
+    if (pathname.startsWith("/search")) return "Search";
     if (pathname.startsWith("/chat")) return "AI Chat";
     if (pathname.startsWith("/activity")) return "Activity";
     if (pathname.startsWith("/departments/")) return "Department";
@@ -37,8 +39,9 @@ function resolvePageTitle(pathname: string | null): string {
 function Shell({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
-    const { ready, reload, role } = usePermissions();
+    const { ready, role } = usePermissions();
     const [navOpen, setNavOpen] = useState(false);
+    const bootedRef = useRef(false);
 
     const closeNav = useCallback(() => setNavOpen(false), []);
 
@@ -51,12 +54,17 @@ function Shell({ children }: { children: React.ReactNode }) {
     }, [router]);
 
     useEffect(() => {
-        if (ready) reload();
-    }, [pathname, ready, reload]);
-
-    useEffect(() => {
         if (ready && role === "superAdmin" && pathname) {
-            const allowedRoutes = ["/dashboard", "/admin/documents", "/chat", "/activity", "/admin/admins", "/admin/settings"];
+            const allowedRoutes = [
+                "/dashboard",
+                "/admin/documents",
+                "/search",
+                "/chat",
+                "/activity",
+                "/admin/admins",
+                "/admin/settings",
+                "/profile",
+            ];
             const isAllowed = allowedRoutes.some(
                 (route) => pathname === route || pathname.startsWith(`${route}/`)
             );
@@ -70,7 +78,10 @@ function Shell({ children }: { children: React.ReactNode }) {
         setNavOpen(false);
     }, [pathname]);
 
-    if (!ready) {
+    if (ready) bootedRef.current = true;
+
+    // Only show full-page loader on the very first boot — never hide sidebar on navigations
+    if (!ready && !bootedRef.current) {
         return (
             <div className="min-h-screen flex items-center justify-center app-shell text-[var(--foreground-muted)] relative">
                 <div className="flex flex-col items-center gap-3 relative z-[1]">
@@ -85,7 +96,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="h-screen flex overflow-hidden app-shell text-[var(--foreground)] relative">
             <Sidebar open={navOpen} onClose={closeNav} />
             <div className="flex-1 min-w-0 min-h-0 flex flex-col relative z-[1]">
-                <header className="lg:hidden shrink-0 flex items-center gap-3 px-3 sm:px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-md">
+                <header className="lg:hidden shrink-0 flex items-center gap-3 px-3 sm:px-4 py-2.5 border-b border-[var(--border)] bg-gradient-to-r from-white/90 via-teal-50/80 to-cyan-50/70 backdrop-blur-md">
                     <button
                         type="button"
                         onClick={() => setNavOpen(true)}

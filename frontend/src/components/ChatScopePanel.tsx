@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect } from "react";
-import { CheckSquare, Square, Search, X } from "lucide-react";
+import React, { useEffect, useRef } from "react";
+import { CheckSquare, Square, Search, X, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { agentLabel, docTypeLabel, resolveDocAgent } from "@/lib/documentAgents";
 
 export type ChatScope = "all" | "selected";
 export type DocStatusFilter = "" | "ready" | "processing" | "failed";
@@ -12,6 +13,9 @@ export type ScopeLibraryDoc = {
     originalFilename: string;
     status: string;
     pythonDocumentId?: string | null;
+    classification?: string | null;
+    mimeType?: string;
+    metadata?: { phase3Agent?: string; cvScore?: number } | null;
 };
 
 type ChatScopePanelProps = {
@@ -22,6 +26,7 @@ type ChatScopePanelProps = {
     filteredDocs: ScopeLibraryDoc[];
     selectedDocIds: string[];
     onToggleDoc: (id: string) => void;
+    onToggleFolder?: (ids: string[]) => void;
     onSelectAll: () => void;
     onClearSelection: () => void;
     docSearch: string;
@@ -37,6 +42,40 @@ type ChatScopePanelProps = {
     bgHover: string;
 };
 
+const AGENT_ORDER = [
+    "finance_agent",
+    "procurement_agent",
+    "hr_agent",
+    "legal_agent",
+    "compliance_agent",
+    "other_agent",
+];
+
+function FolderCheckbox({
+    checked,
+    indeterminate,
+    onChange,
+}: {
+    checked: boolean;
+    indeterminate: boolean;
+    onChange: () => void;
+}) {
+    const ref = useRef<HTMLInputElement>(null);
+    useEffect(() => {
+        if (ref.current) ref.current.indeterminate = indeterminate;
+    }, [indeterminate]);
+    return (
+        <input
+            ref={ref}
+            type="checkbox"
+            checked={checked}
+            onChange={onChange}
+            onClick={(e) => e.stopPropagation()}
+            className="accent-teal-500 shrink-0 w-3.5 h-3.5 rounded border-[var(--border)]"
+        />
+    );
+}
+
 export default function ChatScopePanel({
     open,
     onClose,
@@ -45,6 +84,7 @@ export default function ChatScopePanel({
     filteredDocs,
     selectedDocIds,
     onToggleDoc,
+    onToggleFolder,
     onSelectAll,
     onClearSelection,
     docSearch,
@@ -69,6 +109,44 @@ export default function ChatScopePanel({
     }, [open, onClose]);
 
     if (!open) return null;
+
+    const selectedSet = new Set(selectedDocIds);
+
+    const folderState = (arr: ScopeLibraryDoc[]) => {
+        const c = arr.filter((d) => selectedSet.has(d.documentId)).length;
+        return { checked: arr.length > 0 && c === arr.length, indeterminate: c > 0 && c < arr.length };
+    };
+
+    const toggleFolder = (docs: ScopeLibraryDoc[]) => {
+        const ids = docs.map((d) => d.documentId);
+        if (onToggleFolder) {
+            onToggleFolder(ids);
+            return;
+        }
+        const allSelected = ids.every((id) => selectedSet.has(id));
+        if (allSelected) {
+            ids.forEach((id) => {
+                if (selectedSet.has(id)) onToggleDoc(id);
+            });
+        } else {
+            ids.forEach((id) => {
+                if (!selectedSet.has(id)) onToggleDoc(id);
+            });
+        }
+    };
+
+    const tree: Record<string, Record<string, ScopeLibraryDoc[]>> = {};
+    for (const d of filteredDocs) {
+        const agent = resolveDocAgent(d);
+        const type = d.classification || "unclassified";
+        (tree[agent] ||= {})[type] ||= [];
+        tree[agent][type].push(d);
+    }
+
+    const visibleAgents = AGENT_ORDER.filter((a) => tree[a] && Object.keys(tree[a]).length > 0);
+    for (const a of Object.keys(tree)) {
+        if (!visibleAgents.includes(a)) visibleAgents.push(a);
+    }
 
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
@@ -190,33 +268,116 @@ export default function ChatScopePanel({
                             {filteredDocs.length === 0 ? (
                                 <p className={`text-sm ${textMuted}`}>No matching processed documents.</p>
                             ) : (
-                                <div className="space-y-1">
-                                    {filteredDocs.map((doc) => {
-                                        const checked = selectedDocIds.includes(doc.documentId);
+                                <div className="space-y-1.5">
+                                    {visibleAgents.map((agent) => {
+                                        const types = Object.keys(tree[agent]).sort((a, b) => {
+                                            if (a === "unclassified") return 1;
+                                            if (b === "unclassified") return -1;
+                                            return a.localeCompare(b);
+                                        });
+                                        const agentDocs = types.flatMap((t) => tree[agent][t]);
+                                        const ag = folderState(agentDocs);
                                         return (
-                                            <button
-                                                key={doc.documentId}
-                                                type="button"
-                                                onClick={() => onToggleDoc(doc.documentId)}
-                                                className={cn(
-                                                    "w-full flex items-start gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm border border-transparent",
-                                                    checked
-                                                        ? "bg-[var(--accent-muted)] border-[rgba(45,212,191,0.25)]"
-                                                        : bgHover
-                                                )}
+                                            <details
+                                                key={agent}
+                                                className="rounded-xl border border-[var(--border)] overflow-hidden bg-[var(--surface)]"
+                                                open
                                             >
-                                                {checked ? (
-                                                    <CheckSquare size={16} className="text-teal-400 shrink-0 mt-0.5" />
-                                                ) : (
-                                                    <Square size={16} className={`${textMuted} shrink-0 mt-0.5`} />
-                                                )}
-                                                <span className={`${textSecondary} line-clamp-2`}>
-                                                    {doc.originalFilename}
-                                                    <span className={`block text-[11px] mt-0.5 ${textMuted}`}>
-                                                        {doc.status}
+                                                <summary
+                                                    className={cn(
+                                                        "px-2.5 py-2 cursor-pointer transition-colors flex items-center gap-2 text-sm font-semibold list-none",
+                                                        textPrimary,
+                                                        bgHover
+                                                    )}
+                                                >
+                                                    <FolderCheckbox
+                                                        checked={ag.checked}
+                                                        indeterminate={ag.indeterminate}
+                                                        onChange={() => toggleFolder(agentDocs)}
+                                                    />
+                                                    <Folder size={13} className="text-teal-400 shrink-0" />
+                                                    <span className="flex-1 truncate">{agentLabel(agent)}</span>
+                                                    <span className={`text-[10px] font-semibold ${textMuted}`}>
+                                                        {agentDocs.length}
                                                     </span>
-                                                </span>
-                                            </button>
+                                                </summary>
+                                                <div className="px-2 pb-2 space-y-1">
+                                                    {types.map((type) => {
+                                                        const typeDocs = tree[agent][type]
+                                                            .slice()
+                                                            .sort((a, b) => {
+                                                                const isResume =
+                                                                    type === "resume" ||
+                                                                    type === "cv" ||
+                                                                    a.classification === "resume";
+                                                                if (isResume) {
+                                                                    const sa = a.metadata?.cvScore ?? -1;
+                                                                    const sb = b.metadata?.cvScore ?? -1;
+                                                                    if (sa !== sb) return sb - sa;
+                                                                }
+                                                                return a.originalFilename.localeCompare(b.originalFilename);
+                                                            });
+                                                        const ty = folderState(typeDocs);
+                                                        return (
+                                                            <details
+                                                                key={type}
+                                                                className="rounded-lg border border-[var(--border)] overflow-hidden bg-white/[0.02]"
+                                                                open
+                                                            >
+                                                                <summary
+                                                                    className={cn(
+                                                                        "px-2 py-1.5 cursor-pointer transition-colors flex items-center gap-2 text-xs font-medium list-none",
+                                                                        textSecondary,
+                                                                        bgHover
+                                                                    )}
+                                                                >
+                                                                    <FolderCheckbox
+                                                                        checked={ty.checked}
+                                                                        indeterminate={ty.indeterminate}
+                                                                        onChange={() => toggleFolder(typeDocs)}
+                                                                    />
+                                                                    <span className="flex-1 truncate">{docTypeLabel(type)}</span>
+                                                                    <span className={`text-[10px] ${textMuted}`}>
+                                                                        {typeDocs.length}
+                                                                    </span>
+                                                                </summary>
+                                                                <div className="px-1.5 pb-1.5 space-y-0.5">
+                                                                    {typeDocs.map((doc) => {
+                                                                        const checked = selectedSet.has(doc.documentId);
+                                                                        return (
+                                                                            <button
+                                                                                key={doc.documentId}
+                                                                                type="button"
+                                                                                onClick={() => onToggleDoc(doc.documentId)}
+                                                                                className={cn(
+                                                                                    "w-full flex items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm border border-transparent",
+                                                                                    checked
+                                                                                        ? "bg-[var(--accent-muted)] border-[rgba(45,212,191,0.25)]"
+                                                                                        : bgHover
+                                                                                )}
+                                                                            >
+                                                                                {checked ? (
+                                                                                    <CheckSquare size={14} className="text-teal-400 shrink-0 mt-0.5" />
+                                                                                ) : (
+                                                                                    <Square size={14} className={`${textMuted} shrink-0 mt-0.5`} />
+                                                                                )}
+                                                                                <span className={`${textSecondary} line-clamp-2 flex-1 min-w-0`}>
+                                                                                    {doc.originalFilename}
+                                                                                    <span className={`block text-[11px] mt-0.5 ${textMuted}`}>
+                                                                                        {doc.status}
+                                                                                        {doc.metadata?.cvScore != null &&
+                                                                                            ` · ${doc.metadata.cvScore}`}
+                                                                                    </span>
+                                                                                </span>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </details>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </details>
                                         );
                                     })}
                                 </div>

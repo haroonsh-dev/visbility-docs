@@ -41,6 +41,7 @@ async def search_documents(request: SearchRequest = Body(...)):
             machine_id=r.get("machine_id"),
             filename=r.get("filename"),
             score=r["score"],
+            cv_score=r.get("cv_score"),
             metadata=r.get("metadata"),
         )
         for r in results
@@ -99,6 +100,7 @@ async def similar_documents(document_id: str, organization_id: str = "", limit: 
         chunk_text=r["chunk_text"][:500],
         page_number=r.get("page_number"),
         score=r["score"],
+        cv_score=r.get("cv_score"),
         metadata=r.get("metadata"),
     ) for r in results], "total": len(results)}
 
