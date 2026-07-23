@@ -19,6 +19,11 @@ ai-backend/.env
 ai-backend/.env.example
 uploads/
 shared-storage/
+ai-backend/data/
+*.safetensors
+*.bin
+*.pt
+*.onnx
 
 # Friend's reference project used for cherry-picking improvements (not part of this repo's app)
 Visibility_Docs_AI_VM-main update model/
