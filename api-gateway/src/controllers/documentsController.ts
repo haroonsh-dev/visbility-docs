@@ -8,6 +8,7 @@ import {
     buildDocumentFilter,
     canAccessDocument,
     canDeleteDocument,
+    getLeaderDeletableUploaderIds,
     loadUserDeptContext,
     hasPermission,
 } from '../services/accessScope';
@@ -849,7 +850,7 @@ export const deleteDocument = async (req: Request, res: Response, next: NextFunc
         if (!doc) {
             return res.status(404).json({ success: false, message: 'Document not found' });
         }
-        if (!canDeleteDocument(req.user, doc)) {
+        if (!(await canDeleteDocument(req.user, doc))) {
             return res.status(403).json({ success: false, message: 'Forbidden' });
         }
 
@@ -866,6 +867,190 @@ export const deleteDocument = async (req: Request, res: Response, next: NextFunc
             metadata: { filename: doc.originalFilename },
         });
         res.json({ success: true, message: 'Document and folder deleted' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Bulk delete with optional filters:
+ * - classification / documentType (e.g. resume, invoice)
+ * - dateFrom / dateTo (createdAt range, ISO dates)
+ * - uploadedBy (userId)
+ * - dryRun: true → only return matching count + sample, no delete
+ *
+ * Scope by role:
+ * - employee: own uploads only (shared docs excluded)
+ * - leader: own + department members' uploads
+ * - admin / superAdmin: org-wide / all
+ */
+export const bulkDeleteDocuments = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.DOCUMENT_DELETE)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+
+        const classification = (
+            req.body.classification ||
+            req.body.documentType ||
+            ''
+        )
+            .toString()
+            .trim() || undefined;
+        const uploadedBy = (req.body.uploadedBy || '').toString().trim() || undefined;
+        const dateFrom = (req.body.dateFrom || '').toString().trim() || undefined;
+        const dateTo = (req.body.dateTo || '').toString().trim() || undefined;
+        const dryRun = req.body.dryRun === true || req.body.dryRun === 'true' || req.body.dryRun === 1;
+
+        const ctx = await loadUserDeptContext(req.user);
+        const isAdmin =
+            req.user.role === 'superAdmin' ||
+            req.user.role === 'admin';
+
+        let deletableUploaderIds: string[] | null = null;
+        if (!isAdmin) {
+            if (ctx.isLeader) {
+                deletableUploaderIds = await getLeaderDeletableUploaderIds(req.user, ctx);
+            } else {
+                // Employee: only own uploads — never shared docs
+                deletableUploaderIds = [req.user.userId];
+            }
+        }
+
+        let effectiveUploader = uploadedBy;
+        if (!isAdmin) {
+            if (effectiveUploader) {
+                if (!deletableUploaderIds?.includes(effectiveUploader)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: ctx.isLeader
+                            ? 'You can only delete documents from your department members'
+                            : 'You can only delete your own documents',
+                    });
+                }
+            } else if (!ctx.isLeader) {
+                effectiveUploader = req.user.userId;
+            }
+        }
+
+        const extra: Record<string, unknown> = {};
+        if (effectiveUploader) {
+            extra.uploadedBy = effectiveUploader;
+        } else if (deletableUploaderIds) {
+            // Leader deleting "all" they can: restrict to dept uploaders (excludes shared-only docs)
+            extra.uploadedBy = { $in: deletableUploaderIds };
+        } else if (req.user.role === 'admin' && req.user.organizationId) {
+            extra.organizationId = req.user.organizationId;
+        }
+
+        if (dateFrom || dateTo) {
+            const createdAt: Record<string, Date> = {};
+            if (dateFrom) {
+                const d = new Date(dateFrom);
+                if (!Number.isNaN(d.getTime())) createdAt.$gte = d;
+            }
+            if (dateTo) {
+                const d = new Date(dateTo);
+                if (!Number.isNaN(d.getTime())) {
+                    d.setHours(23, 59, 59, 999);
+                    createdAt.$lte = d;
+                }
+            }
+            if (Object.keys(createdAt).length) extra.createdAt = createdAt;
+        }
+
+        // Prefer delete-scope filter (uploader-based) over access filter so shared docs
+        // are never bulk-deleted by employees/leaders who only received a share.
+        const filter: Record<string, unknown> = { ...extra };
+        if (classification) filter.classification = classification;
+
+        const candidates = await Document.find(filter)
+            .select('documentId originalFilename uploadedBy storagePath pythonDocumentId organizationId departmentId classification createdAt metadata')
+            .sort({ createdAt: -1 })
+            .limit(2000)
+            .lean();
+
+        const memberSet = deletableUploaderIds ? new Set(deletableUploaderIds) : undefined;
+        const deletable: typeof candidates = [];
+        for (const d of candidates) {
+            if (
+                await canDeleteDocument(req.user, d, {
+                    ctx,
+                    deptMemberIds: memberSet,
+                })
+            ) {
+                deletable.push(d);
+            }
+        }
+
+        if (dryRun) {
+            return res.json({
+                success: true,
+                data: {
+                    count: deletable.length,
+                    sample: deletable.slice(0, 20).map((d) => ({
+                        documentId: d.documentId,
+                        originalFilename: d.originalFilename,
+                        classification: d.classification || null,
+                        uploadedBy: d.uploadedBy,
+                        createdAt: d.createdAt,
+                    })),
+                    truncated: candidates.length >= 2000,
+                    scope: isAdmin
+                        ? 'organization'
+                        : ctx.isLeader
+                          ? 'department'
+                          : 'own',
+                },
+            });
+        }
+
+        if (!deletable.length) {
+            return res.json({
+                success: true,
+                data: { deleted: 0, failed: 0 },
+                message: 'No matching documents to delete',
+            });
+        }
+
+        let deleted = 0;
+        let failed = 0;
+        const errors: string[] = [];
+
+        for (const doc of deletable) {
+            try {
+                await deleteDocumentFully(doc.documentId, doc.storagePath, {
+                    pythonDocumentId: doc.pythonDocumentId,
+                    aiOrgId: resolveDocumentAiOrgId(doc as any, req.user),
+                });
+                deleted += 1;
+            } catch (e: any) {
+                failed += 1;
+                if (errors.length < 5) errors.push(`${doc.originalFilename}: ${e.message || e}`);
+            }
+        }
+
+        recordActivityFromReq(req, {
+            action: 'document.delete.bulk',
+            category: 'document',
+            resourceType: 'document',
+            message: `Bulk deleted ${deleted} document(s)`,
+            metadata: {
+                deleted,
+                failed,
+                classification: classification || null,
+                uploadedBy: effectiveUploader || null,
+                dateFrom: dateFrom || null,
+                dateTo: dateTo || null,
+                scope: isAdmin ? 'organization' : ctx.isLeader ? 'department' : 'own',
+            },
+        });
+
+        res.json({
+            success: true,
+            data: { deleted, failed, errors },
+            message: `Deleted ${deleted} document(s)${failed ? `, ${failed} failed` : ''}`,
+        });
     } catch (error) {
         next(error);
     }

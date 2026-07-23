@@ -313,13 +313,77 @@ export async function canAccessDocument(
     return false;
 }
 
-export function canDeleteDocument(user: AuthUser, doc: { uploadedBy: string }): boolean {
+/**
+ * Delete rules:
+ * - employee (team, non-leader): own uploads only — shared docs cannot be deleted
+ * - leader: own uploads + uploads by anyone in their department
+ * - admin / superAdmin: any document in scope (admin = own org)
+ */
+export async function canDeleteDocument(
+    user: AuthUser,
+    doc: {
+        uploadedBy: string;
+        organizationId?: string | null;
+        departmentId?: string | null;
+    },
+    options?: {
+        ctx?: UserDeptContext;
+        /** Preloaded dept member userIds for leaders (bulk delete) */
+        deptMemberIds?: Set<string> | string[];
+    }
+): Promise<boolean> {
     if (user.role === 'superAdmin') return true;
     if (!hasPermission(user, PERMISSIONS.DOCUMENT_DELETE)) return false;
+
     if (user.role === 'admin') {
-        return doc.uploadedBy === user.userId || hasPermission(user, PERMISSIONS.ORG_DOCUMENTS_VIEW);
+        if (
+            user.organizationId &&
+            doc.organizationId &&
+            doc.organizationId !== user.organizationId
+        ) {
+            return false;
+        }
+        return true;
     }
-    return doc.uploadedBy === user.userId;
+
+    // Own uploads — always allowed (employee or leader)
+    if (doc.uploadedBy === user.userId) return true;
+
+    const ctx = options?.ctx ?? (await loadUserDeptContext(user));
+    if (ctx.isLeader && ctx.departmentId) {
+        if (options?.deptMemberIds) {
+            const set =
+                options.deptMemberIds instanceof Set
+                    ? options.deptMemberIds
+                    : new Set(options.deptMemberIds);
+            return set.has(doc.uploadedBy);
+        }
+        const member = await DepartmentMember.findOne({
+            departmentId: ctx.departmentId,
+            userId: doc.uploadedBy,
+        })
+            .select('userId')
+            .lean();
+        return !!member;
+    }
+
+    // Regular employee: shared / peer / leader docs are view-only — not deletable
+    return false;
+}
+
+/** UserIds whose uploads a leader may delete (self + all dept members). */
+export async function getLeaderDeletableUploaderIds(
+    user: AuthUser,
+    ctx?: UserDeptContext
+): Promise<string[]> {
+    const deptCtx = ctx ?? (await loadUserDeptContext(user));
+    if (!deptCtx.isLeader || !deptCtx.departmentId) {
+        return [user.userId];
+    }
+    const ids = await DepartmentMember.find({ departmentId: deptCtx.departmentId })
+        .distinct('userId');
+    if (!ids.includes(user.userId)) ids.push(user.userId);
+    return ids;
 }
 
 export async function isUserLeader(userId: string, orgRoleId?: string | null): Promise<boolean> {

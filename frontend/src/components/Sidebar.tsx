@@ -23,14 +23,23 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     const pathname = usePathname();
     const router = useRouter();
     const { theme } = useTheme();
-    const user = getStoredUser<StoredUser>();
-    const { role: permRole, canChat, canUpload, canViewDocs, hasPermission } = usePermissions();
+    const { role: permRole, canChat, canUpload, canViewDocs, hasPermission, ready } = usePermissions();
+    // Avoid reading localStorage during SSR/first paint (hydration mismatch)
+    const [user, setUser] = React.useState<StoredUser | null>(null);
+    const [mounted, setMounted] = React.useState(false);
+
+    React.useEffect(() => {
+        setMounted(true);
+        setUser(getStoredUser<StoredUser>());
+    }, []);
+
     const role = permRole || user?.role || "team";
 
     const [deptOpen, setDeptOpen] = React.useState(true);
     const [departments, setDepartments] = React.useState<DeptNav[]>([]);
 
     useEffect(() => {
+        if (!mounted || !ready) return;
         let cancelled = false;
         (async () => {
             try {
@@ -39,7 +48,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             } catch { if (!cancelled) setDepartments([]); }
         })();
         return () => { cancelled = true; };
-    }, [role]);
+    }, [role, mounted, ready]);
 
     const isSuperAdmin = role === "superAdmin";
     const canSeeDepts = role === "admin" || isSuperAdmin || hasPermission("department.view") || hasPermission("department.manage");
@@ -56,10 +65,14 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
     ];
 
-    const visibleNav = nav
-        .filter((n) => n.roles.includes(role) && (n.allow ? n.allow() : true))
-        .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/settings"].includes(n.href));
-
+    // Until client has hydrated auth, render a stable baseline nav (no permission gates)
+    // so server HTML and first client paint match.
+    const visibleNav = (!mounted || !ready
+        ? nav.filter((n) => n.roles.includes("team") && !n.allow)
+        : nav
+            .filter((n) => n.roles.includes(role) && (n.allow ? n.allow() : true))
+            .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/settings"].includes(n.href))
+    );
     const logout = () => { clearAuthState(); router.replace("/login"); };
 
     useEffect(() => {

@@ -193,7 +193,7 @@ function ChatContent() {
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages]);
+    }, [messages, sending]);
 
     const isInsideAssistant = (node: Node | null): boolean => {
         while (node) {
@@ -684,6 +684,22 @@ function ChatContent() {
                                     </div>
                                 </div>
                             ))
+                        )}
+                        {sending && (
+                            <div className="flex justify-start" aria-live="polite" aria-label="Assistant is thinking">
+                                <div
+                                    className={`inline-flex items-center gap-1.5 rounded-2xl px-4 py-3 border shadow-sm ${
+                                        isDark
+                                            ? "bg-[var(--surface)] border-[var(--border)]"
+                                            : "bg-white border-slate-200"
+                                    }`}
+                                >
+                                    <span className="sr-only">Processing…</span>
+                                    <span className="h-2 w-2 rounded-full bg-[var(--accent)] animate-bounce [animation-delay:0ms]" />
+                                    <span className="h-2 w-2 rounded-full bg-[var(--accent)] animate-bounce [animation-delay:150ms]" />
+                                    <span className="h-2 w-2 rounded-full bg-[var(--accent)] animate-bounce [animation-delay:300ms]" />
+                                </div>
+                            </div>
                         )}
                         <div ref={bottomRef} />
                     </div>

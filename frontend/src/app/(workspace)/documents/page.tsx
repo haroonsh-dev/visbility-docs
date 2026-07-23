@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -106,8 +107,22 @@ function DocumentsContent() {
     const colors = theme.colors;
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
-    const { canUpload, canViewDocs, canDeleteDocs } = usePermissions();
-    const me = getStoredUser<{ userId?: string }>();
+    const { canUpload, canViewDocs, canDeleteDocs, role } = usePermissions();
+    const me = getStoredUser<{
+        userId?: string;
+        name?: string;
+        email?: string;
+        primaryDepartmentId?: string;
+        orgRole?: { isLeader?: boolean };
+    }>();
+    const isLeader = !!me?.orgRole?.isLeader;
+    const canPickUploader = role === "admin" || role === "superAdmin" || isLeader;
+    const deleteScopeHint =
+        role === "admin" || role === "superAdmin"
+            ? "Admins can delete any documents in the organization."
+            : isLeader
+              ? "Leaders can delete their own uploads and their department members' uploads — not docs only shared with them."
+              : "You can only delete documents you uploaded. Shared documents cannot be deleted.";
 
     const [docs, setDocs] = useState<DocItem[]>([]);
     const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 10, total: 0, totalPages: 0 });
@@ -132,6 +147,18 @@ function DocumentsContent() {
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [sharingDoc, setSharingDoc] = useState<{ documentId: string; filename: string } | null>(null);
     const [viewMode, setViewMode] = useState<"list" | "tree">("list");
+    const [bulkOpen, setBulkOpen] = useState(false);
+    const [bulkType, setBulkType] = useState("");
+    const [bulkDateFrom, setBulkDateFrom] = useState("");
+    const [bulkDateTo, setBulkDateTo] = useState("");
+    const [bulkUploader, setBulkUploader] = useState("");
+    const [bulkPreview, setBulkPreview] = useState<{ count: number; sample: Array<{ documentId: string; originalFilename: string; classification?: string | null }> } | null>(null);
+    const [bulkBusy, setBulkBusy] = useState(false);
+    const [bulkError, setBulkError] = useState<string | null>(null);
+    const [members, setMembers] = useState<Array<{ userId: string; name?: string; email?: string }>>([]);
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => { setMounted(true); }, []);
 
     const activeSort = SORT_PRESETS.find((s) => s.value === sortPreset) || SORT_PRESETS[0];
     const applySearch = () => { setQ(searchInput); setPage(1); };
@@ -282,6 +309,115 @@ function DocumentsContent() {
 
     const onDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files?.length) addFilesToQueue(e.dataTransfer.files); };
     const remove = async (id: string, name: string) => { if (!confirm(`Delete "${name}" and its folder permanently?`)) return; try { await apiRequest(`/docs/documents/${id}`, { method: "DELETE" }); await load(); } catch (e: any) { setError(e.message || "Delete failed"); } };
+
+    const openBulkDelete = async () => {
+        setBulkOpen(true);
+        setBulkError(null);
+        setBulkPreview(null);
+        setBulkType(typeFilter || "");
+        setBulkDateFrom("");
+        setBulkDateTo("");
+        setBulkUploader("");
+        if (canPickUploader && members.length === 0) {
+            try {
+                if (role === "admin" || role === "superAdmin") {
+                    const data = await apiRequest("/docs/team/members");
+                    setMembers(
+                        (data?.data?.members || []).map((m: any) => ({
+                            userId: m.userId,
+                            name: m.fullName || m.name,
+                            email: m.email,
+                        }))
+                    );
+                } else if (isLeader && me?.primaryDepartmentId) {
+                    const data = await apiRequest(`/docs/departments/${me.primaryDepartmentId}/overview`);
+                    setMembers(
+                        (data?.data?.members || []).map((m: any) => ({
+                            userId: m.userId,
+                            name: m.user?.fullName || m.user?.name,
+                            email: m.user?.email,
+                        }))
+                    );
+                }
+            } catch {
+                setMembers([]);
+            }
+        }
+    };
+
+    const buildBulkBody = (dryRun: boolean) => ({
+        dryRun,
+        classification: bulkType || undefined,
+        dateFrom: bulkDateFrom || undefined,
+        dateTo: bulkDateTo || undefined,
+        uploadedBy: canPickUploader ? (bulkUploader || undefined) : undefined,
+    });
+
+    const previewBulkDelete = async () => {
+        setBulkBusy(true);
+        setBulkError(null);
+        try {
+            const data = await apiRequest("/docs/documents/bulk-delete", {
+                method: "POST",
+                body: JSON.stringify(buildBulkBody(true)),
+            });
+            setBulkPreview({
+                count: data?.data?.count ?? 0,
+                sample: data?.data?.sample || [],
+            });
+        } catch (e: any) {
+            setBulkError(e.message || "Preview failed");
+            setBulkPreview(null);
+        } finally {
+            setBulkBusy(false);
+        }
+    };
+
+    const confirmBulkDelete = async () => {
+        setBulkBusy(true);
+        setBulkError(null);
+        try {
+            let count = bulkPreview?.count ?? 0;
+            if (!bulkPreview) {
+                const preview = await apiRequest("/docs/documents/bulk-delete", {
+                    method: "POST",
+                    body: JSON.stringify(buildBulkBody(true)),
+                });
+                count = preview?.data?.count ?? 0;
+                setBulkPreview({
+                    count,
+                    sample: preview?.data?.sample || [],
+                });
+            }
+            if (!count) {
+                setBulkError("No matching documents to delete with these filters.");
+                setBulkBusy(false);
+                return;
+            }
+            const dateNote =
+                !bulkDateFrom && !bulkDateTo
+                    ? " (no date filter — all matching docs in your scope)"
+                    : "";
+            setBulkBusy(false);
+            if (!confirm(`Permanently delete ${count} document${count === 1 ? "" : "s"}${dateNote}? This cannot be undone.`)) {
+                return;
+            }
+            setBulkBusy(true);
+            const data = await apiRequest("/docs/documents/bulk-delete", {
+                method: "POST",
+                body: JSON.stringify(buildBulkBody(false)),
+            });
+            const deleted = data?.data?.deleted ?? 0;
+            setToast(data?.message || `Deleted ${deleted} document(s)`);
+            setBulkOpen(false);
+            setBulkPreview(null);
+            await load();
+        } catch (e: any) {
+            setBulkError(e.message || "Bulk delete failed");
+        } finally {
+            setBulkBusy(false);
+        }
+    };
 
     const allowUpload = canUpload();
     const allowView = canViewDocs();
@@ -439,6 +575,15 @@ function DocumentsContent() {
                                     <FolderTree size={13} /> Tree
                                 </button>
                             </div>
+                            {allowDelete && (
+                                <button
+                                    type="button"
+                                    onClick={openBulkDelete}
+                                    className="rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2 border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors"
+                                >
+                                    <Trash2 size={14} /> Delete…
+                                </button>
+                            )}
                             <button type="button" onClick={load} className="btn-secondary rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2">
                                 <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
                             </button>
@@ -545,6 +690,135 @@ function DocumentsContent() {
             )}
 
             {sharingDoc && <ShareModal documentId={sharingDoc.documentId} filename={sharingDoc.filename} open={true} onClose={() => setSharingDoc(null)} onShared={() => load()} />}
+
+            {mounted && bulkOpen && createPortal(
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <button type="button" className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]" aria-label="Close" onClick={() => !bulkBusy && setBulkOpen(false)} />
+                    <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+                        <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-800">Delete documents</h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Filter by type{canPickUploader ? ", uploader," : ""} and optional date range. Leave dates empty to delete <span className="font-semibold text-slate-700">all</span> matching documents in your scope.
+                                </p>
+                                <p className="text-[11px] text-amber-700 mt-1.5 leading-relaxed">{deleteScopeHint}</p>
+                            </div>
+                            <button type="button" disabled={bulkBusy} onClick={() => setBulkOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100">
+                                <X size={16} />
+                            </button>
+                        </div>
+                        <div className="px-5 py-4 space-y-3">
+                            <FilterSelect
+                                label="Document type"
+                                value={bulkType}
+                                onChange={(v) => { setBulkType(v); setBulkPreview(null); }}
+                                options={DOC_TYPE_FILTER_OPTIONS}
+                                minWidth="w-full"
+                            />
+                            <div className="grid grid-cols-2 gap-3">
+                                <label className="block">
+                                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">From date <span className="font-normal normal-case text-slate-400">(optional)</span></span>
+                                    <input
+                                        type="date"
+                                        value={bulkDateFrom}
+                                        onChange={(e) => { setBulkDateFrom(e.target.value); setBulkPreview(null); }}
+                                        className="mt-1 w-full premium-input rounded-xl px-3 py-2.5 text-sm"
+                                    />
+                                </label>
+                                <label className="block">
+                                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">To date <span className="font-normal normal-case text-slate-400">(optional)</span></span>
+                                    <input
+                                        type="date"
+                                        value={bulkDateTo}
+                                        onChange={(e) => { setBulkDateTo(e.target.value); setBulkPreview(null); }}
+                                        className="mt-1 w-full premium-input rounded-xl px-3 py-2.5 text-sm"
+                                    />
+                                </label>
+                            </div>
+                            {!bulkDateFrom && !bulkDateTo && (
+                                <p className="text-[11px] text-slate-400 -mt-1">
+                                    No date filter — every matching document in your delete scope will be included.
+                                </p>
+                            )}
+                            {canPickUploader && (
+                                <label className="block">
+                                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Uploaded by</span>
+                                    <select
+                                        value={bulkUploader}
+                                        onChange={(e) => { setBulkUploader(e.target.value); setBulkPreview(null); }}
+                                        className="mt-1 w-full premium-input rounded-xl px-3 py-2.5 text-sm"
+                                    >
+                                        <option value="">
+                                            {isLeader && role !== "admin" && role !== "superAdmin"
+                                                ? "Anyone in my department"
+                                                : "Anyone (in your access)"}
+                                        </option>
+                                        {me?.userId && (
+                                            <option value={me.userId}>Me ({me.name || me.email || "you"})</option>
+                                        )}
+                                        {members
+                                            .filter((m) => m.userId !== me?.userId)
+                                            .map((m) => (
+                                                <option key={m.userId} value={m.userId}>
+                                                    {m.name || m.email || m.userId}
+                                                </option>
+                                            ))}
+                                    </select>
+                                </label>
+                            )}
+
+                            {bulkError && (
+                                <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-xs">{bulkError}</div>
+                            )}
+
+                            {bulkPreview && (
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 space-y-2">
+                                    <p className="text-sm font-semibold text-slate-800">
+                                        {bulkPreview.count} document{bulkPreview.count === 1 ? "" : "s"} match
+                                    </p>
+                                    {bulkPreview.sample.length > 0 && (
+                                        <ul className="text-xs text-slate-600 space-y-1 max-h-28 overflow-y-auto">
+                                            {bulkPreview.sample.map((s) => (
+                                                <li key={s.documentId} className="truncate">
+                                                    {s.originalFilename}
+                                                    {s.classification ? ` · ${s.classification}` : ""}
+                                                </li>
+                                            ))}
+                                            {bulkPreview.count > bulkPreview.sample.length && (
+                                                <li className="text-slate-400">…and {bulkPreview.count - bulkPreview.sample.length} more</li>
+                                            )}
+                                        </ul>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <div className="px-5 py-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2 bg-slate-50/80">
+                            <button type="button" disabled={bulkBusy} onClick={() => setBulkOpen(false)} className="btn-secondary rounded-xl px-4 py-2 text-sm">
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={bulkBusy}
+                                onClick={previewBulkDelete}
+                                className="btn-secondary rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
+                            >
+                                {bulkBusy && !bulkPreview ? <Loader2 size={14} className="animate-spin" /> : null}
+                                Preview count
+                            </button>
+                            <button
+                                type="button"
+                                disabled={bulkBusy}
+                                onClick={confirmBulkDelete}
+                                className="rounded-xl px-4 py-2 text-sm font-medium inline-flex items-center gap-2 bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50 disabled:pointer-events-none"
+                            >
+                                {bulkBusy ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                Delete {bulkPreview?.count ? `(${bulkPreview.count})` : ""}
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
         </div>
     );
 }

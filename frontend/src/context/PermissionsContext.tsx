@@ -27,11 +27,10 @@ type PermissionsContextValue = {
 const PermissionsContext = createContext<PermissionsContextValue | null>(null);
 
 export function PermissionsProvider({ children }: { children: React.ReactNode }) {
-    const [permissions, setPermissions] = useState<Record<string, boolean>>(() => getUserPermissions());
-    const [role, setRole] = useState(() => getUserRole());
-    // Start ready when we already have a cached session so the shell/sidebar
-    // never flash-hides while /auth/me refreshes in the background.
-    const [ready, setReady] = useState(() => Boolean(getUserRole() || Object.keys(getUserPermissions()).length));
+    // SSR-safe defaults — localStorage is only read after mount to avoid hydration mismatch
+    const [permissions, setPermissions] = useState<Record<string, boolean>>({});
+    const [role, setRole] = useState("team");
+    const [ready, setReady] = useState(false);
 
     const reload = useCallback(async () => {
         try {
@@ -55,6 +54,9 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     }, []);
 
     useEffect(() => {
+        setPermissions(getUserPermissions());
+        setRole(getUserRole());
+        setReady(Boolean(getUserRole() || Object.keys(getUserPermissions()).length));
         reload();
     }, [reload]);
 

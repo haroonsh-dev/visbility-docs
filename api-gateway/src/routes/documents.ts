@@ -4,6 +4,7 @@ import multer from 'multer';
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth';
 import {
+    bulkDeleteDocuments,
     deleteDocument,
     getDocument,
     getDocumentImages,
@@ -39,6 +40,7 @@ router.use(authenticate);
 router.get('/', listDocuments);
 router.get('/intelligence/all', listAllDocumentIntelligence);
 router.post('/bulk', upload.array('files', 20), uploadDocumentsBulk);
+router.post('/bulk-delete', bulkDeleteDocuments);
 router.post('/:id/reprocess', reprocessDocument);
 router.post('/:id/process', reprocessDocument);
 router.post('/:id/share', shareDocument);
