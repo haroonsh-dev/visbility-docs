@@ -2,7 +2,7 @@
   "providers": [
     {
       "provider": "groq",
-      "api_key": "AIzaSyD-abcdefghijklmnopqrstuvw123456",
+      "api_key": "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",
       "model": "llama-3.3-70b-versatile",
       "base_url": "https://api.groq.com/openai/v1",
       "label": "Groq"

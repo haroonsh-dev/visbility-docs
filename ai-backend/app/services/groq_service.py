@@ -36,10 +36,23 @@ class GroqService:
     def _configure(self, api_key: str):
         key = (api_key or "").strip()
         placeholders = {"", "gsk_your_groq_api_key", "gsk_your_groq_key_here", "your-api-key-here"}
-        if key in placeholders or key.startswith("gsk_your_"):
-            self.client = None
-            self.available = False
-            return
+        # Groq keys start with gsk_; reject Gemini/OpenAI/placeholder keys
+        invalid = (
+            key in placeholders
+            or key.startswith("gsk_your_")
+            or key.startswith("AIza")  # Google
+            or key.startswith("sk-ant-")  # Anthropic mistaken as Groq
+            or (key.startswith("sk-") and not key.startswith("gsk_"))  # OpenAI
+        )
+        if invalid:
+            # Fall back to settings/env if provider_manager handed a bad key
+            env_key = (settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
+            if env_key and env_key != key and env_key.startswith("gsk_") and env_key not in placeholders:
+                key = env_key
+            else:
+                self.client = None
+                self.available = False
+                return
         self.client = Groq(api_key=key, timeout=httpx.Timeout(120.0))
         self.available = True
         settings.GROQ_API_KEY = key

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import User from '../models/User';
+import bcrypt from 'bcrypt';
+import User, { defaultPermissionsForRole } from '../models/User';
 import Organization from '../models/Organization';
 import Document from '../models/Document';
 import {
@@ -8,6 +9,9 @@ import {
     getDuplicateGroupSizes,
 } from '../services/duplicateDetection';
 import { recordActivityFromReq } from '../services/activityLog';
+import openRemoteService from '../services/openRemoteService';
+import { ensureDefaultOrgRoles } from '../services/orgRoleSeed';
+import logger from '../utils/logger';
 
 const SORT_FIELDS: Record<string, string> = {
     createdAt: 'createdAt',
@@ -16,6 +20,32 @@ const SORT_FIELDS: Record<string, string> = {
     status: 'status',
     score: 'metadata.cvScore',
 };
+
+function generateUserId() {
+    return `usr_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+}
+
+async function buildUniqueUsername(email: string): Promise<string> {
+    const base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'admin';
+    let candidate = base;
+    let i = 0;
+    while (await User.findOne({ username: candidate })) {
+        i += 1;
+        candidate = `${base}_${i}`;
+    }
+    return candidate;
+}
+
+function deriveRealm(organizationName: string) {
+    return (
+        organizationName
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9_]/g, '_')
+            .replace(/_+/g, '_')
+            .slice(0, 40) || 'enterprise'
+    );
+}
 
 export const listAdmins = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -80,6 +110,145 @@ export const listAdmins = async (req: Request, res: Response, next: NextFunction
     }
 };
 
+/** SuperAdmin creates a company admin (+ organization). */
+export const createAdmin = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const {
+            fullName,
+            email,
+            password,
+            contactNumber,
+            organizationName,
+            status = 'active',
+        } = req.body;
+
+        const normalizedEmail = (email || '').toString().trim().toLowerCase();
+        const orgName = (organizationName || '').toString().trim();
+        if (!normalizedEmail || !password || !fullName || !orgName) {
+            return res.status(400).json({
+                success: false,
+                message: 'fullName, email, password and organizationName are required',
+            });
+        }
+        if (String(password).length < 8) {
+            return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+        }
+        if (!['active', 'blocked', 'pending'].includes(status)) {
+            return res.status(400).json({ success: false, message: 'status must be active, blocked, or pending' });
+        }
+
+        const existing = await User.findOne({ email: normalizedEmail });
+        if (existing) {
+            return res.status(409).json({ success: false, message: 'Email already exists' });
+        }
+
+        const username = await buildUniqueUsername(normalizedEmail);
+        const userId = generateUserId();
+        const orgId = `org_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const realm = deriveRealm(orgName);
+        const passwordHash = await bcrypt.hash(String(password), 12);
+
+        let openRemoteUserId: string | undefined;
+        let openRemoteSecret: string | undefined;
+        let openRemoteRealm = realm;
+        let openRemoteSynced = false;
+
+        const openRemoteEnabled = process.env.OPENREMOTE_ENABLED !== 'false';
+        const allowLocal = process.env.ALLOW_LOCAL_SEED === 'true' || process.env.NODE_ENV !== 'production';
+
+        if (openRemoteEnabled) {
+            try {
+                await openRemoteService.ensureRealmExists(realm, orgName);
+                const or = await openRemoteService.createUser({
+                    username,
+                    email: normalizedEmail,
+                    fullName: String(fullName).trim(),
+                    role: 'admin',
+                    realm,
+                });
+                openRemoteUserId = or.userId || undefined;
+                openRemoteSecret = or.openRemoteSecret || undefined;
+                openRemoteRealm = or.realm || realm;
+                openRemoteSynced = !!openRemoteUserId;
+            } catch (e: any) {
+                if (!allowLocal) {
+                    return res.status(502).json({
+                        success: false,
+                        message: `OpenRemote user create failed: ${e.message || e}`,
+                    });
+                }
+                logger.warn(`OpenRemote skipped for admin ${normalizedEmail}: ${e.message}`);
+            }
+        }
+
+        const org = await Organization.create({
+            organizationId: orgId,
+            organizationName: orgName,
+            contactEmail: normalizedEmail,
+            status: 'active',
+            subscriptionPlan: 'free',
+            openRemoteRealm,
+        });
+
+        try {
+            await ensureDefaultOrgRoles(orgId);
+        } catch (e: any) {
+            logger.warn(`Org roles seed failed for ${orgId}: ${e.message}`);
+        }
+
+        const admin = await User.create({
+            userId,
+            username,
+            fullName: String(fullName).trim(),
+            email: normalizedEmail,
+            contactNumber: contactNumber ? String(contactNumber).trim() : undefined,
+            passwordHash,
+            role: 'admin',
+            accountType: 'enterprise',
+            organizationId: orgId,
+            createdBy: req.user.userId,
+            permissions: defaultPermissionsForRole('admin'),
+            status,
+            emailVerified: true,
+            openRemoteRealm,
+            openRemoteSynced,
+            openRemoteSyncedAt: openRemoteSynced ? new Date() : undefined,
+            openRemoteUserId,
+            openRemoteSecret,
+        });
+
+        recordActivityFromReq(req, {
+            action: 'admin.create',
+            category: 'admin',
+            resourceType: 'user',
+            resourceId: admin.userId,
+            message: `Created admin ${admin.email} for org ${orgName}`,
+            metadata: { organizationId: orgId },
+        });
+
+        const safe = await User.findById(admin._id).select('-passwordHash -openRemoteSecret').lean();
+        res.status(201).json({
+            success: true,
+            data: {
+                admin: {
+                    ...safe,
+                    organization: {
+                        organizationId: org.organizationId,
+                        organizationName: org.organizationName,
+                        status: org.status,
+                        subscriptionPlan: org.subscriptionPlan,
+                        contactEmail: org.contactEmail,
+                    },
+                    teamMembers: [],
+                    teamMemberCount: 0,
+                },
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 export const updateAdminStatus = async (req: Request, res: Response, next: NextFunction) => {
     try {
         if (req.params.userId === req.user.userId) {
@@ -114,17 +283,50 @@ export const updateAdmin = async (req: Request, res: Response, next: NextFunctio
         const admin = await User.findOne({ userId: req.params.userId, role: 'admin' });
         if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
 
-        const { fullName, email, contactNumber } = req.body;
-        if (fullName) admin.fullName = fullName;
-        if (contactNumber !== undefined) admin.contactNumber = contactNumber;
+        const { fullName, email, contactNumber, password, organizationName, status } = req.body;
+        if (fullName) admin.fullName = String(fullName).trim();
+        if (contactNumber !== undefined) {
+            admin.contactNumber = contactNumber ? String(contactNumber).trim() : undefined;
+        }
         if (email) {
             const normalized = email.toString().trim().toLowerCase();
             const dup = await User.findOne({ email: normalized, userId: { $ne: admin.userId } });
             if (dup) return res.status(409).json({ success: false, message: 'Email already in use' });
             admin.email = normalized;
         }
+        if (password) {
+            if (String(password).length < 8) {
+                return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+            }
+            admin.passwordHash = await bcrypt.hash(String(password), 12);
+        }
+        if (status && ['active', 'blocked', 'pending'].includes(status)) {
+            if (req.params.userId === req.user.userId) {
+                return res.status(400).json({ success: false, message: 'Cannot change your own status' });
+            }
+            admin.status = status;
+        }
         await admin.save();
-        res.json({ success: true, data: { admin: await User.findById(admin._id).select('-passwordHash -openRemoteSecret').lean() } });
+
+        if (organizationName && admin.organizationId) {
+            await Organization.findOneAndUpdate(
+                { organizationId: admin.organizationId },
+                { organizationName: String(organizationName).trim() }
+            );
+        }
+
+        recordActivityFromReq(req, {
+            action: 'admin.update',
+            category: 'admin',
+            resourceType: 'user',
+            resourceId: admin.userId,
+            message: `Updated admin ${admin.email}`,
+        });
+
+        res.json({
+            success: true,
+            data: { admin: await User.findById(admin._id).select('-passwordHash -openRemoteSecret').lean() },
+        });
     } catch (error) {
         next(error);
     }
@@ -135,14 +337,18 @@ export const deleteAdmin = async (req: Request, res: Response, next: NextFunctio
         if (req.params.userId === req.user.userId) {
             return res.status(400).json({ success: false, message: 'Cannot delete yourself' });
         }
+        const admin = await User.findOne({ userId: req.params.userId, role: 'admin' });
+        if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
+
         const result = await User.deleteOne({ userId: req.params.userId, role: 'admin' });
         if (!result.deletedCount) return res.status(404).json({ success: false, message: 'Admin not found' });
+
         recordActivityFromReq(req, {
             action: 'admin.delete',
             category: 'admin',
             resourceType: 'user',
             resourceId: String(req.params.userId),
-            message: `Deleted admin ${req.params.userId}`,
+            message: `Deleted admin ${admin.email}`,
         });
         res.json({ success: true, message: 'Admin deleted' });
     } catch (error) {

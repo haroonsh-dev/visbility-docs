@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import {
+    createAdmin,
     deleteAdmin,
     listAdmins,
     listAllDocuments,
@@ -16,6 +17,7 @@ router.use(authenticate);
 router.use(authorize('superAdmin'));
 
 router.get('/admins', listAdmins);
+router.post('/admins', createAdmin);
 router.patch('/admins/:userId/status', updateAdminStatus);
 router.put('/admins/:userId', updateAdmin);
 router.delete('/admins/:userId', deleteAdmin);
