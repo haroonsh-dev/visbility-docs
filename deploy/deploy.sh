@@ -56,18 +56,19 @@ FAILED=0
 
 if want frontend; then
   echo "--- frontend ---"
-  # NOTE: deliberately NOT `if ( set -e; ... ); then` -- bash silently ignores
-  # errexit inside a subshell when that subshell is itself the condition of an
-  # if/while/until, even with an explicit `set -e` as the first line inside it.
-  # Run as a plain statement and check $? separately instead.
-  (
-    set -e
+  # NOTE on the `( ... ) && RESULT=0 || RESULT=$?` shape below: two bash
+  # gotchas stacked here. (1) `if ( set -e; ... ); then` silently ignores the
+  # inner `set -e` because the subshell is the condition of an if. (2) Making
+  # it a bare statement instead means ITS failure trips the outer script's
+  # own `set -euo pipefail`, aborting before `RESULT=$?` is ever reached.
+  # Putting the subshell in a `&&`/`||` list sidesteps both: bash's errexit
+  # explicitly does not fire for a command that's part of an AND-OR list.
+  ( set -e
     cp "$REPO_DIR/frontend/.env" "$WT/frontend/.env"
     cd "$WT/frontend"
     npm install
     npm run build
-  )
-  RESULT=$?
+  ) && RESULT=0 || RESULT=$?
   if [ "$RESULT" -eq 0 ]; then
     rsync -a --delete --exclude '.env' "$WT/frontend/" "$REPO_DIR/frontend/"
     pm2 restart docs-frontend
@@ -80,14 +81,12 @@ fi
 
 if want api-gateway; then
   echo "--- api-gateway ---"
-  (
-    set -e
+  ( set -e
     cp "$REPO_DIR/api-gateway/.env" "$WT/api-gateway/.env"
     cd "$WT/api-gateway"
     npm install
     npm run build
-  )
-  RESULT=$?
+  ) && RESULT=0 || RESULT=$?
   if [ "$RESULT" -eq 0 ]; then
     rsync -a --delete --exclude '.env' "$WT/api-gateway/" "$REPO_DIR/api-gateway/"
     pm2 restart docs-api
@@ -110,8 +109,7 @@ if want ai-backend; then
     NEXT_VENV="$SCRATCH/ai-backend-venv-a"
   fi
 
-  (
-    set -e
+  ( set -e
     cp "$REPO_DIR/ai-backend/.env" "$WT/ai-backend/.env"
     [ -d "$NEXT_VENV" ] || python3 -m venv "$NEXT_VENV"
     "$NEXT_VENV/bin/pip" install --upgrade pip -q
@@ -138,8 +136,7 @@ if want ai-backend; then
     kill $UVPID 2>/dev/null || true
     wait $UVPID 2>/dev/null || true
     [ "$READY" -eq 1 ]
-  )
-  RESULT=$?
+  ) && RESULT=0 || RESULT=$?
   if [ "$RESULT" -eq 0 ]; then
     rsync -a --delete \
       --exclude '.env' --exclude 'venv' --exclude 'uploads' \
