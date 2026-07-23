@@ -125,6 +125,8 @@ export async function chatWithAi(params: {
     chatHistory?: Array<{ role: string; content: string }>;
     userId?: string;
     selectedText?: string;
+    phase3Agent?: string;
+    documentType?: string;
 }): Promise<AiChatResult> {
     if (!ENABLED) {
         throw new Error('AI service is disabled');
@@ -139,8 +141,14 @@ export async function chatWithAi(params: {
     if (params.chatHistory?.length) body.chat_history = params.chatHistory;
     if (params.userId) body.user_id = params.userId;
     if (params.selectedText) body.selected_text = params.selectedText;
+    if (params.phase3Agent) body.phase3_agent = params.phase3Agent;
+    if (params.documentType) body.document_type = params.documentType;
 
-    const path = params.documentIds?.length ? '/api/v1/chat' : '/api/v1/chat/all';
+    // Prefer /chat when docs selected; /chat/all for org-wide or agent-folder scope
+    const path =
+        params.documentIds?.length || params.phase3Agent || params.documentType
+            ? '/api/v1/chat'
+            : '/api/v1/chat/all';
     const res = await client().post(path, body);
 
     throwIfAiFailed(res, 'AI chat failed');

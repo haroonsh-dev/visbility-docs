@@ -16,6 +16,7 @@ import ChatScopePanel, {
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
 import { usePermissions } from "@/context/PermissionsContext";
+import { resolveDocAgent } from "@/lib/documentAgents";
 
 type ChatMessage = {
     id: string;
@@ -373,7 +374,19 @@ function ChatContent() {
                 chatScope,
                 sessionId,
             };
-            if (chatScope === "selected") body.documentIds = selectedDocIds;
+            if (chatScope === "selected") {
+                body.documentIds = selectedDocIds;
+                const selected = libraryDocs.filter((d) => selectedDocIds.includes(d.documentId));
+                const agents = new Set(selected.map((d) => resolveDocAgent(d)));
+                if (agents.size === 1) {
+                    const only = [...agents][0];
+                    if (only && only !== "other_agent") body.phase3Agent = only;
+                }
+                const types = new Set(
+                    selected.map((d) => d.classification).filter((t): t is string => Boolean(t))
+                );
+                if (types.size === 1) body.documentType = [...types][0];
+            }
             if (focusedExcerpt) body.selected_text = focusedExcerpt;
 
             const data = await apiRequest("/docs/chat", {

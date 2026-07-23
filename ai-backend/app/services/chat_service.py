@@ -4,7 +4,7 @@ from .rag_service import rag_service
 from .document_service import document_service
 from ..database import SupabaseDB
 from .orchestration_logger import get_chat_logger, C
-from .agent_orchestrator import _load_phase3_prompt, _load_prompt, DOCUMENT_TO_PHASE3_AGENT, PHASE3_AGENT_PROMPT_MAP
+from .agent_orchestrator import _load_phase3_prompt, _load_prompt, get_phase3_prompt_for_doc, DOCUMENT_TO_PHASE3_AGENT, PHASE3_AGENT_PROMPT_MAP
 
 _RESUME_KEYWORDS = ["resume", "cv ", "candidate", "applicant", "hiring", "recruit",
                     "top.*resume", "best.*candidate", "rank.*resume", "score.*resume",
@@ -95,11 +95,66 @@ class ChatService:
                           "seller", "tax", "vat", "gst", "subtotal", "line item", "line items",
                           "amount due", "bill to", "ship to", "purchase order", "po", "total amount",
                           "رقم", "انوائس", "بل", "ٹوٹل", "وصولی"],
-        "sales_agent": ["rfq", "quotation", "quote", "suggestive", "required language",
+        "procurement_agent": ["rfq", "quotation", "quote", "suggestive", "required language",
                         "bid", "tender", "proposal", "procurement", "request for quotation",
                         "رقم", "کوٹیشن", "درخواست"],
         "legal_agent": ["contract", "agreement", "clause", "liability", "terms and conditions",
                         "legal", "party", "indemnity", "jurisdiction", "معاہدہ", "قانون"],
+        "compliance_agent": ["audit", "audit report", "finding", "findings", "corrective action",
+                             "compliance", "non-compliance", "non compliance", "sop", "procedure",
+                             "certificate", "certification", "quality report", "qc", "maintenance",
+                             "inspection", "safety", "regulatory", "standard operating",
+                             "deviation", "pass fail", "آڈٹ", "سرٹیفکیٹ", "کوالٹی", "مرمت",
+                             "حفاظت", "طریقہ کار", "تعمیل", "خلاف ورزی", "معائنہ"],
+    }
+
+    # Keyword → document_type map for query-type detection (org-wide chat).
+    KEYWORD_TO_DOC_TYPE = {
+        "invoice": ["invoice", "inv ", "inv.", "bill", "انوائس", "بل", "رسید"],
+        "expense_report": ["expense report", "expense", "reimbursement", "اخراجات", "اخراجات رپورٹ"],
+        "bank_statement": ["bank statement", "bank stmt", "statement of account", "بینک سٹیٹمنٹ"],
+        "payment_receipt": ["payment receipt", "receipt", "وصولی", "رسید ادائیگی"],
+        "tax_document": ["tax document", "tax return", "wht", "withholding", "ٹیکس"],
+        "budget": ["budget", "बजٹ"],
+        "financial_statement": ["financial statement", "balance sheet", "پروفٹ", "مالیاتی بیان"],
+        "purchase_order": ["purchase order", "po ", "p.o.", "خریداری", "خریداری آرڈر"],
+        "quotation": ["quotation", "quote", "کوٹیشن"],
+        "rfq": ["rfq", "request for quotation", "درخواست برائے کوٹیشن"],
+        "delivery_note": ["delivery note", "delivery slip", "ڈیلیوری نوٹ"],
+        "procurement_request": ["procurement request", "purchase request", "خریداری کی درخواست"],
+        "contract": ["contract", "معاہدہ"],
+        "agreement": ["agreement", "اتفاق نامہ"],
+        "nda": ["nda", "non-disclosure", "non disclosure", "confidentiality agreement", "این ڈی اے"],
+        "service_agreement": ["service agreement", "سروس معاہدہ"],
+        "lease_agreement": ["lease agreement", "lease", "کرایہ نامہ"],
+        "vendor_contract": ["vendor contract", "supplier contract"],
+        "resume": ["resume", "cv", "c.v.", "bio data", "بائیو ڈیٹا", "ریزیومہ", "امیدوار"],
+        "transcript": ["transcript", "نتیجہ", "رزلٹ", "transcripts"],
+        "offer_letter": ["offer letter", "آفر لیٹر", "پیشکش"],
+        "payroll": ["payroll", "salary slip", "payslip", "تنخواہ"],
+        "leave_application": ["leave application", "leave request", "چھٹی"],
+        "attendance": ["attendance", "حاضری"],
+        "employee_record": ["employee record", "hr document", "ملازم", "اسناد ملازمین"],
+        "certificate": ["certificate", "سرٹیفکیٹ", "سند"],
+        "audit_report": ["audit", "audit report", "آڈٹ", "آڈٹ رپورٹ"],
+        "quality_report": ["quality report", "کوالٹی", "معیاری رپورٹ"],
+        "maintenance_report": ["maintenance report", "دیکھ بھال", "مرمت"],
+        "sop": ["sop", "standard operating", "ایس او پی", "ایسوپی"],
+        "engineering_drawing": ["engineering drawing", "نقشہ", "ڈرائنگ", "انجینئرنگ ڈرائنگ"],
+        "inspection_report": ["inspection report", "معائنہ رپورٹ"],
+        "safety_manual": ["safety manual", "حفاظتی دستی"],
+        "other": ["other", "general", "عام", "general document"],
+    }
+
+    # Agent → retrieval-context anchor. Prepended to the SEARCH query only
+    # (never to the model-facing question) so hybrid/aggregate retrieval is steered.
+    AGENT_CONTEXT_ANCHORS = {
+        "finance_agent": "invoice financial document: invoice number, vendor, customer, subtotal, tax, total amount, due date, line items, payment terms | انوائس بل وصولی ٹوٹل رقم",
+        "hr_agent": "HR document: employee, resume, CV, candidate, salary, leave, appraisal, designation, department | ملازم ریزیومہ تنخواہ چھٹی تقرری",
+        "legal_agent": "legal document: contract, agreement, party, clause, indemnity, jurisdiction, liability, term | معاہدہ قانون شرط فریق",
+        "compliance_agent": "compliance document: audit report, SOP, certificate, quality report, maintenance report, engineering drawing, finding, deviation, corrective action, pass/fail, standard, non-conformance, inspection, safety | آڈٹ رپورٹ سرٹیفکیٹ کوالٹی رپورٹ مرمت رپورٹ خلاف ورزی ایس او پی معائنہ حفاظت",
+        "procurement_agent": "procurement document: purchase order, quotation, RFQ, supplier, vendor, delivery note, line items, total amount | خریداری آرڈر کوٹیشن سپلائر وینڈر بل",
+        "other_agent": "general document: summary, key points, parties, dates, references",
     }
 
     def _detect_query_agent(self, query: str) -> str | None:
@@ -119,6 +174,29 @@ class ChatService:
         if not scores:
             return None
         # Only commit if a single intent clearly dominates (no tie)
+        ranked = sorted(scores.items(), key=lambda x: -x[1])
+        if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+            return None
+        return ranked[0][0]
+
+    def detect_doc_type_keyword(self, query: str) -> str | None:
+        """Detect a document_type from query keywords (bilingual EN+UR).
+
+        Used for org-wide chat: if the user's question mentions a type (e.g.
+        'invoice', 'quotation', 'ریزیومہ'), retrieval is restricted to documents
+        of that type. Returns the best-matching document_type, or None when no
+        keyword matches (or multiple types tie) so the caller searches all docs.
+        """
+        q = (query or "").lower()
+        if not q:
+            return None
+        scores = {}
+        for doc_type, kws in self.KEYWORD_TO_DOC_TYPE.items():
+            hits = sum(1 for kw in kws if kw in q)
+            if hits:
+                scores[doc_type] = hits
+        if not scores:
+            return None
         ranked = sorted(scores.items(), key=lambda x: -x[1])
         if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
             return None
@@ -196,6 +274,57 @@ class ChatService:
             if len(out) >= limit:
                 break
         return out
+
+    def _build_multi_prompt_for_search_results(self, doc_type_counts: dict, agents: set) -> tuple[str, list[str]]:
+        """Load and sanitize multiple .md prompt files for top matched document types.
+        Compactly limits loaded prompts to top 3 matched types (max ~1,200 chars per prompt)
+        to stay safely under Groq token limits while providing specialized domain guidelines."""
+        import re
+        loaded_prompts = []
+        loaded_paths = []
+        seen_paths = set()
+
+        sorted_types = [dt for dt, _ in sorted(doc_type_counts.items(), key=lambda x: x[1], reverse=True) if dt]
+        if len(sorted_types) > 1 and "other" in sorted_types:
+            sorted_types.remove("other")
+
+        top_types = sorted_types[:3]
+
+        pairs = []
+        for dt in top_types:
+            p3a = DOCUMENT_TO_PHASE3_AGENT.get(dt, "other_agent")
+            pairs.append((dt, p3a))
+
+        if not pairs and agents:
+            for ag in list(agents)[:3]:
+                if ag and ag != "other_agent":
+                    pairs.append(("", ag))
+
+        if not pairs:
+            pairs.append(("", "other_agent"))
+
+        for dt, ag in pairs:
+            raw_prompt, prompt_path = get_phase3_prompt_for_doc(dt, ag)
+            if raw_prompt and prompt_path not in seen_paths:
+                seen_paths.add(prompt_path)
+                cleaned = re.sub(
+                    r"##\s*(?:Field Extraction Example|Extraction Example|Field Specifications).*?(?=\n##|\Z)",
+                    "", raw_prompt, flags=re.DOTALL | re.IGNORECASE,
+                )
+                cleaned = re.sub(r"Return ONLY valid JSON\..*?(?=\n|\Z)", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+                cleaned = cleaned.replace("{text}", "{context}")
+                cleaned = cleaned.replace("\nDocument text:\n{context}", "").strip()
+
+                if len(cleaned) > 1200:
+                    cleaned = cleaned[:1150] + "\n..."
+
+                doc_name_label = dt.upper() if dt else ag.replace("_", " ").upper()
+                label = f"### Domain Guidelines for {doc_name_label} ({prompt_path.split('/')[-1]})"
+                loaded_prompts.append(f"{label}\n{cleaned}")
+                loaded_paths.append(prompt_path)
+
+        merged_prompt = "\n\n".join(loaded_prompts)
+        return merged_prompt, loaded_paths
 
     def _auto_title(self, session_id: str, first_question: str):
         title = first_question[:80].strip()
@@ -407,6 +536,39 @@ class ChatService:
                 "session_id": sid,
             }
 
+        # ── Agent-context anchoring for retrieval (search query only) ──
+        anchor_agent = phase3_agent or None
+        if resolved_ids and not anchor_agent:
+            try:
+                doc_result = SupabaseDB.select("documents",
+                    columns="id, document_type, phase3_agent",
+                    filters={"organization_id": organization_id},
+                )
+                doc_data = getattr(doc_result, "data", doc_result if isinstance(doc_result, list) else [])
+                resolved_set = set(resolved_ids)
+                _agent_counts = {}
+                for d in doc_data:
+                    if d.get("id") in resolved_set:
+                        p3a = d.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(d.get("document_type", ""), "other_agent")
+                        if p3a:
+                            _agent_counts[p3a] = _agent_counts.get(p3a, 0) + 1
+                if _agent_counts:
+                    anchor_agent = max(_agent_counts, key=_agent_counts.get)
+            except Exception:
+                pass
+        if not anchor_agent:
+            anchor_agent = self._detect_query_agent(question)
+
+        search_query = question
+        if anchor_agent and anchor_agent in self.AGENT_CONTEXT_ANCHORS:
+            search_query = f"{question} | {self.AGENT_CONTEXT_ANCHORS[anchor_agent]}"
+
+        # ── Keyword → document_type filter (org-wide / no_scope only) ──
+        detected_doc_type = self.detect_doc_type_keyword(question)
+        apply_type_filter = bool(detected_doc_type) and not resolved_ids and not document_type
+        if apply_type_filter:
+            document_type = detected_doc_type
+
         # Cross-document "list a field from every file" intent (only when no doc chosen)
         cross_doc = False
         agg_field_terms = []
@@ -414,7 +576,7 @@ class ChatService:
             cross_doc, agg_field_terms = self._detect_cross_doc_intent(question)
 
         hybrid_kwargs = dict(
-            query=question,
+            query=search_query,
             organization_id=organization_id,
             document_type=document_type,
             phase3_agent=phase3_agent,
@@ -428,7 +590,7 @@ class ChatService:
         if cross_doc:
             chat_log.info("Cross-doc intent detected — using aggregate_search")
             search_results = rag_service.aggregate_search(
-                query=question,
+                query=search_query,
                 organization_id=organization_id,
                 document_ids=resolved_ids if resolved_ids else None,
                 max_docs=150,
@@ -624,7 +786,7 @@ class ChatService:
             doc_types_seen[dt] = doc_types_seen.get(dt, 0) + 1
             p3a = r.get("phase3_agent", "")
             if p3a:
-                prompt_file = f"prompts/phase3/{p3a}.md"
+                _, prompt_file = get_phase3_prompt_for_doc(dt, p3a)
                 agent_prompts_seen[prompt_file] = agent_prompts_seen.get(prompt_file, 0) + 1
         if doc_types_seen:
             chat_log.info(f"Document types: {', '.join(f'{k}={v}' for k, v in doc_types_seen.items())}")
@@ -638,8 +800,9 @@ class ChatService:
             agent_tag = f" [{p3a}]" if p3a else ""
             chat_log.source_item(i, s["document_title"], s.get("document_type", "") + agent_tag, s["score"])
 
-        # ── Determine dominant agent from selected documents directly ──
+        # ── Determine dominant agent and document_type from selected documents ──
         doc_agent_counts = {}
+        doc_type_counts = {}
         if resolved_ids:
             try:
                 doc_result = SupabaseDB.select("documents",
@@ -650,7 +813,10 @@ class ChatService:
                 resolved_set = set(resolved_ids)
                 for d in doc_data:
                     if d.get("id") in resolved_set:
-                        p3a = d.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(d.get("document_type", ""), "other_agent")
+                        dt = d.get("document_type", "")
+                        if dt:
+                            doc_type_counts[dt] = doc_type_counts.get(dt, 0) + 1
+                        p3a = d.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(dt, "other_agent")
                         if p3a:
                             doc_agent_counts[p3a] = doc_agent_counts.get(p3a, 0) + 1
             except Exception:
@@ -658,24 +824,33 @@ class ChatService:
 
         # Also count from search results as fallback
         agent_counts = {}
+        search_doc_type_counts = {}
         for r in search_results:
-            p3a = r.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(r.get("document_type", ""), "other_agent")
+            dt = r.get("document_type", "")
+            if dt:
+                search_doc_type_counts[dt] = search_doc_type_counts.get(dt, 0) + 1
+            p3a = r.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(dt, "other_agent")
             agent_counts[p3a] = agent_counts.get(p3a, 0) + 1
 
         # Use selected-doc agents if available, otherwise fall back to search result agents
         dominant_source = doc_agent_counts if doc_agent_counts else agent_counts
         dominant_agent = max(dominant_source, key=dominant_source.get) if dominant_source else "other_agent"
 
-        # ── Smart agent when no document is explicitly selected ──
-        # Avoid forcing the majority agent (e.g. hr_agent for resumes) onto a question
-        # about invoices/RFQs. Detect intent from the query; fall back to a generic
-        # Q&A agent when intent is unclear so the LLM answers from whatever doc has it.
-        no_scope = not resolved_ids and not document_type and not phase3_agent
-        if no_scope:
-            detected = self._detect_query_agent(question)
-            dominant_agent = detected if detected else "other_agent"
+        dominant_dt_source = doc_type_counts if doc_type_counts else search_doc_type_counts
+        dominant_doc_type = max(dominant_dt_source, key=dominant_dt_source.get) if dominant_dt_source else (document_type or "")
 
-        # Load the full agent .md prompt and adapt it for Q&A
+        no_scope = not resolved_ids and not document_type and not phase3_agent
+        is_folder_selection = bool(phase3_agent and not resolved_ids and not document_type)
+        target_doc_type = "" if is_folder_selection else dominant_doc_type
+
+        if phase3_agent and (is_folder_selection or not dominant_source):
+            dominant_agent = phase3_agent
+        elif no_scope:
+            detected = self._detect_query_agent(question)
+            if detected:
+                dominant_agent = detected
+
+        # Load agent / per-type .md prompts and adapt them for Q&A
         qa_prompt = ""
         try:
             if is_finance_query or dominant_agent == "finance_agent":
@@ -694,34 +869,73 @@ class ChatService:
                     "8. Do not output JSON.\n"
                 )
             else:
-                raw_prompt = _load_phase3_prompt(f"{dominant_agent}.md")
-                if raw_prompt:
-                    import re
-                    qa_prompt = raw_prompt.replace("{text}", "{context}")
-                    # Remove extraction-specific JSON instructions, keep Document text line
-                    qa_prompt = re.sub(
-                        r"Return ONLY valid JSON\..*?(?=\nDocument text:)",
-                        "Answer the user's question based ONLY on the provided document context below.",
-                        qa_prompt,
-                        flags=re.DOTALL,
+                multi_types = dominant_dt_source or search_doc_type_counts
+                use_multi = no_scope or (len(multi_types) > 1)
+
+                if use_multi:
+                    matched_counts = dict(search_doc_type_counts)
+                    if doc_type_counts:
+                        for dt, c in doc_type_counts.items():
+                            matched_counts[dt] = matched_counts.get(dt, 0) + c
+                    if no_scope:
+                        query_doc_type = self.detect_doc_type_keyword(question)
+                        if query_doc_type:
+                            matched_counts[query_doc_type] = matched_counts.get(query_doc_type, 0) + 100
+                            chat_log.info(f"Query intent classified as doc_type: '{query_doc_type}'")
+                    matched_agents = set(agent_counts.keys())
+                    if phase3_agent:
+                        matched_agents.add(phase3_agent)
+                    detected_agent = self._detect_query_agent(question)
+                    if detected_agent:
+                        matched_agents.add(detected_agent)
+                    merged_rules, loaded_paths = self._build_multi_prompt_for_search_results(
+                        matched_counts, matched_agents
                     )
-                    # Remove the now-unnecessary "Document text:" line
-                    qa_prompt = qa_prompt.replace("\nDocument text:\n{context}", "")
-                    qa_prompt += (
-                        "\n\nRules:\n"
-                        "0. Always answer in the same language as the user's question — Urdu/Saraiki question → Urdu answer, English question → English answer.\n"
-                        "1. Answer concisely and directly using the context.\n"
-                        "2. If the context contains image/vision descriptions, use them to answer.\n"
-                        "3. If the answer is NOT in the context, say \"I cannot find this information in the documents.\"\n"
-                        "4. Do NOT make up or hallucinate information.\n"
-                        "5. Do NOT output JSON or extract fields — just answer the question naturally.\n"
-                        "6. If the context has tables or diagrams, explain what they show.\n"
+                    if merged_rules:
+                        chat_log.info(
+                            f"Dynamically loaded intent-matched .md prompt file(s) "
+                            f"({len(loaded_paths)} files): {', '.join(loaded_paths)}"
+                        )
+                        qa_prompt = merged_rules
+
+                if not qa_prompt:
+                    raw_prompt, prompt_path = get_phase3_prompt_for_doc(
+                        target_doc_type or dominant_doc_type, dominant_agent
                     )
-                    resume_rank_instruction = (
-                        "\n7. The context may include a [Resume Rankings] block with CV evaluation scores. "
-                        "Use those scores to rank, compare, or recommend candidates when asked.\n"
-                    ) if is_resume_query and any(r.get("cv_score") is not None for r in resumes) else ""
-                    qa_prompt += resume_rank_instruction
+                    if raw_prompt:
+                        import re
+                        chat_log.info(
+                            f"Loaded prompt file: {prompt_path} "
+                            f"(folder_selection={is_folder_selection}, "
+                            f"doc_type='{target_doc_type or dominant_doc_type}', "
+                            f"agent='{dominant_agent}')"
+                        )
+                        cleaned_prompt = re.sub(
+                            r"##\s*(?:Field Extraction Example|Extraction Example|Field Specifications).*?(?=\n##|\Z)",
+                            "", raw_prompt, flags=re.DOTALL | re.IGNORECASE,
+                        )
+                        cleaned_prompt = re.sub(
+                            r"Return ONLY valid JSON\..*?(?=\n|\Z)",
+                            "", cleaned_prompt, flags=re.DOTALL | re.IGNORECASE,
+                        )
+                        cleaned_prompt = cleaned_prompt.replace("{text}", "{context}")
+                        cleaned_prompt = cleaned_prompt.replace("\nDocument text:\n{context}", "")
+                        qa_prompt = cleaned_prompt
+                        qa_prompt += (
+                            "\n\nRules:\n"
+                            "0. Always answer in the same language as the user's question — Urdu/Saraiki question → Urdu answer, English question → English answer.\n"
+                            "1. Answer concisely and directly using the context.\n"
+                            "2. If the context contains image/vision descriptions, use them to answer.\n"
+                            "3. If the answer is NOT in the context, say \"I cannot find this information in the documents.\"\n"
+                            "4. Do NOT make up or hallucinate information.\n"
+                            "5. Do NOT output JSON or extract fields — just answer the question naturally.\n"
+                            "6. If the context has tables or diagrams, explain what they show.\n"
+                        )
+                        resume_rank_instruction = (
+                            "\n7. The context may include a [Resume Rankings] block with CV evaluation scores. "
+                            "Use those scores to rank, compare, or recommend candidates when asked.\n"
+                        ) if is_resume_query and any(r.get("cv_score") is not None for r in resumes) else ""
+                        qa_prompt += resume_rank_instruction
         except Exception:
             pass
 

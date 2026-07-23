@@ -24,20 +24,53 @@ export const UPLOAD_ROOT = process.env.SHARED_STORAGE_PATH
 
 /** Known document types → by-type/{type}/… folders */
 export const KNOWN_DOCUMENT_TYPES = new Set([
+    // Finance
     'invoice',
-    'purchase_order',
-    'quotation',
     'financial_statement',
-    'contract',
+    'expense_report',
+    'payment_receipt',
+    'tax_document',
+    'bank_statement',
+    'budget',
+    // HR
+    'employee_record',
     'hr_document',
+    'offer_letter',
+    'employment_contract',
+    'leave_application',
+    'payroll',
+    'attendance',
+    'performance_review',
+    'training_certificate',
     'resume',
     'transcript',
+    // Legal
+    'contract',
+    'agreement',
+    'nda',
+    'service_agreement',
+    'lease_agreement',
+    'vendor_contract',
+    // Procurement
+    'purchase_order',
+    'quotation',
+    'supplier_agreement',
+    'vendor_list',
+    'rfq',
+    'delivery_note',
+    'procurement_request',
+    // Compliance
+    'sop',
     'audit_report',
     'quality_report',
     'certificate',
-    'sop',
     'maintenance_report',
     'engineering_drawing',
+    'inspection_report',
+    'safety_manual',
+    'iso_document',
+    'compliance_form',
+    'regulatory_document',
     'other',
 ]);
 
@@ -59,6 +92,8 @@ export function normalizeDocumentType(raw?: string | null): string {
     if (t === 'cv' || t === 'curriculum_vitae' || t === 'curriculum') t = 'resume';
     if (t === 'po') t = 'purchase_order';
     if (t === 'hr') t = 'hr_document';
+    if (t === 'non_disclosure' || t === 'non_disclosure_agreement') t = 'nda';
+    if (t === 'request_for_quotation') t = 'rfq';
     if (!KNOWN_DOCUMENT_TYPES.has(t)) return 'other';
     return t;
 }

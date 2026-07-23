@@ -25,6 +25,27 @@ def _load_phase3_prompt(filename: str) -> str:
     return _load_prompt(os.path.join("phase3", filename))
 
 
+def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str, str]:
+    """Resolve per-type prompt under phase3/{agent}/{doc_type}.md, then agent fallback."""
+    agent = agent_type or DOCUMENT_TO_PHASE3_AGENT.get(doc_type, "other_agent")
+    folder_name = agent.replace("_agent", "")
+
+    if doc_type and doc_type != "other" and folder_name != "other":
+        subfolder_path = os.path.join("phase3", folder_name, f"{doc_type}.md")
+        content = _load_prompt(subfolder_path)
+        if content:
+            return content, subfolder_path
+
+    if agent and agent != "other_agent":
+        agent_path = os.path.join("phase3", f"{agent}.md")
+        content = _load_prompt(agent_path)
+        if content:
+            return content, agent_path
+
+    fallback_path = os.path.join("phase3", "other.md")
+    return _load_prompt(fallback_path), fallback_path
+
+
 PHASE3_AGENT_PROMPT_MAP = {
     "finance_agent": os.path.join("phase3", "finance_agent.md"),
     "procurement_agent": os.path.join("phase3", "procurement_agent.md"),
@@ -35,20 +56,53 @@ PHASE3_AGENT_PROMPT_MAP = {
 }
 
 DOCUMENT_TO_PHASE3_AGENT = {
+    # Finance
     "invoice": "finance_agent",
     "financial_statement": "finance_agent",
-    "purchase_order": "procurement_agent",
-    "quotation": "procurement_agent",
-    "contract": "legal_agent",
+    "expense_report": "finance_agent",
+    "payment_receipt": "finance_agent",
+    "tax_document": "finance_agent",
+    "bank_statement": "finance_agent",
+    "budget": "finance_agent",
+    # HR
+    "employee_record": "hr_agent",
     "hr_document": "hr_agent",
-    "certificate": "compliance_agent",
-    "audit_report": "compliance_agent",
-    "quality_report": "compliance_agent",
-    "maintenance_report": "compliance_agent",
-    "sop": "compliance_agent",
-    "engineering_drawing": "compliance_agent",
+    "offer_letter": "hr_agent",
+    "employment_contract": "hr_agent",
+    "leave_application": "hr_agent",
+    "payroll": "hr_agent",
+    "attendance": "hr_agent",
+    "performance_review": "hr_agent",
+    "training_certificate": "hr_agent",
     "resume": "hr_agent",
     "transcript": "hr_agent",
+    # Legal
+    "contract": "legal_agent",
+    "agreement": "legal_agent",
+    "nda": "legal_agent",
+    "service_agreement": "legal_agent",
+    "lease_agreement": "legal_agent",
+    "vendor_contract": "legal_agent",
+    # Procurement
+    "purchase_order": "procurement_agent",
+    "quotation": "procurement_agent",
+    "supplier_agreement": "procurement_agent",
+    "vendor_list": "procurement_agent",
+    "rfq": "procurement_agent",
+    "delivery_note": "procurement_agent",
+    "procurement_request": "procurement_agent",
+    # Compliance
+    "sop": "compliance_agent",
+    "audit_report": "compliance_agent",
+    "quality_report": "compliance_agent",
+    "certificate": "compliance_agent",
+    "maintenance_report": "compliance_agent",
+    "engineering_drawing": "compliance_agent",
+    "inspection_report": "compliance_agent",
+    "safety_manual": "compliance_agent",
+    "iso_document": "compliance_agent",
+    "compliance_form": "compliance_agent",
+    "regulatory_document": "compliance_agent",
     "other": "other_agent",
 }
 
@@ -302,13 +356,13 @@ class CategoryExtractionAgent:
         agent = agent_type or DOCUMENT_TO_PHASE3_AGENT.get(document_type, "other_agent")
         log = get_logger()
         log.info(f"DocType: {document_type} | Text: {len(text)} chars")
-        prompt_template = _load_phase3_prompt(f"{agent}.md")
+        prompt_template, prompt_path = get_phase3_prompt_for_doc(document_type, agent)
         if not prompt_template:
-            log.warn(f"No prompt found for agent '{agent}', returning empty")
+            log.warn(f"No prompt found for agent '{agent}' / type '{document_type}', returning empty")
             return {"extracted_data": {}, "confidence": 0.0}
 
         prompt = prompt_template.replace("{text}", text[:64000] if text else "")
-        log.info(f"Prompt loaded ({C.DIM}{agent}.md, {len(prompt_template)} chars{C.RESET})")
+        log.info(f"Prompt loaded ({C.DIM}{prompt_path}, {len(prompt_template)} chars{C.RESET})")
         log.info(f"Prompt preview: {C.DIM}{prompt[:200].replace(chr(10), ' ')}...{C.RESET}")
 
         try:
@@ -331,6 +385,7 @@ class CategoryExtractionAgent:
                 "confidence": avg_confidence,
                 "field_confidence": field_confidence,
                 "agent_type": agent,
+                "prompt_path": prompt_path,
             }
         except Exception as e:
             log.fail(f"Extraction failed: {e}")

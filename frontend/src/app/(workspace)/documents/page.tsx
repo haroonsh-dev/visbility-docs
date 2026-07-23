@@ -16,7 +16,7 @@ import ShareModal from "@/components/ShareModal";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
-import { AGENT_FILTER_OPTIONS, AGENT_OPTIONS, agentLabel, resolveDocAgent } from "@/lib/documentAgents";
+import { AGENT_FILTER_OPTIONS, AGENT_OPTIONS, agentLabel, resolveDocAgent, DOC_TYPE_FILTER_OPTIONS } from "@/lib/documentAgents";
 import { ACCEPT_ATTR, filterAllowedFiles, getFileTypeLabel } from "@/lib/fileValidation";
 import { usePermissions } from "@/context/PermissionsContext";
 import { getStoredUser } from "@/lib/authSession";
@@ -463,7 +463,7 @@ function DocumentsContent() {
                             {filtersOpen && (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1 animate-fade-in-up">
                                     <FilterSelect label="Scope" value={scopeFilter} onChange={(v) => { setScopeFilter(v); setPage(1); }} options={[{ value: "", label: "All scopes" }, { value: "department", label: "Department" }, { value: "personal", label: "Personal" }]} minWidth="w-full" />
-                                    <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={[{ value: "", label: "All types" }, { value: "resume", label: "Resume / CV" }, { value: "invoice", label: "Invoice" }, { value: "purchase_order", label: "Purchase order" }, { value: "contract", label: "Contract" }, { value: "quotation", label: "Quotation" }, { value: "hr_document", label: "HR document" }, { value: "other", label: "Other" }]} minWidth="w-full" />
+                                    <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={DOC_TYPE_FILTER_OPTIONS} minWidth="w-full" />
                                     <FilterSelect label="Score" value={scoreFilter} onChange={(v) => { setScoreFilter(v); setPage(1); }} options={SCORE_FILTER_OPTIONS} minWidth="w-full" />
                                     <FilterSelect label="Sort" value={sortPreset} onChange={(v) => { setSortPreset(v); setPage(1); }} options={SORT_PRESETS.map((s) => ({ value: s.value, label: s.label }))} minWidth="w-full" />
                                     <FilterSelect label="Agent" value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={AGENT_FILTER_OPTIONS} minWidth="w-full" />

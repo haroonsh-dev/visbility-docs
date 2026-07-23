@@ -132,6 +132,9 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 scopedPythonIds = undefined;
             }
 
+            const phase3Agent = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
+            const documentType = (req.body.document_type || req.body.documentType || '').toString().trim() || undefined;
+
             const result = await chatWithAi({
                 organizationId: orgId,
                 question: message,
@@ -140,6 +143,8 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 chatHistory: Array.isArray(req.body.chatHistory) ? req.body.chatHistory : undefined,
                 userId: req.user.userId,
                 selectedText: (req.body.selected_text || req.body.selectedText || '').toString().trim() || undefined,
+                phase3Agent,
+                documentType,
             });
 
             const seenCite = new Set<string>();

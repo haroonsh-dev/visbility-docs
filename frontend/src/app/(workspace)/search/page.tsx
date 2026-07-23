@@ -6,7 +6,7 @@ import { FileText, Loader2, Search as SearchIcon } from "lucide-react";
 import FilterSelect from "@/components/FilterSelect";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { apiRequest } from "@/lib/apiClient";
-import { AGENT_FILTER_OPTIONS, agentLabel } from "@/lib/documentAgents";
+import { AGENT_FILTER_OPTIONS, agentLabel, DOC_TYPE_FILTER_OPTIONS } from "@/lib/documentAgents";
 import { usePermissions } from "@/context/PermissionsContext";
 
 type SearchHit = {
@@ -21,17 +21,6 @@ type SearchHit = {
     status?: string;
     metadata?: { phase3Agent?: string } | null;
 };
-
-const DOC_TYPE_OPTIONS = [
-    { value: "", label: "All types" },
-    { value: "resume", label: "Resume / CV" },
-    { value: "invoice", label: "Invoice" },
-    { value: "purchase_order", label: "Purchase order" },
-    { value: "contract", label: "Contract" },
-    { value: "quotation", label: "Quotation" },
-    { value: "hr_document", label: "HR document" },
-    { value: "other", label: "Other" },
-];
 
 const STATUS_OPTIONS = [
     { value: "", label: "All statuses" },
@@ -116,7 +105,7 @@ function SearchContent() {
                         </button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <FilterSelect label="Doc type" value={docType} onChange={setDocType} options={DOC_TYPE_OPTIONS} minWidth="w-full" />
+                        <FilterSelect label="Doc type" value={docType} onChange={setDocType} options={DOC_TYPE_FILTER_OPTIONS} minWidth="w-full" />
                         <FilterSelect label="Agent" value={agent} onChange={setAgent} options={AGENT_FILTER_OPTIONS} minWidth="w-full" />
                         <FilterSelect label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} minWidth="w-full" />
                     </div>
