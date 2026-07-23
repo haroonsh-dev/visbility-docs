@@ -69,3 +69,5 @@ app.use(notFound);
 app.use(errorHandler);
 
 export default app;
+
+const deliberateTypeError: number = "this should fail tsc build";
