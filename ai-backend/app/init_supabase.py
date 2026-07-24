@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS document_embeddings (
     organization_id TEXT NOT NULL,
     document_id TEXT NOT NULL,
     chunk_id INTEGER,
-    embedding VECTOR(384),
+    embedding VECTOR(1024),
     model_name TEXT DEFAULT 'all-MiniLM-L6-v2',
     created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -170,7 +170,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_doc_id ON workflow_instances(document_id
 CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow_instances(status);
 
 CREATE OR REPLACE FUNCTION match_documents(
-    query_embedding VECTOR(384),
+    query_embedding VECTOR(1024),
     match_threshold FLOAT DEFAULT 0.7,
     match_count INT DEFAULT 10,
     filter_org_id TEXT DEFAULT NULL
