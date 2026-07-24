@@ -44,6 +44,12 @@ def _warmup_embedding():
         from .services.embedding_service import embedding_service
         embedding_service.load()
         logger.info("Embedding model loaded")
+        
+        from .services.rag_service import _get_cross_encoder
+        _get_cross_encoder()
+        logger.info("Reranker model loaded")
+        
+        print("✅ Models load ho gaye hain! (1024-Dim BAAI & 88MB ms-marco)")
     except Exception as e:
         logger.warning(f"Embedding model warmup failed (will skip embeddings): {e}")
 
