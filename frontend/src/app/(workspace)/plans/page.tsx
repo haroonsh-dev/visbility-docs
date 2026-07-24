@@ -36,6 +36,8 @@ type Entitlement = {
     planLabel: string;
     isFreeTier: boolean;
     subscription?: {
+        planId?: string | null;
+        planName?: string | null;
         endsAt?: string;
         billingCycle?: string;
         price?: number;
@@ -137,6 +139,21 @@ export default function AdminPlansPage() {
     const storagePct = Math.min(100, Math.round((usedGb / limitGb) * 100));
     const pending = requests.find((r) => r.status === "pending");
     const currency = pricing?.currency || "USD";
+    const currentPlanId = entitlement?.subscription?.planId || null;
+    const currentPlanName = (
+        entitlement?.subscription?.planName ||
+        entitlement?.planLabel ||
+        ""
+    ).toLowerCase();
+    const hasActiveSub =
+        !!entitlement?.subscription &&
+        String(entitlement.subscription.status || "active").toLowerCase() === "active";
+
+    const isCurrentPlan = (p: Plan) => {
+        if (!hasActiveSub) return false;
+        if (currentPlanId && p.planId === currentPlanId) return true;
+        return currentPlanName !== "" && currentPlanName === p.name.toLowerCase();
+    };
 
     const requestNamedPlan = async (plan: Plan) => {
         if (!confirm(`Request “${plan.name}”? Super Admin will review and activate.`)) return;
@@ -288,10 +305,16 @@ export default function AdminPlansPage() {
                             />
                         ) : (
                             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {plans.map((p) => (
+                                {plans.map((p) => {
+                                    const isCurrent = isCurrentPlan(p);
+                                    return (
                                     <div
                                         key={p.planId}
-                                        className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col"
+                                        className={`rounded-2xl border bg-white p-5 flex flex-col ${
+                                            isCurrent
+                                                ? "border-teal-300 ring-1 ring-teal-100"
+                                                : "border-slate-200"
+                                        }`}
                                     >
                                         <div className="flex items-start justify-between gap-2">
                                             <h3 className="font-semibold text-slate-900">{p.name}</h3>
@@ -316,16 +339,23 @@ export default function AdminPlansPage() {
                                                 {p.description}
                                             </p>
                                         )}
-                                        <button
-                                            type="button"
-                                            disabled={sending || !!pending}
-                                            onClick={() => requestNamedPlan(p)}
-                                            className="mt-5 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 hover:border-teal-300 hover:text-teal-700 transition-colors disabled:opacity-40"
-                                        >
-                                            Request
-                                        </button>
+                                        {isCurrent ? (
+                                            <p className="mt-5 w-full text-center py-2.5 text-sm font-medium text-teal-700">
+                                                Current plan
+                                            </p>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                disabled={sending || !!pending}
+                                                onClick={() => requestNamedPlan(p)}
+                                                className="mt-5 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 hover:border-teal-300 hover:text-teal-700 transition-colors disabled:opacity-40"
+                                            >
+                                                Request
+                                            </button>
+                                        )}
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </section>

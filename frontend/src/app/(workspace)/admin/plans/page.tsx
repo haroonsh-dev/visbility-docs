@@ -920,7 +920,7 @@ export default function SuperAdminPlansPage() {
                                         >
                                             <Pencil size={12} /> Manage
                                         </button>
-                                        {s.status === "active" && (
+                                        {String(s.status).toLowerCase() === "active" && (
                                             <>
                                                 <button
                                                     type="button"
@@ -940,7 +940,7 @@ export default function SuperAdminPlansPage() {
                                                 </button>
                                             </>
                                         )}
-                                        {(s.status === "inactive" || s.status === "expired") && (
+                                        {["inactive", "expired"].includes(String(s.status).toLowerCase()) && (
                                             <button
                                                 type="button"
                                                 onClick={() => patchSub(s.subscriptionId, "activate")}
@@ -949,7 +949,7 @@ export default function SuperAdminPlansPage() {
                                                 Activate
                                             </button>
                                         )}
-                                        {s.status !== "cancelled" && (
+                                        {String(s.status).toLowerCase() !== "cancelled" && (
                                             <button
                                                 type="button"
                                                 onClick={() => patchSub(s.subscriptionId, "cancel")}
@@ -1425,7 +1425,7 @@ export default function SuperAdminPlansPage() {
                                         >
                                             Extend
                                         </button>
-                                        {managing.status === "active" ? (
+                                        {String(managing.status).toLowerCase() === "active" ? (
                                             <button
                                                 type="button"
                                                 disabled={saving}
@@ -1436,7 +1436,9 @@ export default function SuperAdminPlansPage() {
                                             >
                                                 Deactivate
                                             </button>
-                                        ) : managing.status !== "cancelled" ? (
+                                        ) : ["inactive", "expired"].includes(
+                                              String(managing.status).toLowerCase()
+                                          ) ? (
                                             <button
                                                 type="button"
                                                 disabled={saving}
