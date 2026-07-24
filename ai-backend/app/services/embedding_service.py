@@ -3,6 +3,7 @@ import threading
 import logging
 import hashlib
 from .pinecone_service import pinecone_service
+from ..config import settings
 
 logger = logging.getLogger("visibility-docs")
 
@@ -22,18 +23,37 @@ class EmbeddingService:
         with self._lock:
             if self.model_loaded:
                 return
+            model_name = getattr(settings, "EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5") or "BAAI/bge-large-en-v1.5"
+            import os as _os
+            _os.environ["USE_SHARED_MEMORY"] = "0"
+            base_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+            safe_name = model_name.replace("/", "_").replace("-", "_")
+            local_model_dir = _os.path.join(base_dir, "data", "local_models", safe_name)
             try:
-                import os as _os
-                _os.environ["USE_SHARED_MEMORY"] = "0"
                 from sentence_transformers import SentenceTransformer
-                self.model = SentenceTransformer("Alibaba-NLP/gte-large-en-v1.5", device="cpu", trust_remote_code=True)
+                if _os.path.exists(local_model_dir) and _os.path.isdir(local_model_dir) and any(_os.scandir(local_model_dir)):
+                    logger.info(f"Loading 1024-dim embedding model directly from local project folder: {local_model_dir}...")
+                    self.model = SentenceTransformer(local_model_dir, device="cpu")
+                else:
+                    logger.info(f"Loading 1024-dim embedding model '{model_name}'...")
+                    self.model = SentenceTransformer(model_name, device="cpu")
+                    _os.makedirs(local_model_dir, exist_ok=True)
+                    self.model.save(local_model_dir)
+                    logger.info(f"Saved model locally at: {local_model_dir}")
                 self.dimension = self.model.get_sentence_embedding_dimension()
                 self.model_loaded = True
-                logger.info("Embedding model loaded successfully")
+                logger.info(f"Embedding model '{model_name}' loaded successfully (dimension={self.dimension})")
             except Exception as e:
-                logger.warning(f"Embedding model unavailable: {e}")
-                self.model_loaded = True
-                self.model = None
+                logger.warning(f"Embedding model load warning: {e}")
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    self.model = SentenceTransformer(model_name, device="cpu")
+                    self.dimension = self.model.get_sentence_embedding_dimension()
+                    self.model_loaded = True
+                except Exception as e2:
+                    logger.error(f"Embedding model fallback error: {e2}")
+                    self.model_loaded = True
+                    self.model = None
 
     def load(self):
         """Eager-load the model. Call at startup."""

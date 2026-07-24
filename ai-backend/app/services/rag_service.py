@@ -909,41 +909,124 @@ class RAGService:
         "contract": ["contract", "agreement", "clause", "liability", "معاہدہ"],
     }
 
-    def _rerank(self, results: list[dict], query: str, top_n: int = 30) -> list[dict]:
-        """Lightweight reranker (no external model → no hangs).
+_cross_encoder_instance = None
+_ce_failed = False
 
-        Combines three signals so chunks that are BOTH semantically and lexically
-        relevant rise to the top:
-          • keyword overlap (how many query terms appear in the chunk) — primary
-          • vector score    (cosine similarity from Pinecone/Supabase)
-          • RRF score       (cross-strategy rank, used mainly for tie-breaking)
-        A document-type boost is applied when the query clearly targets a doc type.
-        """
+def _get_cross_encoder():
+    global _cross_encoder_instance, _ce_failed
+    if _ce_failed:
+        return None
+    if _cross_encoder_instance is None:
+        try:
+            import os
+            from sentence_transformers import CrossEncoder
+            import logging
+            logger = logging.getLogger("visibility-docs")
+
+            model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            safe_name = model_name.replace("/", "_").replace("-", "_")
+            local_model_dir = os.path.join(base_dir, "data", "local_models", safe_name)
+
+            if os.path.exists(local_model_dir) and os.path.isdir(local_model_dir) and any(os.scandir(local_model_dir)):
+                logger.info(f"Loading 88MB Reranker directly from local project folder: {local_model_dir}...")
+                _cross_encoder_instance = CrossEncoder(local_model_dir, device="cpu")
+            else:
+                logger.info(f"Loading Reranker '{model_name}' from HuggingFace...")
+                _cross_encoder_instance = CrossEncoder(model_name, device="cpu")
+                os.makedirs(local_model_dir, exist_ok=True)
+                _cross_encoder_instance.save(local_model_dir)
+                logger.info(f"Saved Reranker locally at: {local_model_dir}")
+
+            print("[RERANKER] Loaded ms-marco-MiniLM-L-6-v2 Cross-Encoder (88MB) successfully")
+        except Exception as e:
+            _ce_failed = True
+            print(f"[RERANKER] Cross-Encoder load notice: {e}")
+            return None
+    return _cross_encoder_instance
+
+class RAGService:
+    def __init__(self):
+        self._STOPWORDS = {"what", "is", "the", "a", "an", "of", "for", "to", "in", "on", "with",
+                          "and", "or", "does", "do", "did", "mean", "how", "why", "who", "which",
+                          "this", "that", "these", "those", "from", "by", "at", "as", "be", "are"}
+
+        self._TYPE_KEYWORDS = {
+            "invoice": ["invoice", "inv ", "bill", "payment", "due date", "vendor", "tax", "vat",
+                        "gst", "subtotal", "line item", "amount due", "انوائس", "بل"],
+            "quotation": ["rfq", "quotation", "quote", "suggestive", "required language", "bid",
+                          "tender", "proposal", "procurement", "کوٹیشن"],
+            "resume": ["resume", "cv", "candidate", "applicant", "experience", "skill", "skills",
+                       "ریزیومہ", "امیدوار"],
+            "contract": ["contract", "agreement", "clause", "liability", "معاہدہ"],
+        }
+
+    def _rerank(self, results: list[dict], query: str, top_n: int = 30) -> list[dict]:
+        """SOTA Reranker combining Hybrid Search + Cross-Encoder (ms-marco-MiniLM-L-6-v2)."""
         import re
+        import numpy as np
+
         raw_terms = [t for t in re.sub(r'[^\w\s]', ' ', (query or "").lower()).split()]
         q_terms = [t for t in raw_terms if len(t) >= 2 and t not in self._STOPWORDS]
         n_terms = max(1, len(q_terms))
 
-        # Detect target document type from query keywords
-        ql = query.lower()
+        ql = (query or "").lower().strip()
         type_boost = 0.0
         for dtype, kws in self._TYPE_KEYWORDS.items():
             if any(k in ql for k in kws):
                 type_boost = dtype
                 break
 
+        query_words_orig = (query or "").split()
+        entity_terms = [
+            w.lower().strip(".,;:?!'\"()[]{}")
+            for w in query_words_orig
+            if len(w) >= 3 and w[0].isupper() and w.lower() not in self._STOPWORDS
+        ]
+
         for r in results:
             ct = (r.get("chunk_text") or "").lower()
+            doc_title = (r.get("document_title") or "").lower()
+            combined_text = ct + " " + doc_title
+
             overlap = sum(1 for t in q_terms if t and t in ct)
             norm_overlap = min(overlap / n_terms, 1.0)
             vec = max(0.0, min(1.0, r.get("_vec_score", 0.0)))
             rrf = r.get("_rrf_score", 0.0)
             rrf_norm = min(rrf / (1.0 / 60.0), 1.0)
-            score = 0.15 * rrf_norm + 0.30 * vec + 0.55 * norm_overlap
-            # Boost chunks whose document_type matches the query's apparent intent
+
+            score = 0.15 * rrf_norm + 0.35 * vec + 0.50 * norm_overlap
+
+            if ql and len(ql) >= 4 and ql in combined_text:
+                score += 0.40
+
+            if entity_terms:
+                entity_matches = sum(1 for et in entity_terms if et in combined_text)
+                if entity_matches == len(entity_terms):
+                    score += 0.35
+                elif entity_matches > 0:
+                    score += 0.15
+                else:
+                    score -= 0.40
+
             if type_boost and r.get("document_type") == type_boost:
                 score += 0.15
+
             r["_combined"] = score
+
+        # Apply Cross-Encoder ms-marco-MiniLM-L-6-v2 Reranking
+        ce_model = _get_cross_encoder()
+        if ce_model and results:
+            try:
+                top_candidates = results[:min(25, len(results))]
+                pairs = [[query, c.get("chunk_text", "")] for c in top_candidates]
+                ce_scores = ce_model.predict(pairs)
+                for candidate, ce_score in zip(top_candidates, ce_scores):
+                    norm_ce = float(1.0 / (1.0 + np.exp(-float(ce_score))))
+                    candidate["_combined"] += 0.45 * norm_ce
+            except Exception as e:
+                pass
+
         results.sort(key=lambda x: -x["_combined"])
         return results[:top_n] if top_n else results
 
