@@ -36,7 +36,7 @@ class ConversationService:
         api_key = settings.GROQ_API_KEY
         self.llm = ChatGroq(
             api_key=api_key,
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             temperature=0.1,
             max_tokens=2048,
         ) if api_key and api_key != "gsk_your_groq_api_key" else None
@@ -155,18 +155,59 @@ class ConversationService:
             except Exception:
                 pass
 
-        # Trim history to stay within Groq free-tier TPM limits
+        # History compression and dynamic token optimization
+        hist = None
         try:
             hist = get_session_history(session_id or "default")
-            if hist is not None and len(hist.messages) > 16:
-                kept = hist.messages[-16:]
+            if hist is not None and len(hist.messages) > 6:
+                messages_to_compress = hist.messages[:-4]
+                kept = hist.messages[-4:]
+                
+                # Summarize old messages using a fast LLM
+                from .groq_service import GroqService
+                groq_srv = GroqService()
+                old_text = ""
+                for m in messages_to_compress:
+                    role = "User" if isinstance(m, HumanMessage) else "Assistant"
+                    old_text += f"{role}: {m.content}\n"
+                
+                summary_prompt = "Summarize the key points of the following chat history in 1-2 short sentences so an AI assistant can remember the context:\n\n" + old_text
+                summary_result = groq_srv.chat([{"role": "user", "content": summary_prompt}], max_tokens=150, temperature=0.1, model="llama-3.1-8b-instant")
+                
+                # Reset history with the summary
                 hist.clear()
+                from langchain_core.messages import SystemMessage
+                hist.add_message(SystemMessage(content=f"[Prior Conversation Summary: {summary_result.strip()}]"))
                 for m in kept:
                     hist.add_message(m)
-        except Exception:
-            pass
+                chat_log.info(f"Compressed {len(messages_to_compress)} old messages into a summary.")
+        except Exception as e:
+            chat_log.info(f"History compression failed: {e}")
 
-        chat_log.info(f"Invoking LangChain chain: model=llama-3.3-70b-versatile, followup={is_followup}")
+        # Dynamic Model Routing (Waterfall)
+        estimated_chars = len(chain_inputs.get("agent_instructions", "")) + len(chain_inputs.get("context", "")) + len(chain_inputs.get("question", ""))
+        if hist is not None:
+            for m in hist.messages:
+                estimated_chars += len(m.content)
+        
+        estimated_tokens = estimated_chars / 4
+        target_model = "llama-3.1-8b-instant"
+        if estimated_tokens > 4500:
+            target_model = "llama-3.2-90b-vision-preview"
+            chat_log.info(f"Payload ~{int(estimated_tokens)} tokens. Dynamically switching to {target_model}")
+        
+        if self.llm and getattr(self.llm, "model_name", "llama-3.1-8b-instant") != target_model:
+            api_key = settings.GROQ_API_KEY
+            self.llm = ChatGroq(
+                api_key=api_key,
+                model=target_model,
+                temperature=0.1,
+                max_tokens=2048,
+            )
+            self._setup_chain(self._current_system_prompt)
+
+
+        chat_log.info(f"Invoking LangChain chain: model={target_model}, followup={is_followup}")
         _logger.info(f"[CHAT] session={session_id}, context_len={len(context)}, is_followup={is_followup}")
         t0 = time.time()
         response = self._chain_with_history.invoke(

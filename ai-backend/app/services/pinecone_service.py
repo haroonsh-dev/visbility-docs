@@ -9,13 +9,13 @@ class PineconeService:
         self._client = None
         self._index = None
         self._index_name = None
-        self._dimension = 384
+        self._dimension = 1024
         self._available = False
         self._init()
 
     def _init(self):
         api_key = settings.PINECONE_API_KEY
-        index_name = settings.PINECONE_INDEX_NAME
+        index_name = settings.PINECONE_INDEX_NAME + "-1024" if settings.PINECONE_INDEX_NAME else None
         if not api_key or not index_name:
             logger.warning("Pinecone not configured (missing API key or index name)")
             return
@@ -45,7 +45,7 @@ class PineconeService:
         try:
             print(f"[PINECONE] Upserting {len(vectors)} vectors (ns='{namespace}')...")
             t0 = __import__("time").time()
-            self._index.upsert(vectors, namespace=namespace)
+            self._index.upsert(vectors=vectors, namespace=namespace)
             print(f"[PINECONE] Upsert done in {__import__('time').time()-t0:.2f}s")
         except Exception as e:
             logger.error(f"Pinecone upsert error: {e}")

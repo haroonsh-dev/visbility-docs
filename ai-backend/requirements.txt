@@ -34,6 +34,7 @@ camelot-py[cv]==2.0.0
 # Image / OCR / tables
 opencv-python-headless==4.11.0.86
 Pillow==11.3.0
+pytesseract==0.3.13
 numpy==1.26.4
 pandas==2.3.1
 

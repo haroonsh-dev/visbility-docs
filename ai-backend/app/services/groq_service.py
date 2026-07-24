@@ -19,10 +19,8 @@ class GroqRateLimitExceeded(Exception):
 class GroqService:
     def __init__(self):
         self.client = None
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "llama-3.1-8b-instant"
         self.vision_models = [
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "qwen/qwen3.6-27b",
             "llama-3.2-90b-vision-preview",
         ]
         self._vision_model_idx = 0
@@ -173,7 +171,7 @@ class GroqService:
                     self._handle_rate_limit(e, model)
                 err = str(e).lower()
                 errors.append(f"{model}: {e}")
-                if "does not support image" in err or "cannot read" in err:
+                if "does not support image" in err or "cannot read" in err or "decommissioned" in err or "not found" in err:
                     continue
                 raise
             except Exception as e:
@@ -184,7 +182,7 @@ class GroqService:
                     if fallback_result:
                         return fallback_result
                     self._handle_rate_limit(e, model)
-                if "does not support image" in err or "cannot read" in err:
+                if "does not support image" in err or "cannot read" in err or "decommissioned" in err or "not found" in err:
                     continue
                 raise
 

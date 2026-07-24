@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
     Plus, Trash2, MessageSquare, MessageCircle,
@@ -622,7 +623,7 @@ function ChatContent() {
                                     >
                                         {msg.role === "assistant" ? (
                                             <div className={`prose prose-sm max-w-none ${isDark ? "prose-invert" : "prose-slate"}`}>
-                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                                                 {msg.citations && msg.citations.length > 0 && (
                                                     <div className={`mt-3 pt-3 border-t ${colors.borderPrimary} not-prose`}>
                                                         <p className={`text-[10px] font-semibold uppercase tracking-wider mb-2 ${colors.textMuted}`}>

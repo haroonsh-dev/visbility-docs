@@ -339,7 +339,7 @@ class ChatService:
             self._auto_title(session_id, question)
 
     def _fetch_raw_text(self, document_ids: list, organization_id: str,
-                        max_chars: int = 28000, titles: list = None) -> str:
+                        max_chars: int = 30000, titles: list = None) -> str:
         """Fetch raw_text (full document text) for selected docs. Critical for Excel/table docs
         where chunks may be missing or extraction truncates data."""
         if not document_ids:
@@ -471,6 +471,15 @@ class ChatService:
                     elif isinstance(val, (int, float)):
                         lines.append(f"    {key}: {val}")
                         totals[key] = totals.get(key, 0) + val
+                    elif isinstance(val, list) and val:
+                        lines.append(f"    {key}:")
+                        for item in val[:500]:
+                            if isinstance(item, dict):
+                                parts = [f"{k}={v}" for k, v in item.items() if v not in (None, "", [], {})]
+                                if parts:
+                                    lines.append("      - " + ", ".join(parts))
+                            else:
+                                lines.append(f"      - {item}")
 
                 if ext_info.get("has_images"):
                     img_count = len(ext_info.get("images", []))
@@ -605,12 +614,13 @@ class ChatService:
             __import__("re").search(kw, q_lower) for kw in _RESUME_KEYWORDS
         )
         is_finance_query = (
-            document_type == "invoice"
-            or phase3_agent == "finance_agent"
+            document_type in ("invoice", "purchase_order", "quotation", "rfq")
+            or phase3_agent in ("finance_agent", "procurement_agent")
             or any(term in q_lower for term in [
                 "invoice", "subtotal", "amount due", "grand total", "due date",
                 "payment terms", "vendor", "customer", "bill to", "ship to",
                 "tax", "vat", "gst", "line item", "line items", "invoice number",
+                "purchase order", "po number", "quotation", "rfq", "supplier",
             ])
         )
 
@@ -664,7 +674,7 @@ class ChatService:
                     "If the answer is missing, say you cannot find it in the documents.\n"
                     "Do not invent numbers, dates, or names.\n"
                 )
-                chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1)
+                chat_log.llm_call("llama-3.1-8b-instant", len(finance_context), len(question), 1)
                 llm_t0 = time.time()
                 answer = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt)
                 chat_log.llm_response(time.time() - llm_t0, len(answer))
@@ -681,7 +691,7 @@ class ChatService:
 
             chat_log.search_strategy("Context Building", "no results found")
             chat_log.warn("No relevant documents found in search")
-            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0)
+            chat_log.llm_call("llama-3.1-8b-instant", 0, len(question), 0)
             system_prompt = ""
             if resume_context:
                 system_prompt = "You are a Resume Screening assistant. Use the [Resume Rankings] block to answer ranking/comparison questions. Do not make up information."
@@ -709,7 +719,7 @@ class ChatService:
         context_parts = []
         sources = []
         for r in search_results:
-            context_parts.append(f"[Document: {r['document_title']}]: {r['chunk_text']}")
+            context_parts.append(f'<document filename="{r["document_title"]}">\n{r["chunk_text"]}\n</document>')
             sources.append({
                 "document_id": r["document_id"],
                 "document_title": r["document_title"],
@@ -866,7 +876,7 @@ class ChatService:
                     "5. If there is a mismatch between structured data and raw text, mention it briefly.\n"
                     "6. Do not invent values.\n"
                     "7. If line items are present, list them cleanly and include quantities/prices when available.\n"
-                    "8. Do not output JSON.\n"
+                    "8. Do not output JSON, unless the user explicitly requests JSON format.\n"
                 )
             else:
                 multi_types = dominant_dt_source or search_doc_type_counts
@@ -928,7 +938,7 @@ class ChatService:
                             "2. If the context contains image/vision descriptions, use them to answer.\n"
                             "3. If the answer is NOT in the context, say \"I cannot find this information in the documents.\"\n"
                             "4. Do NOT make up or hallucinate information.\n"
-                            "5. Do NOT output JSON or extract fields — just answer the question naturally.\n"
+                            "5. Do NOT output JSON or extract fields, unless the user explicitly requests JSON format.\n"
                             "6. If the context has tables or diagrams, explain what they show.\n"
                         )
                         resume_rank_instruction = (
@@ -951,7 +961,7 @@ class ChatService:
                     "2. Keep currency symbols and percentages intact.\n"
                     "3. If the answer is missing, say you cannot find it in the documents.\n"
                     "4. Do not hallucinate or infer unsupported numbers.\n"
-                    "5. Do not output JSON.\n"
+                    "5. Do not output JSON, unless the user explicitly requests JSON format.\n"
                 )
             else:
                 resume_rank_instruction = (
@@ -966,8 +976,12 @@ class ChatService:
                     "2. If the context contains image/vision descriptions, use them to answer.\n"
                     "3. If the answer is NOT in the context, say \"I cannot find this information in the documents.\"\n"
                     "4. Do NOT make up or hallucinate information.\n"
-                    "5. Do NOT output JSON or extract fields - just answer the question.\n"
+                    "5. Do NOT output JSON or extract fields, unless the user explicitly requests JSON format.\n"
                     "6. If the context has tables or diagrams, explain what they show.\n"
+                    "7. NEVER output `<document>` XML tags or repeat the document metadata in your response. Speak naturally to the user.\n"
+                    "8. Use rich Markdown formatting. Always make labels, headers, and key terms **bold** (e.g., **Vendor Name:** Acme Corp) so the data is easy to read.\n"
+                    "9. When performing math or calculating sums, NEVER write out a messy running tally (e.g., do not write A+B=C, C+D=E). \n"
+                    "10. When asked to sum or compare data across rows, present the data in a clean Markdown Table, and place the **Grand Total** in bold on a new line below the table.\n"
                     f"{resume_rank_instruction}"
                 )
 
@@ -987,7 +1001,7 @@ class ChatService:
 
         chat_log.info(f"Built Q&A prompt for agent: {dominant_agent} ({len(qa_prompt)} chars)")
 
-        chat_log.llm_call("llama-3.3-70b-versatile", context_len, len(question), len(sources))
+        chat_log.llm_call("llama-3.1-8b-instant", context_len, len(question), len(sources))
         llm_t0 = time.time()
         is_followup = not is_first
         answer = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
@@ -1034,7 +1048,7 @@ class ChatService:
             "Do not invent facts.\n"
         )
         chat_log.info(f"Focused excerpt Q&A — excerpt {len(selected_text)} chars, question {len(question)} chars")
-        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0)
+        chat_log.llm_call("llama-3.1-8b-instant", len(excerpt_context), len(question), 0)
         llm_t0 = time.time()
         answer = conversation_service.chat(
             question, excerpt_context, session_id=sid,

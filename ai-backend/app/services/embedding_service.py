@@ -11,7 +11,7 @@ class EmbeddingService:
     def __init__(self):
         self.model = None
         self.model_loaded = False
-        self.dimension = 384
+        self.dimension = 1024
         self._lock = threading.Lock()
         self._cache = {}
         self._cache_max = 256
@@ -26,7 +26,7 @@ class EmbeddingService:
                 import os as _os
                 _os.environ["USE_SHARED_MEMORY"] = "0"
                 from sentence_transformers import SentenceTransformer
-                self.model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+                self.model = SentenceTransformer("Alibaba-NLP/gte-large-en-v1.5", device="cpu", trust_remote_code=True)
                 self.dimension = self.model.get_sentence_embedding_dimension()
                 self.model_loaded = True
                 logger.info("Embedding model loaded successfully")
@@ -126,7 +126,7 @@ class EmbeddingService:
                         "document_id": document_id,
                         "organization_id": organization_id,
                         "chunk_index": i,
-                        "chunk_text": chunk[:1000],
+                        "chunk_text": chunk[:32000],
                     }
                     if chunk_metadata and i < len(chunk_metadata):
                         cm = chunk_metadata[i]

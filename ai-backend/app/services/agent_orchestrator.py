@@ -31,7 +31,7 @@ def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str,
     folder_name = agent.replace("_agent", "")
 
     if doc_type and doc_type != "other" and folder_name != "other":
-        subfolder_path = os.path.join("phase3", folder_name, f"{doc_type}.md")
+        subfolder_path = os.path.join("phase3", folder_name, doc_type, "skill.md")
         content = _load_prompt(subfolder_path)
         if content:
             return content, subfolder_path
@@ -308,11 +308,14 @@ class ClassificationAgent:
         log.info(f"Input text: {C.DIM}{len(text)} chars, filename='{filename}'{C.RESET}")
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-8b)...")
-            result = groq_service._parse_json(
-                groq_service.chat([{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.1-8b-instant"),
-                {},
-            )
+            log.info("Calling Groq API (llama-3.1-8b-instant)...")
+            raw_response = groq_service.chat([{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.1-8b-instant")
+            
+            import re
+            scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
+            scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else ""
+            
+            result = groq_service._parse_json(raw_response, {})
             duration = __import__("time").time() - t0
             if not result:
                 log.warn(f"LLM returned empty ({duration:.1f}s), falling back to heuristic")
@@ -335,7 +338,7 @@ class ClassificationAgent:
                 "document_type": doc_type,
                 "agent_type": agent_type,
                 "confidence": float(result.get("confidence", 0)),
-                "reasoning": result.get("reasoning", ""),
+                "reasoning": scratchpad_text or result.get("reasoning", ""),
                 "language": result.get("language", "en"),
                 "estimated_quality": result.get("estimated_quality", "medium"),
             }
@@ -361,15 +364,27 @@ class CategoryExtractionAgent:
             log.warn(f"No prompt found for agent '{agent}' / type '{document_type}', returning empty")
             return {"extracted_data": {}, "confidence": 0.0}
 
-        prompt = prompt_template.replace("{text}", text[:64000] if text else "")
+        prompt = prompt_template.replace("{text}", "") # Remove legacy {text} if present
+        
+        prompt += "\n\nCRITICAL INSTRUCTION: You MUST extract EVERY SINGLE line item, row, and record present in the text. DO NOT truncate, summarize, or stop early to save space. If there are 50 rows, you MUST output 50 objects in the array. Omitting rows will cause catastrophic failure!"
+        prompt += "\nCRITICAL INSTRUCTION: You MUST format your response exactly as follows. First, write out your reasoning inside a `<scratchpad>` XML block. Then, output the final JSON block. DO NOT include any other text outside these blocks."
+        prompt += f"\n\n<document>\n{text[:64000] if text else ''}\n</document>"
+        
         log.info(f"Prompt loaded ({C.DIM}{prompt_path}, {len(prompt_template)} chars{C.RESET})")
         log.info(f"Prompt preview: {C.DIM}{prompt[:200].replace(chr(10), ' ')}...{C.RESET}")
 
         try:
             t0 = __import__("time").time()
-            result = groq_service._parse_json(groq_service.chat(
-                [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=4096
-            ), {})
+            log.info("Calling Groq API (llama-3.1-8b-instant) for extraction...")
+            raw_response = groq_service.chat(
+                [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=3000, model="llama-3.1-8b-instant"
+            )
+            
+            import re
+            scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
+            scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else ""
+            
+            result = groq_service._parse_json(raw_response, {})
             duration = __import__("time").time() - t0
             field_confidence = result.pop("_field_confidence", {}) if isinstance(result, dict) else {}
             avg_confidence = 0.7
@@ -382,6 +397,7 @@ class CategoryExtractionAgent:
             log.result("Duration", f"{duration:.1f}s", C.DIM)
             return {
                 "extracted_data": result if isinstance(result, dict) else {},
+                "scratchpad": scratchpad_text,
                 "confidence": avg_confidence,
                 "field_confidence": field_confidence,
                 "agent_type": agent,
@@ -394,6 +410,7 @@ class CategoryExtractionAgent:
             logger.error(f"Category extraction agent ({document_type}) error: {e}")
             return {
                 "extracted_data": {},
+                "scratchpad": "",
                 "confidence": 0.0,
                 "field_confidence": {},
                 "agent_type": agent,

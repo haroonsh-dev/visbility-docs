@@ -7,6 +7,11 @@ import logging
 from enum import Enum
 import fitz
 from PIL import Image
+try:
+    import pytesseract
+except ImportError:
+    pass
+from .preprocessing_service import preprocessing_service
 from ..config import settings
 
 logger = logging.getLogger("visibility-docs")
@@ -192,29 +197,41 @@ def _extract_pptx(file_path: str) -> str:
     return _normalize_markdown(result)
 
 
-def _page_to_image(page) -> str:
-    pix = page.get_pixmap(dpi=150)
+def _preprocess_image(img: Image.Image) -> Image.Image:
+    try:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img = preprocessing_service.deskew(img)
+        img = preprocessing_service.enhance_contrast(img)
+        return img
+    except Exception as e:
+        logger.warning(f"Image preprocessing failed: {e}")
+        return img
+
+
+def _page_to_image(page) -> tuple[str, Image.Image]:
+    pix = page.get_pixmap(dpi=300, alpha=False)
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    target_w = 768
+    img = _preprocess_image(img)
+    target_w = 1024
     w_percent = target_w / float(img.width)
     h_size = int(float(img.height) * float(w_percent))
-    img = img.resize((target_w, h_size), Image.LANCZOS)
+    img_resized = img.resize((target_w, h_size), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=80, optimize=True)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    img_resized.save(buf, format="JPEG", quality=85, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("utf-8"), img
 
 
-def _load_image_b64(file_path: str) -> str:
-    target_w = 768
+def _load_image_b64(file_path: str) -> tuple[str, Image.Image]:
     img = Image.open(file_path)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
+    img = _preprocess_image(img)
+    target_w = 1024
     w_percent = target_w / float(img.width)
     h_size = int(float(img.height) * float(w_percent))
-    img = img.resize((target_w, h_size), Image.LANCZOS)
+    img_resized = img.resize((target_w, h_size), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=80, optimize=True)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    img_resized.save(buf, format="JPEG", quality=85, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("utf-8"), img
 
 
 VISION_PROMPT = """You are an OCR engine. Extract ALL visible text from this document page image.
@@ -260,11 +277,27 @@ def _vision_ocr(image_b64s: list[str]) -> str:
     return "\n\n".join(texts)
 
 
+def _tesseract_ocr(images: list[Image.Image]) -> str:
+    try:
+        import pytesseract
+        texts = []
+        for i, img in enumerate(images, 1):
+            text = pytesseract.image_to_string(img)
+            texts.append(f"--- Page {i} ---\n{text}")
+        return "\n\n".join(texts)
+    except Exception as e:
+        logger.warning(f"Tesseract OCR failed: {e}")
+        return ""
+
+
 def process_scanned_pdf(file_path: str) -> str:
     doc = fitz.open(file_path)
     b64s = []
+    images = []
     for page in doc:
-        b64s.append(_page_to_image(page))
+        b64, img = _page_to_image(page)
+        b64s.append(b64)
+        images.append(img)
     doc.close()
 
     if not b64s:
@@ -275,7 +308,12 @@ def process_scanned_pdf(file_path: str) -> str:
         text = _normalize_markdown(text)
         return text
 
-    logger.warning("Vision returned empty for scanned PDF, trying PyMuPDF fallback")
+    logger.warning("Vision returned empty for scanned PDF, falling back to Tesseract OCR")
+    tess_text = _tesseract_ocr(images)
+    if tess_text.strip():
+        return _normalize_markdown(tess_text)
+
+    logger.warning("Tesseract returned empty, trying PyMuPDF fallback")
     try:
         doc = fitz.open(file_path)
         parts = []
@@ -291,10 +329,16 @@ def process_scanned_pdf(file_path: str) -> str:
 
 
 def process_image(file_path: str) -> str:
-    b64 = _load_image_b64(file_path)
+    b64, img = _load_image_b64(file_path)
     text = _vision_ocr([b64])
     if text.strip():
         return _normalize_markdown(text)
+        
+    logger.warning("Vision returned empty for image, falling back to Tesseract OCR")
+    tess_text = _tesseract_ocr([img])
+    if tess_text.strip():
+        return _normalize_markdown(tess_text)
+        
     return "[OCR failed]"
 
 

@@ -743,7 +743,7 @@ class RAGService:
                     elif isinstance(value, list):
                         if key == "line_items":
                             parts.append("line_items:")
-                            for item in value[:20]:
+                            for item in value[:500]:
                                 if isinstance(item, dict):
                                     item_bits = []
                                     for field in ("description", "quantity", "unit_price", "price", "total", "amount"):
@@ -754,14 +754,14 @@ class RAGService:
                                 else:
                                     parts.append(f"  - {item}")
                         else:
-                            parts.append(f"{key}: {value[:10]}")
+                            parts.append(f"{key}: {value[:100]}")
                     elif isinstance(value, dict):
                         nested_bits = []
                         for nested_key, nested_val in value.items():
                             if nested_val not in (None, "", [], {}):
                                 nested_bits.append(f"{nested_key}={nested_val}")
                         if nested_bits:
-                            parts.append(f"{key}: " + ", ".join(nested_bits[:20]))
+                            parts.append(f"{key}: " + ", ".join(nested_bits[:100]))
 
             summary = "\n".join(parts).strip()
             return summary if len(summary) > len("[Structured Document Summary]") else ""
@@ -793,7 +793,7 @@ class RAGService:
                 elif isinstance(value, list):
                     if key == "line_items":
                         summary_lines.append("line_items:")
-                        for item in value[:25]:
+                        for item in value[:500]:
                             if isinstance(item, dict):
                                 parts = []
                                 for field in ("description", "quantity", "unit_price", "price", "total", "amount"):
@@ -804,7 +804,7 @@ class RAGService:
                             else:
                                 summary_lines.append(f"  - {item}")
                     else:
-                        summary_lines.append(f"{key}: {json.dumps(value[:10], ensure_ascii=False)}")
+                        summary_lines.append(f"{key}: {json.dumps(value[:100], ensure_ascii=False)}")
                 elif isinstance(value, dict):
                     nested = ", ".join(f"{k}={v}" for k, v in value.items() if v not in (None, "", [], {}))
                     if nested:
@@ -816,7 +816,7 @@ class RAGService:
                     if isinstance(value, (int, float)):
                         conf_bits.append(f"{key}={value:.2f}")
                 if conf_bits:
-                    summary_lines.append("field_confidence: " + ", ".join(conf_bits[:25]))
+                    summary_lines.append("field_confidence: " + ", ".join(conf_bits[:500]))
 
             summary_text = "\n".join(summary_lines).strip()
             if len(summary_text.split()) < 5:
@@ -1441,7 +1441,7 @@ class RAGService:
                         "document_title": title,
                         "document_type": dtype or meta.get("_document_type"),
                         "phase3_agent": p3a,
-                        "chunk_text": meta.get("chunk_text", "")[:3000],
+                        "chunk_text": meta.get("chunk_text", "")[:32000],
                         "page_number": meta.get("page_number"),
                         "heading": meta.get("heading"),
                         "section": meta.get("section"),
@@ -1544,7 +1544,7 @@ class RAGService:
                             "document_title": title,
                             "document_type": dtype,
                             "phase3_agent": p3a,
-                            "chunk_text": item.get("content", "")[:3000],
+                            "chunk_text": item.get("content", "")[:32000],
                             "page_number": item.get("page_id"),
                             "heading": item.get("heading"),
                             "section": item.get("section"),
