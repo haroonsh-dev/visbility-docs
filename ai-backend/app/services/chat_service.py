@@ -5,6 +5,7 @@ from .document_service import document_service
 from ..database import SupabaseDB
 from .orchestration_logger import get_chat_logger, C
 from .agent_orchestrator import _load_phase3_prompt, _load_prompt, get_phase3_prompt_for_doc, DOCUMENT_TO_PHASE3_AGENT, PHASE3_AGENT_PROMPT_MAP
+from ..utils.agent_allowlist import clamp_agent, parse_allowed_agents
 
 _RESUME_KEYWORDS = ["resume", "cv ", "candidate", "applicant", "hiring", "recruit",
                     "top.*resume", "best.*candidate", "rank.*resume", "score.*resume",
@@ -500,12 +501,16 @@ class ChatService:
 
     def chat_with_document(self, question: str, document_ids: list, organization_id: str,
                            document_type: str = None, phase3_agent: str = None,
+                           allowed_agents: list = None,
                            status: str = None, date_from: str = None, date_to: str = None,
                            chat_history: list[dict] = None, session_id: str = None,
                            user_id: str = None, selected_text: str = None) -> dict:
         chat_log = get_chat_logger()
         chat_log.chat_start(question, session_id=session_id or "", doc_count=len(document_ids or []))
         t_start = time.time()
+        allowed_list = parse_allowed_agents(allowed_agents)
+        if phase3_agent and allowed_list:
+            phase3_agent = clamp_agent(phase3_agent, allowed_list)
 
         sid, resolved_ids, is_first = self._get_or_create_session(
             session_id, organization_id, document_ids, user_id=user_id
@@ -865,6 +870,9 @@ class ChatService:
             detected = self._detect_query_agent(question)
             if detected:
                 dominant_agent = detected
+
+        if allowed_list:
+            dominant_agent = clamp_agent(dominant_agent, allowed_list) or dominant_agent
 
         # Load agent / per-type .md prompts and adapt them for Q&A
         qa_prompt = ""

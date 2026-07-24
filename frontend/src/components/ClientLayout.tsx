@@ -19,6 +19,8 @@ const PAGE_TITLES: Record<string, string> = {
     "/profile": "Profile",
     "/admin/departments": "Departments",
     "/admin/admins": "Admins",
+    "/admin/plans": "Plans",
+    "/plans": "Plans",
     "/admin/documents": "All Documents",
     "/admin/settings": "AI Settings",
 };
@@ -62,6 +64,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 "/chat",
                 "/activity",
                 "/admin/admins",
+                "/admin/plans",
                 "/admin/settings",
                 "/profile",
             ];

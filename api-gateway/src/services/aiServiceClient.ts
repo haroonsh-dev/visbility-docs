@@ -87,6 +87,7 @@ export async function uploadDocumentToAi(params: {
     title?: string;
     phase3Agent?: string;
     uploadedBy?: string;
+    allowedAgents?: string[];
 }): Promise<AiUploadResult> {
     if (!ENABLED) {
         throw new Error('AI service is disabled');
@@ -98,6 +99,9 @@ export async function uploadDocumentToAi(params: {
     form.append('local_file_path', path.resolve(params.filePath));
     if (params.phase3Agent) form.append('phase3_agent', params.phase3Agent);
     if (params.uploadedBy) form.append('uploaded_by', params.uploadedBy);
+    if (params.allowedAgents?.length) {
+        form.append('allowed_agents', params.allowedAgents.join(','));
+    }
 
     const res = await client().post('/api/v1/documents/upload', form, {
         headers: form.getHeaders(),
@@ -127,6 +131,7 @@ export async function chatWithAi(params: {
     selectedText?: string;
     phase3Agent?: string;
     documentType?: string;
+    allowedAgents?: string[];
 }): Promise<AiChatResult> {
     if (!ENABLED) {
         throw new Error('AI service is disabled');
@@ -143,6 +148,7 @@ export async function chatWithAi(params: {
     if (params.selectedText) body.selected_text = params.selectedText;
     if (params.phase3Agent) body.phase3_agent = params.phase3Agent;
     if (params.documentType) body.document_type = params.documentType;
+    if (params.allowedAgents?.length) body.allowed_agents = params.allowedAgents;
 
     // Prefer /chat when docs selected; /chat/all for org-wide or agent-folder scope
     const path =

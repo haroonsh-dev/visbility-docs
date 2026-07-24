@@ -18,6 +18,7 @@ import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
 import { usePermissions } from "@/context/PermissionsContext";
 import { resolveDocAgent } from "@/lib/documentAgents";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 
 type ChatMessage = {
     id: string;
@@ -109,6 +110,7 @@ function ChatContent() {
     const colors = theme.colors;
     const isDark = theme.name === "dark";
     const { canChat } = usePermissions();
+    const { isAgentAllowed } = usePlanAgents();
 
     const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MSG]);
     const [input, setInput] = useState("");
@@ -381,7 +383,9 @@ function ChatContent() {
                 const agents = new Set(selected.map((d) => resolveDocAgent(d)));
                 if (agents.size === 1) {
                     const only = [...agents][0];
-                    if (only && only !== "other_agent") body.phase3Agent = only;
+                    if (only && only !== "other_agent" && isAgentAllowed(only)) {
+                        body.phase3Agent = only;
+                    }
                 }
                 const types = new Set(
                     selected.map((d) => d.classification).filter((t): t is string => Boolean(t))

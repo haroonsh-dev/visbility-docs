@@ -8,6 +8,7 @@ import { PageHeader, EmptyState } from "@/components/ui";
 import { apiRequest } from "@/lib/apiClient";
 import { AGENT_FILTER_OPTIONS, agentLabel, DOC_TYPE_FILTER_OPTIONS } from "@/lib/documentAgents";
 import { usePermissions } from "@/context/PermissionsContext";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 
 type SearchHit = {
     document_id?: string;
@@ -33,6 +34,11 @@ const STATUS_OPTIONS = [
 
 function SearchContent() {
     const { canViewDocs } = usePermissions();
+    const { agentOptions } = usePlanAgents();
+    const agentFilterOptions = [
+        { value: "", label: "All agents" },
+        ...agentOptions,
+    ];
     const [query, setQuery] = useState("");
     const [docType, setDocType] = useState("");
     const [agent, setAgent] = useState("");
@@ -106,7 +112,7 @@ function SearchContent() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <FilterSelect label="Doc type" value={docType} onChange={setDocType} options={DOC_TYPE_FILTER_OPTIONS} minWidth="w-full" />
-                        <FilterSelect label="Agent" value={agent} onChange={setAgent} options={AGENT_FILTER_OPTIONS} minWidth="w-full" />
+                        <FilterSelect label="Agent" value={agent} onChange={setAgent} options={agentFilterOptions} minWidth="w-full" />
                         <FilterSelect label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} minWidth="w-full" />
                     </div>
                 </div>

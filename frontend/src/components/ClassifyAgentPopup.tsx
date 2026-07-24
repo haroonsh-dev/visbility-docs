@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { AGENT_OPTIONS, DOC_TYPE_TO_AGENT, agentLabel } from "@/lib/documentAgents";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 
 type ClassifyDoc = {
     documentId: string;
@@ -23,8 +24,16 @@ type Props = {
 export default function ClassifyAgentPopup({ doc, queueLen = 1, defaultAgent, onConfirm, onDismiss }: Props) {
     const docType = doc.document_type || doc.classification || "other";
     const suggested = defaultAgent || DOC_TYPE_TO_AGENT[docType] || "other_agent";
-    const [agent, setAgent] = useState(suggested);
-    const agents = AGENT_OPTIONS.filter((o) => o.value);
+    const { agentOptions } = usePlanAgents();
+    const agents = agentOptions.length ? agentOptions : AGENT_OPTIONS.filter((o) => o.value);
+    const safeSuggested = agents.some((a) => a.value === suggested)
+        ? suggested
+        : agents[0]?.value || "other_agent";
+    const [agent, setAgent] = useState(safeSuggested);
+
+    React.useEffect(() => {
+        setAgent(safeSuggested);
+    }, [safeSuggested, doc.documentId]);
 
     return (
         <div

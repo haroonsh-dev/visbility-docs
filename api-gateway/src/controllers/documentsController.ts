@@ -345,7 +345,37 @@ export const uploadDocument = async (req: Request, res: Response, next: NextFunc
             return res.status(400).json({ success: false, message: 'No file uploaded' });
         }
 
+        const { assertStorageAvailable } = await import('../services/planService');
+        const storageCheck = await assertStorageAvailable(
+            req.user.organizationId,
+            file.size || 0
+        );
+        if (!storageCheck.ok) {
+            return res.status(403).json({
+                success: false,
+                code: 'STORAGE_LIMIT',
+                message: storageCheck.message,
+                data: {
+                    usedBytes: storageCheck.usedBytes,
+                    limitBytes: storageCheck.limitBytes,
+                },
+            });
+        }
+
         const phase3Agent = ((req.body?.phase3Agent as string) || '').trim() || undefined;
+        if (req.user.organizationId && req.user.role !== 'superAdmin') {
+            const { requireAllowedAgent } = await import('../services/planService');
+            const check = await requireAllowedAgent(req.user, phase3Agent);
+            if (!check.ok) {
+                return res.status(403).json({
+                    success: false,
+                    code: check.code,
+                    message: check.message,
+                    data: { allowedAgents: check.entitlement.agentIds },
+                });
+            }
+        }
+
         const { doc, aiModelResponse } = await saveUploadedFile(req.user, file, phase3Agent);
         recordActivityFromReq(req, {
             action: 'document.upload',
@@ -395,6 +425,21 @@ export const uploadDocumentsBulk = async (req: Request, res: Response, next: Nex
 
         const uploaded: any[] = [];
         const failed: { name: string; reason: string }[] = [];
+
+        const { assertStorageAvailable } = await import('../services/planService');
+        const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+        const storageCheck = await assertStorageAvailable(req.user.organizationId, totalBytes);
+        if (!storageCheck.ok) {
+            return res.status(403).json({
+                success: false,
+                code: 'STORAGE_LIMIT',
+                message: storageCheck.message,
+                data: {
+                    usedBytes: storageCheck.usedBytes,
+                    limitBytes: storageCheck.limitBytes,
+                },
+            });
+        }
 
         for (const file of files) {
             try {
@@ -544,6 +589,19 @@ export const updateDocumentAiSettings = async (req: Request, res: Response, next
         const { documentType, phase3Agent } = req.body || {};
         if (!documentType || !phase3Agent) {
             return res.status(400).json({ success: false, message: 'documentType and phase3Agent are required' });
+        }
+
+        if (req.user.role !== 'superAdmin') {
+            const { requireAllowedAgent } = await import('../services/planService');
+            const check = await requireAllowedAgent(req.user, String(phase3Agent));
+            if (!check.ok) {
+                return res.status(403).json({
+                    success: false,
+                    code: check.code,
+                    message: check.message,
+                    data: { allowedAgents: check.entitlement.agentIds },
+                });
+            }
         }
 
         const orgId = resolveAiOrganizationId(req.user);

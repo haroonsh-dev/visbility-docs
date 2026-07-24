@@ -8,6 +8,7 @@ from .agent_orchestrator import classification_agent, category_agents, DOCUMENT_
 from .classification_service import classification_service
 from .rag_service import rag_service
 from .orchestration_logger import (OrchestrationLogger, get_logger, reset_logger, C)
+from ..utils.agent_allowlist import clamp_agent, parse_allowed_agents
 
 logger = logging.getLogger("visibility-docs")
 
@@ -211,6 +212,13 @@ class OrchestratorService:
                 agent_type = "other_agent"
                 log.warn(f"Low confidence ({classification['confidence']:.2f}), falling back to 'other'")
 
+            allowed = parse_allowed_agents(doc.get("allowed_agents"))
+            if allowed:
+                clamped = clamp_agent(agent_type, allowed)
+                if clamped and clamped != agent_type:
+                    log.warn(f"Agent {agent_type} not in plan allowlist — clamping to {clamped}")
+                    agent_type = clamped
+
             SupabaseDB.update("documents", {
                 "document_type": doc_type,
                 "phase3_agent": agent_type,
@@ -356,6 +364,13 @@ class OrchestratorService:
                 doc_type = "other"
                 agent_type = "other_agent"
                 log.warn(f"Low confidence ({classification['confidence']:.2f}) — falling back to 'other'")
+
+            allowed = parse_allowed_agents(doc.get("allowed_agents"))
+            if allowed:
+                clamped = clamp_agent(agent_type, allowed)
+                if clamped and clamped != agent_type:
+                    log.warn(f"Agent {agent_type} not in plan allowlist — clamping to {clamped}")
+                    agent_type = clamped
 
             SupabaseDB.update("documents", {
                 "document_type": doc_type,

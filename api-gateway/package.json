@@ -8,6 +8,7 @@
     "dev": "nodemon src/server.ts",
     "build": "tsc",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts",
+    "seed:plans": "ts-node src/scripts/seedPlans.ts",
     "seed": "ts-node src/scripts/seedAdmin.ts"
   },
   "license": "ISC",

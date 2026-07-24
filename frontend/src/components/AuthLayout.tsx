@@ -4,7 +4,7 @@ import React from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import SiteLogo from "@/assets/Logo/dark_bg_VB.png";
+import SiteLogo from "@/assets/Logo/light_bg_VB.png";
 
 interface AuthLayoutProps {
     children: React.ReactNode;
@@ -33,40 +33,62 @@ export default function AuthLayout({ children, onBack, showBack = false, wide = 
             </div>
 
             <div className={`w-full relative z-10 m-auto py-4 ${wide ? "max-w-7xl" : "max-w-md"}`}>
-                <div className="mb-6 text-center relative flex flex-col items-center">
-                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 120, delay: 0.05 }}>
-                        <div className="rounded-2xl p-3 bg-white border border-slate-200 shadow-[0_8px_30px_rgba(15,23,42,0.08)]">
-                            <Image src={SiteLogo} alt="Visibility Bots" className="h-10 w-auto" priority />
+                {showBack && (
+                    <motion.button
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        onClick={onBack}
+                        className="mb-3 text-[var(--foreground-muted)] hover:text-[var(--accent)] transition-colors group inline-flex items-center gap-2"
+                    >
+                        <div className="h-8 w-8 rounded-lg border border-[var(--border)] flex items-center justify-center group-hover:border-[var(--accent)] group-hover:bg-[var(--accent-muted)]">
+                            <ArrowLeft size={14} />
                         </div>
-                    </motion.div>
-                    <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
-                        className="mt-3 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--accent)]">
+                        <span className="text-[9px] font-bold uppercase tracking-[0.2em] hidden sm:block">Back</span>
+                    </motion.button>
+                )}
+
+                <div className="mb-4 text-center">
+                    <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.1 }}
+                        className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--accent)]"
+                    >
                         Visibility Docs AI
                     </motion.p>
-                    <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.28 }}
-                        className="mt-1 text-xs text-[var(--foreground-muted)]">
+                    <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.18 }}
+                        className="mt-1 text-xs text-[var(--foreground-muted)]"
+                    >
                         Understand · Search · Automate
                     </motion.p>
-
-                    {showBack && (
-                        <motion.button initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} onClick={onBack}
-                            className="absolute left-0 top-2 text-[var(--foreground-muted)] hover:text-[var(--accent)] transition-colors group flex items-center gap-2">
-                            <div className="h-8 w-8 rounded-lg border border-[var(--border)] flex items-center justify-center group-hover:border-[var(--accent)] group-hover:bg-[var(--accent-muted)]">
-                                <ArrowLeft size={14} />
-                            </div>
-                            <span className="text-[9px] font-bold uppercase tracking-[0.2em] hidden sm:block">Back</span>
-                        </motion.button>
-                    )}
                 </div>
 
-                <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
-                    className="p-5 sm:p-7 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-xl shadow-[0_16px_48px_rgba(15,23,42,0.08)]">
+                <motion.div
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.05 }}
+                    className="p-5 sm:p-7 sm:pt-5 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-xl shadow-[0_16px_48px_rgba(15,23,42,0.08)]"
+                >
+                    <div className="flex justify-center mb-2 sm:mb-3">
+                        <Image
+                            src={SiteLogo}
+                            alt="Visibility Bots"
+                            className="h-16 w-auto sm:h-20"
+                            priority
+                        />
+                    </div>
                     {children}
                 </motion.div>
 
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
-                    className="mt-5 text-center text-[var(--foreground-muted)] font-medium text-[9px] uppercase tracking-[0.2em]">
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.4 }}
+                    className="mt-5 text-center text-[var(--foreground-muted)] font-medium text-[9px] uppercase tracking-[0.2em]"
+                >
                     Visibility Bots — Document Intelligence © 2026
                 </motion.div>
             </div>

@@ -21,6 +21,7 @@ import { AGENT_FILTER_OPTIONS, AGENT_OPTIONS, agentLabel, resolveDocAgent, DOC_T
 import { ACCEPT_ATTR, filterAllowedFiles, getFileTypeLabel } from "@/lib/fileValidation";
 import { usePermissions } from "@/context/PermissionsContext";
 import { getStoredUser } from "@/lib/authSession";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 
 type DocItem = {
     documentId: string; originalFilename: string; mimeType: string; sizeBytes: number; status: string;
@@ -108,6 +109,11 @@ function DocumentsContent() {
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
     const { canUpload, canViewDocs, canDeleteDocs, role } = usePermissions();
+    const { agentOptions } = usePlanAgents();
+    const preferredAgentOptions = [
+        { value: "", label: "Auto (from document type)" },
+        ...agentOptions,
+    ];
     const me = getStoredUser<{
         userId?: string;
         name?: string;
@@ -515,7 +521,7 @@ function DocumentsContent() {
                         <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50">
                             <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">Extraction agent (optional)</label>
                             <select value={preferredAgent} onChange={(e) => setPreferredAgent(e.target.value)} className="premium-input rounded-xl py-2.5 px-3 text-sm w-full sm:min-w-[240px]">
-                                {AGENT_OPTIONS.map((o) => <option key={o.value || "auto"} value={o.value}>{o.label}</option>)}
+                                {preferredAgentOptions.map((o) => <option key={o.value || "auto"} value={o.value}>{o.label}</option>)}
                             </select>
                         </div>
                     )}
@@ -611,7 +617,7 @@ function DocumentsContent() {
                                     <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={DOC_TYPE_FILTER_OPTIONS} minWidth="w-full" />
                                     <FilterSelect label="Score" value={scoreFilter} onChange={(v) => { setScoreFilter(v); setPage(1); }} options={SCORE_FILTER_OPTIONS} minWidth="w-full" />
                                     <FilterSelect label="Sort" value={sortPreset} onChange={(v) => { setSortPreset(v); setPage(1); }} options={SORT_PRESETS.map((s) => ({ value: s.value, label: s.label }))} minWidth="w-full" />
-                                    <FilterSelect label="Agent" value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={AGENT_FILTER_OPTIONS} minWidth="w-full" />
+                                    <FilterSelect label="Agent" value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={[{ value: "", label: "All agents" }, ...agentOptions]} minWidth="w-full" />
                                 </div>
                             )}
                         </div>

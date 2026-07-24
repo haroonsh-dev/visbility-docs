@@ -39,6 +39,7 @@ async def upload_document(
     title: str = Form(None, description="Optional document title"),
     local_file_path: str = Form(None, description="Absolute path under shared-storage (Node.js upload)"),
     phase3_agent: str = Form(None, description="Optional extraction agent"),
+    allowed_agents: str = Form(None, description="Comma-separated agents allowed by org plan"),
     uploaded_by: str = Form(None, description="Uploader user id (for per-user duplicate scope)"),
     file: UploadFile = File(None, description="Document file (PDF, images, DOCX, XLSX, PPTX)"),
 ):
@@ -114,6 +115,7 @@ async def upload_document(
             file_info=file_info,
             uploaded_by=uploader or None,
             phase3_agent=(phase3_agent or "").strip() or None,
+            allowed_agents=(allowed_agents or "").strip() or None,
         )
         print(f"[UPLOAD] Document record created: ID={doc.get('id', '?')}")
     except Exception as e:

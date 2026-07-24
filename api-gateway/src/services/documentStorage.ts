@@ -358,6 +358,11 @@ export async function saveUploadedFile(
     if (isAiServiceEnabled()) {
         try {
             aiOrgId = resolveAiOrganizationId(user);
+            let allowedAgents: string[] | undefined;
+            if (user.role !== 'superAdmin' && user.organizationId) {
+                const { getAllowedAgentsForOrg } = await import('./planService');
+                allowedAgents = await getAllowedAgentsForOrg(user.organizationId);
+            }
             const aiResult = await uploadDocumentToAi({
                 filePath: storagePath,
                 originalFilename: file.originalname,
@@ -366,6 +371,7 @@ export async function saveUploadedFile(
                 title: file.originalname,
                 phase3Agent: phase3Agent || undefined,
                 uploadedBy: user.userId,
+                allowedAgents,
             });
             pythonDocumentId = aiResult.id;
             aiProcessingStatus = aiResult.status;

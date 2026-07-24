@@ -13,7 +13,7 @@ _pool = ThreadPoolExecutor(max_workers=8)
 
 
 class DocumentService:
-    async def create_document(self, organization_id: str, title: str, file_info: dict, uploaded_by: str = None, phase3_agent: str = None) -> dict:
+    async def create_document(self, organization_id: str, title: str, file_info: dict, uploaded_by: str = None, phase3_agent: str = None, allowed_agents: str = None) -> dict:
         import datetime
         now = datetime.datetime.utcnow().isoformat()
         doc_id = __import__("uuid").uuid4().hex
@@ -31,6 +31,8 @@ class DocumentService:
         }
         if phase3_agent:
             doc_data["phase3_agent"] = phase3_agent
+        if allowed_agents:
+            doc_data["allowed_agents"] = allowed_agents
 
         result = SupabaseDB.insert("documents", doc_data)
         if hasattr(result, "data") and result.data:

@@ -178,6 +178,7 @@ class ChatRequest(BaseModel):
     document_ids: Optional[list[str]] = None
     document_type: Optional[str] = None
     phase3_agent: Optional[str] = None
+    allowed_agents: Optional[list[str]] = None
     status: Optional[str] = None
     date_from: Optional[str] = None
     date_to: Optional[str] = None

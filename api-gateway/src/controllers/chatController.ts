@@ -132,8 +132,26 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 scopedPythonIds = undefined;
             }
 
-            const phase3Agent = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
+            const phase3AgentRaw = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
             const documentType = (req.body.document_type || req.body.documentType || '').toString().trim() || undefined;
+
+            let phase3Agent = phase3AgentRaw;
+            let allowedAgents: string[] | undefined;
+            if (req.user.role !== 'superAdmin') {
+                const { requireAllowedAgent } = await import('../services/planService');
+                const check = await requireAllowedAgent(req.user, phase3AgentRaw);
+                if (!check.ok) {
+                    return res.status(403).json({
+                        success: false,
+                        code: check.code,
+                        message: check.message,
+                        data: { allowedAgents: check.entitlement.agentIds },
+                    });
+                }
+                allowedAgents = check.entitlement.agentIds;
+                // If chat inferred an agent outside plan via docs, still clamp explicit request only;
+                // AI receives allowed_agents for all routing.
+            }
 
             const result = await chatWithAi({
                 organizationId: orgId,
@@ -145,6 +163,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 selectedText: (req.body.selected_text || req.body.selectedText || '').toString().trim() || undefined,
                 phase3Agent,
                 documentType,
+                allowedAgents,
             });
 
             const seenCite = new Set<string>();

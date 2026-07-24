@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
     FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
     X, Building2, ChevronDown, Settings, LayoutDashboard, User, Search,
+    CreditCard,
 } from "lucide-react";
 import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
@@ -60,6 +61,8 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         { href: "/admin/documents", label: "All Documents", icon: FolderOpen, roles: ["superAdmin"] },
         { href: "/activity", label: "Activity", icon: Activity, roles: ["superAdmin", "admin", "team"] },
         { href: "/admin/admins", label: "Admins", icon: Shield, roles: ["superAdmin"] },
+        { href: "/admin/plans", label: "Plans", icon: CreditCard, roles: ["superAdmin"] },
+        { href: "/plans", label: "Plans", icon: CreditCard, roles: ["admin"] },
         { href: "/chat", label: "AI Chat", icon: MessageSquare, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canChat() },
         { href: "/admin/departments", label: "Departments", icon: Building2, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" || hasPermission("department.manage") },
         { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
@@ -71,7 +74,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         ? nav.filter((n) => n.roles.includes("team") && !n.allow)
         : nav
             .filter((n) => n.roles.includes(role) && (n.allow ? n.allow() : true))
-            .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/settings"].includes(n.href))
+            .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/plans", "/admin/settings"].includes(n.href))
     );
     const logout = () => { clearAuthState(); router.replace("/login"); };
 
@@ -97,9 +100,9 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
                 open ? "translate-x-0" : "-translate-x-full"
             )}>
                 {/* Logo */}
-                <div className="px-3 py-3 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
+                <div className="px-2 py-2 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
                     <Link href="/dashboard" className="flex-1 flex items-center justify-center">
-                        <Image src={SiteLogo} alt="Visibility Bots" className="h-14 w-auto" priority />
+                        <Image src={SiteLogo} alt="Visibility Bots" className="h-16 w-auto" priority />
                     </Link>
                     <button type="button" onClick={onClose}
                         className="lg:hidden rounded-lg p-2 min-h-9 min-w-9 flex items-center justify-center shrink-0 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
