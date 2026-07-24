@@ -368,6 +368,7 @@ class CategoryExtractionAgent:
         
         prompt += "\n\nCRITICAL INSTRUCTION: You MUST extract EVERY SINGLE line item, row, and record present in the text. DO NOT truncate, summarize, or stop early to save space. If there are 50 rows, you MUST output 50 objects in the array. Omitting rows will cause catastrophic failure!"
         prompt += "\nCRITICAL INSTRUCTION: You MUST format your response exactly as follows. First, write out your reasoning inside a `<scratchpad>` XML block. Then, output the final JSON block. DO NOT include any other text outside these blocks."
+        prompt += "\nCRITICAL INSTRUCTION [ANTI-HALLUCINATION]: You MUST NOT invent, guess, or hallucinate ANY data. If a specific field is NOT explicitly written in the document text, you MUST output `null` or an empty string `\"\"`. NEVER generate fake numbers, dates, or guess missing fields!"
         prompt += f"\n\n<document>\n{text[:64000] if text else ''}\n</document>"
         
         log.info(f"Prompt loaded ({C.DIM}{prompt_path}, {len(prompt_template)} chars{C.RESET})")
@@ -375,9 +376,9 @@ class CategoryExtractionAgent:
 
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.3-70b-versatile) for extraction...")
+            log.info("Calling Groq API (llama-3.1-8b-instant) for extraction...")
             raw_response = groq_service.chat(
-                [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=3000, model="llama-3.3-70b-versatile"
+                [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000, model="llama-3.1-8b-instant"
             )
             
             import re

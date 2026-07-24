@@ -426,7 +426,7 @@ class OrchestratorService:
                 log.result("Duration", f"{ext_duration}ms", C.DIM)
 
                 log.step("EMBEDDING & VECTOR INDEXING")
-                log.agent_call("rag_service", "", "Alibaba-NLP/gte-large-en-v1.5 → Pinecone + Supabase")
+                log.agent_call("rag_service", "", "BAAI/bge-large-en-v1.5 → Pinecone + Supabase")
                 try:
                     emb_future.result(timeout=120)  # 2 min timeout
                     log.ok("Document indexed to vector store")
