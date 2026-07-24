@@ -7,6 +7,7 @@ import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid,
     BarChart, Bar, Cell, ResponsiveContainer, Tooltip,
 } from "recharts";
+import { downloadDashboardReport } from "@/lib/dashboardExport";
 
 const COLORS = {
     teal: "#0d9488", tealLight: "#5eead4", emerald: "#10b981",
@@ -22,6 +23,7 @@ type DashboardChartsProps = {
     departmentData?: DepartmentData;
     loading?: boolean;
     allDocs?: any[];
+    departmentNames?: Record<string, string>;
 };
 
 const PRESETS = [
@@ -211,6 +213,7 @@ export default function DashboardCharts({
     departmentData = [],
     loading = false,
     allDocs = [],
+    departmentNames = {},
 }: DashboardChartsProps) {
     const [trendFrom, setTrendFrom] = useState("");
     const [trendTo, setTrendTo] = useState("");
@@ -236,31 +239,37 @@ export default function DashboardCharts({
         if (deptFrom) { const f = new Date(deptFrom); f.setHours(0, 0, 0, 0); filtered = filtered.filter((d: any) => new Date(d.createdAt) >= f); }
         if (deptTo) { const t = new Date(deptTo); t.setHours(23, 59, 59, 999); filtered = filtered.filter((d: any) => new Date(d.createdAt) <= t); }
         const deptCounts: Record<string, number> = {};
-        filtered.forEach((d: any) => { const dept = d.departmentId || "Unassigned"; deptCounts[dept] = (deptCounts[dept] || 0) + 1; });
+        filtered.forEach((d: any) => {
+            const id = d.departmentId || "Unassigned";
+            const label = id === "Unassigned" ? id : departmentNames[id] || id;
+            deptCounts[label] = (deptCounts[label] || 0) + 1;
+        });
         return Object.entries(deptCounts)
-            .map(([name, count]) => ({ name: name.slice(0, 12), count }))
+            .map(([name, count]) => ({ name: name.length > 18 ? `${name.slice(0, 16)}…` : name, count }))
             .sort((a, b) => b.count - a.count).slice(0, 8);
-    }, [departmentData, deptFrom, deptTo, allDocs]);
+    }, [departmentData, deptFrom, deptTo, allDocs, departmentNames]);
 
-    const exportTrendCSV = useCallback(() => {
-        if (!filteredTrendData.length) return;
-        const csv = ["Date,Uploads", ...filteredTrendData.map((d) => `${d.date},${d.uploads}`)].join("\n");
-        const blob = new Blob([csv], { type: "text/csv" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a"); a.href = url;
-        a.download = `uploads-trend-${trendFrom || "all"}-${trendTo || "all"}.csv`;
-        a.click(); URL.revokeObjectURL(url);
-    }, [filteredTrendData, trendFrom, trendTo]);
+    const exportTrendReport = useCallback(() => {
+        if (!allDocs.length && !filteredTrendData.length) return;
+        downloadDashboardReport(allDocs, {
+            title: "Visibility Docs — Uploads Report",
+            dateFrom: trendFrom || undefined,
+            dateTo: trendTo || undefined,
+            departmentNames,
+            filename: `uploads-report_${trendFrom || "all"}_${trendTo || "all"}.xls`,
+        });
+    }, [allDocs, filteredTrendData.length, trendFrom, trendTo, departmentNames]);
 
-    const exportDeptCSV = useCallback(() => {
-        if (!filteredDeptData.length) return;
-        const csv = ["Department,Count", ...filteredDeptData.map((d) => `${d.name},${d.count}`)].join("\n");
-        const blob = new Blob([csv], { type: "text/csv" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a"); a.href = url;
-        a.download = `department-dist-${deptFrom || "all"}-${deptTo || "all"}.csv`;
-        a.click(); URL.revokeObjectURL(url);
-    }, [filteredDeptData, deptFrom, deptTo]);
+    const exportDeptReport = useCallback(() => {
+        if (!allDocs.length && !filteredDeptData.length) return;
+        downloadDashboardReport(allDocs, {
+            title: "Visibility Docs — Department Report",
+            dateFrom: deptFrom || undefined,
+            dateTo: deptTo || undefined,
+            departmentNames,
+            filename: `department-report_${deptFrom || "all"}_${deptTo || "all"}.xls`,
+        });
+    }, [allDocs, filteredDeptData.length, deptFrom, deptTo, departmentNames]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -276,11 +285,11 @@ export default function DashboardCharts({
                         <FilterDropdown
                             dateFrom={trendFrom} dateTo={trendTo}
                             onDateFromChange={setTrendFrom} onDateToChange={setTrendTo}
-                            onExport={exportTrendCSV} label="Uploads Filter"
+                            onExport={exportTrendReport} label="Uploads Filter"
                         />
-                        <button type="button" onClick={exportTrendCSV}
+                        <button type="button" onClick={exportTrendReport}
                             className="p-2 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-sm hover:shadow-md transition-all"
-                            title="Export CSV">
+                            title="Export full report (Excel)">
                             <Download size={13} />
                         </button>
                     </div>
@@ -318,11 +327,11 @@ export default function DashboardCharts({
                         <FilterDropdown
                             dateFrom={deptFrom} dateTo={deptTo}
                             onDateFromChange={setDeptFrom} onDateToChange={setDeptTo}
-                            onExport={exportDeptCSV} label="Department Filter"
+                            onExport={exportDeptReport} label="Department Filter"
                         />
-                        <button type="button" onClick={exportDeptCSV}
+                        <button type="button" onClick={exportDeptReport}
                             className="p-2 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-sm hover:shadow-md transition-all"
-                            title="Export CSV">
+                            title="Export full report (Excel)">
                             <Download size={13} />
                         </button>
                     </div>
