@@ -9,6 +9,42 @@ from .pinecone_service import pinecone_service
 _NUMERED_RE = None
 _CHAPTER_RE = None
 
+_cross_encoder_instance = None
+_ce_failed = False
+
+def _get_cross_encoder():
+    global _cross_encoder_instance, _ce_failed
+    if _ce_failed:
+        return None
+    if _cross_encoder_instance is None:
+        try:
+            import os
+            from sentence_transformers import CrossEncoder
+            import logging
+            logger = logging.getLogger("visibility-docs")
+
+            model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            safe_name = model_name.replace("/", "_").replace("-", "_")
+            local_model_dir = os.path.join(base_dir, "data", "local_models", safe_name)
+
+            if os.path.exists(local_model_dir) and os.path.isdir(local_model_dir) and any(os.scandir(local_model_dir)):
+                logger.info(f"Loading 88MB Reranker directly from local project folder: {local_model_dir}...")
+                _cross_encoder_instance = CrossEncoder(local_model_dir, device="cpu")
+            else:
+                logger.info(f"Loading Reranker '{model_name}' from HuggingFace...")
+                _cross_encoder_instance = CrossEncoder(model_name, device="cpu")
+                os.makedirs(local_model_dir, exist_ok=True)
+                _cross_encoder_instance.save(local_model_dir)
+                logger.info(f"Saved Reranker locally at: {local_model_dir}")
+
+            print("[RERANKER] Loaded ms-marco-MiniLM-L-6-v2 Cross-Encoder (88MB) successfully")
+        except Exception as e:
+            _ce_failed = True
+            print(f"[RERANKER] Cross-Encoder load notice: {e}")
+            return None
+    return _cross_encoder_instance
+
 
 def _get_patterns():
     global _NUMBERED_RE, _CHAPTER_RE
@@ -595,7 +631,7 @@ class RAGService:
             resp = groq_service.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3, max_tokens=256,
-                model="llama-3.1-8b-instant",
+                model="llama-3.3-70b-versatile",
             )
             import json
             alt = json.loads(resp.strip())
@@ -909,57 +945,7 @@ class RAGService:
         "contract": ["contract", "agreement", "clause", "liability", "معاہدہ"],
     }
 
-_cross_encoder_instance = None
-_ce_failed = False
 
-def _get_cross_encoder():
-    global _cross_encoder_instance, _ce_failed
-    if _ce_failed:
-        return None
-    if _cross_encoder_instance is None:
-        try:
-            import os
-            from sentence_transformers import CrossEncoder
-            import logging
-            logger = logging.getLogger("visibility-docs")
-
-            model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            safe_name = model_name.replace("/", "_").replace("-", "_")
-            local_model_dir = os.path.join(base_dir, "data", "local_models", safe_name)
-
-            if os.path.exists(local_model_dir) and os.path.isdir(local_model_dir) and any(os.scandir(local_model_dir)):
-                logger.info(f"Loading 88MB Reranker directly from local project folder: {local_model_dir}...")
-                _cross_encoder_instance = CrossEncoder(local_model_dir, device="cpu")
-            else:
-                logger.info(f"Loading Reranker '{model_name}' from HuggingFace...")
-                _cross_encoder_instance = CrossEncoder(model_name, device="cpu")
-                os.makedirs(local_model_dir, exist_ok=True)
-                _cross_encoder_instance.save(local_model_dir)
-                logger.info(f"Saved Reranker locally at: {local_model_dir}")
-
-            print("[RERANKER] Loaded ms-marco-MiniLM-L-6-v2 Cross-Encoder (88MB) successfully")
-        except Exception as e:
-            _ce_failed = True
-            print(f"[RERANKER] Cross-Encoder load notice: {e}")
-            return None
-    return _cross_encoder_instance
-
-class RAGService:
-    def __init__(self):
-        self._STOPWORDS = {"what", "is", "the", "a", "an", "of", "for", "to", "in", "on", "with",
-                          "and", "or", "does", "do", "did", "mean", "how", "why", "who", "which",
-                          "this", "that", "these", "those", "from", "by", "at", "as", "be", "are"}
-
-        self._TYPE_KEYWORDS = {
-            "invoice": ["invoice", "inv ", "bill", "payment", "due date", "vendor", "tax", "vat",
-                        "gst", "subtotal", "line item", "amount due", "انوائس", "بل"],
-            "quotation": ["rfq", "quotation", "quote", "suggestive", "required language", "bid",
-                          "tender", "proposal", "procurement", "کوٹیشن"],
-            "resume": ["resume", "cv", "candidate", "applicant", "experience", "skill", "skills",
-                       "ریزیومہ", "امیدوار"],
-            "contract": ["contract", "agreement", "clause", "liability", "معاہدہ"],
-        }
 
     def _rerank(self, results: list[dict], query: str, top_n: int = 30) -> list[dict]:
         """SOTA Reranker combining Hybrid Search + Cross-Encoder (ms-marco-MiniLM-L-6-v2)."""

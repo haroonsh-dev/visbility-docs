@@ -19,7 +19,7 @@ class GroqRateLimitExceeded(Exception):
 class GroqService:
     def __init__(self):
         self.client = None
-        self.model = "llama-3.1-8b-instant"
+        self.model = "llama-3.3-70b-versatile"
         self.vision_models = [
             "llama-3.2-90b-vision-preview",
         ]

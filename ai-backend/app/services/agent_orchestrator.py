@@ -308,8 +308,8 @@ class ClassificationAgent:
         log.info(f"Input text: {C.DIM}{len(text)} chars, filename='{filename}'{C.RESET}")
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.1-8b-instant)...")
-            raw_response = groq_service.chat([{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.1-8b-instant")
+            log.info("Calling Groq API (llama-3.3-70b-versatile)...")
+            raw_response = groq_service.chat([{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.3-70b-versatile")
             
             import re
             scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
@@ -375,9 +375,9 @@ class CategoryExtractionAgent:
 
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.1-8b-instant) for extraction...")
+            log.info("Calling Groq API (llama-3.3-70b-versatile) for extraction...")
             raw_response = groq_service.chat(
-                [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=3000, model="llama-3.1-8b-instant"
+                [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=3000, model="llama-3.3-70b-versatile"
             )
             
             import re

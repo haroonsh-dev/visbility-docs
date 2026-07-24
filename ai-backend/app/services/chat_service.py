@@ -674,7 +674,7 @@ class ChatService:
                     "If the answer is missing, say you cannot find it in the documents.\n"
                     "Do not invent numbers, dates, or names.\n"
                 )
-                chat_log.llm_call("llama-3.1-8b-instant", len(finance_context), len(question), 1)
+                chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1)
                 llm_t0 = time.time()
                 answer = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt)
                 chat_log.llm_response(time.time() - llm_t0, len(answer))
@@ -691,7 +691,7 @@ class ChatService:
 
             chat_log.search_strategy("Context Building", "no results found")
             chat_log.warn("No relevant documents found in search")
-            chat_log.llm_call("llama-3.1-8b-instant", 0, len(question), 0)
+            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0)
             system_prompt = ""
             if resume_context:
                 system_prompt = "You are a Resume Screening assistant. Use the [Resume Rankings] block to answer ranking/comparison questions. Do not make up information."
@@ -732,6 +732,12 @@ class ChatService:
         sources = self._dedupe_sources(sources, limit=3)
 
         context = "\n\n".join(context_parts)
+        
+        # Limit context size to prevent Groq API Token limits (Limit 6000 TPM for Llama-3.1-8b on free tier)
+        if len(context) > 16000:
+            chat_log.warn(f"Truncating search context from {len(context)} to 16000 characters to respect token limits.")
+            context = context[:16000] + "\n...[Content Truncated due to API token limits]..."
+            
         context_len = len(context)
 
         # ── Attach file_url to sources for frontend file name display ──
@@ -1001,7 +1007,7 @@ class ChatService:
 
         chat_log.info(f"Built Q&A prompt for agent: {dominant_agent} ({len(qa_prompt)} chars)")
 
-        chat_log.llm_call("llama-3.1-8b-instant", context_len, len(question), len(sources))
+        chat_log.llm_call("llama-3.3-70b-versatile", context_len, len(question), len(sources))
         llm_t0 = time.time()
         is_followup = not is_first
         answer = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
@@ -1048,7 +1054,7 @@ class ChatService:
             "Do not invent facts.\n"
         )
         chat_log.info(f"Focused excerpt Q&A — excerpt {len(selected_text)} chars, question {len(question)} chars")
-        chat_log.llm_call("llama-3.1-8b-instant", len(excerpt_context), len(question), 0)
+        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0)
         llm_t0 = time.time()
         answer = conversation_service.chat(
             question, excerpt_context, session_id=sid,

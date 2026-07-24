@@ -13,15 +13,17 @@ _logger = logging.getLogger("visibility-docs")
 _store: dict[str, InMemoryChatMessageHistory] = {}
 
 SYSTEM_PROMPT = (
-    "You are a document analysis assistant. Answer questions based ONLY on the provided document context. "
-    "If the answer is not in the context, say 'I cannot find this information in the document.'"
+    "You are a strict document analysis assistant. Answer questions based EXCLUSIVELY on the provided Document Context.\n"
+    "DO NOT use your own external knowledge. DO NOT hallucinate, guess, or invent details.\n"
+    "If the answer is not fully available in the context, you MUST say 'I cannot find this information in the document.' and stop."
 )
 
 AGENT_SYSTEM_PROMPT = (
-    "You are a helpful document analysis assistant. "
+    "You are a strict document analysis assistant. "
     "Follow the Agent Instructions carefully. "
     "Answer in the same language as the user's question. "
-    "Be thorough and extract all relevant information from the context."
+    "DO NOT use your own external knowledge. DO NOT hallucinate, guess, or invent details. "
+    "If the exact answer is not in the context, you MUST state that it is not available in the documents."
 )
 
 
@@ -36,8 +38,8 @@ class ConversationService:
         api_key = settings.GROQ_API_KEY
         self.llm = ChatGroq(
             api_key=api_key,
-            model="llama-3.1-8b-instant",
-            temperature=0.1,
+            model="llama-3.3-70b-versatile",
+            temperature=0.0,
             max_tokens=2048,
         ) if api_key and api_key != "gsk_your_groq_api_key" else None
         self._chain = None
@@ -172,7 +174,7 @@ class ConversationService:
                     old_text += f"{role}: {m.content}\n"
                 
                 summary_prompt = "Summarize the key points of the following chat history in 1-2 short sentences so an AI assistant can remember the context:\n\n" + old_text
-                summary_result = groq_srv.chat([{"role": "user", "content": summary_prompt}], max_tokens=150, temperature=0.1, model="llama-3.1-8b-instant")
+                summary_result = groq_srv.chat([{"role": "user", "content": summary_prompt}], max_tokens=150, temperature=0.1, model="llama-3.3-70b-versatile")
                 
                 # Reset history with the summary
                 hist.clear()
@@ -191,17 +193,17 @@ class ConversationService:
                 estimated_chars += len(m.content)
         
         estimated_tokens = estimated_chars / 4
-        target_model = "llama-3.1-8b-instant"
+        target_model = "llama-3.3-70b-versatile"
         if estimated_tokens > 4500:
             target_model = "llama-3.2-90b-vision-preview"
             chat_log.info(f"Payload ~{int(estimated_tokens)} tokens. Dynamically switching to {target_model}")
         
-        if self.llm and getattr(self.llm, "model_name", "llama-3.1-8b-instant") != target_model:
+        if self.llm and getattr(self.llm, "model_name", "llama-3.3-70b-versatile") != target_model:
             api_key = settings.GROQ_API_KEY
             self.llm = ChatGroq(
                 api_key=api_key,
                 model=target_model,
-                temperature=0.1,
+                temperature=0.0,
                 max_tokens=2048,
             )
             self._setup_chain(self._current_system_prompt)
