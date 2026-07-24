@@ -996,6 +996,8 @@ class ChatService:
                     "8. Use rich Markdown formatting. Always make labels, headers, and key terms **bold** (e.g., **Vendor Name:** Acme Corp) so the data is easy to read.\n"
                     "9. When performing math or calculating sums, NEVER write out a messy running tally (e.g., do not write A+B=C, C+D=E). \n"
                     "10. When asked to sum or compare data across rows, present the data in a clean Markdown Table, and place the **Grand Total** in bold on a new line below the table.\n"
+                    "11. NEVER provide general background definitions, textbook explanations, or introductory essays (e.g. NEVER explain what 'Electrical Engineering' or 'Invoices' are in general).\n"
+                    "12. Answer DIRECTLY and ONLY about the specific person, document, or facts requested.\n"
                     f"{resume_rank_instruction}"
                 )
 
