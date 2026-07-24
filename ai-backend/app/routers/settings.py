@@ -45,6 +45,15 @@ async def update_provider(body: ProviderUpdateBody):
         base_url=body.baseUrl or "",
     )
 
+    if body.provider == "groq":
+        try:
+            from ..services.groq_service import groq_service
+            from ..services.conversation_service import conversation_service
+            groq_service.reconfigure(body.apiKey)
+            conversation_service.reconfigure(body.apiKey)
+        except Exception as e:
+            print(f"[SETTINGS] Warning reconfiguring Services: {e}")
+
     return {
         "success": True,
         "message": f"Provider {body.provider} configured successfully",

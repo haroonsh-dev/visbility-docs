@@ -50,7 +50,6 @@ class ProviderManager:
     def __init__(self):
         self._providers: Dict[str, ProviderConfig] = {}
         self._load_from_state()
-        self._load_from_env()
 
     def _load_from_state(self):
         """Load provider configs from persistent state file."""
@@ -64,25 +63,6 @@ class ProviderManager:
                 logger.info(f"Loaded {len(self._providers)} providers from state file")
         except Exception as e:
             logger.warning(f"Failed to load providers state: {e}")
-
-    def _load_from_env(self):
-        """Load provider configs from environment variables (fallback)."""
-        env_map = {
-            "groq": ("GROQ_API_KEY", "GROQ_MODEL", "GROQ_BASE_URL"),
-            "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"),
-            "gemini": ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_BASE_URL"),
-            "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"),
-        }
-        for provider, (key_env, model_env, url_env) in env_map.items():
-            if provider not in self._providers:
-                api_key = os.getenv(key_env, "")
-                if api_key:
-                    self._providers[provider] = ProviderConfig(
-                        provider=provider,
-                        api_key=api_key,
-                        model=os.getenv(model_env, ""),
-                        base_url=os.getenv(url_env, ""),
-                    )
 
     def _save_state(self):
         """Persist provider configs to disk."""
@@ -151,9 +131,9 @@ class ProviderManager:
         return None
 
     def get_groq_key(self) -> str:
-        """Get Groq API key (for backward compatibility)."""
+        """Get Groq API key configured from AI Settings."""
         p = self._providers.get("groq")
-        return p.api_key if p else os.getenv("GROQ_API_KEY", "")
+        return p.api_key if p else ""
 
     def get_config_summary(self) -> dict:
         """Get a summary of all configured providers."""

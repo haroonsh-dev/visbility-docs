@@ -14,6 +14,8 @@ _store: dict[str, InMemoryChatMessageHistory] = {}
 
 SYSTEM_PROMPT = (
     "You are a strict document analysis assistant. Answer questions based EXCLUSIVELY on the provided Document Context.\n"
+    "You must fully understand and support queries in English, Urdu (اردو), and Roman Urdu (e.g., 'is document mein kya hai?').\n"
+    "When asked in Roman Urdu or Urdu script, you must reply in the SAME language and script, translating facts from the context if necessary.\n"
     "DO NOT use your own external knowledge. DO NOT hallucinate, guess, or invent details.\n"
     "If the answer is not fully available in the context, you MUST say 'I cannot find this information in the document.' and stop."
 )
@@ -21,7 +23,8 @@ SYSTEM_PROMPT = (
 AGENT_SYSTEM_PROMPT = (
     "You are a strict document analysis assistant. "
     "Follow the Agent Instructions carefully. "
-    "Answer in the same language as the user's question. "
+    "You must fully understand and support queries in English, Urdu (اردو), and Roman Urdu.\n"
+    "Answer in the same language and script as the user's question (e.g. reply in Roman Urdu if asked in Roman Urdu). "
     "DO NOT use your own external knowledge. DO NOT hallucinate, guess, or invent details. "
     "If the exact answer is not in the context, you MUST state that it is not available in the documents."
 )
@@ -35,18 +38,34 @@ def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
 
 class ConversationService:
     def __init__(self):
-        api_key = settings.GROQ_API_KEY
-        self.llm = ChatGroq(
-            api_key=api_key,
-            model="llama-3.3-70b-versatile",
-            temperature=0.0,
-            max_tokens=2048,
-        ) if api_key and api_key != "gsk_your_groq_api_key" else None
+        from .provider_manager import provider_manager
+        api_key = provider_manager.get_groq_key()
+        self.llm = None
         self._chain = None
         self._chain_with_history = None
         self._last_context: dict[str, str] = {}
         self._current_system_prompt = SYSTEM_PROMPT
+        if api_key and api_key.startswith("gsk_") and "your_groq" not in api_key:
+            self.reconfigure(api_key)
+
+    def reconfigure(self, api_key: str = None):
+        from .provider_manager import provider_manager
+        key = api_key or provider_manager.get_groq_key()
+        key = (key or "").strip()
+        if not key or not key.startswith("gsk_") or "your_groq" in key:
+            self.llm = None
+            self._chain = None
+            self._chain_with_history = None
+            return False
+
+        self.llm = ChatGroq(
+            api_key=key,
+            model="llama-3.3-70b-versatile",
+            temperature=0.0,
+            max_tokens=2048,
+        )
         self._setup_chain(self._current_system_prompt)
+        return True
 
     def _setup_chain(self, system_prompt: str = None):
         if not self.llm:
@@ -186,6 +205,19 @@ class ConversationService:
         except Exception as e:
             chat_log.info(f"History compression failed: {e}")
 
+        # Ensure API key from AI Settings is active
+        from .provider_manager import provider_manager
+        configured_key = provider_manager.get_groq_key()
+        if not configured_key or not configured_key.startswith("gsk_"):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail="Groq API Key is not configured. Please configure your Groq API Key in AI Settings."
+            )
+
+        if self.llm is None or getattr(self.llm, "groq_api_key", None) != configured_key:
+            self.reconfigure(configured_key)
+
         # Dynamic Model Routing (Waterfall)
         estimated_chars = len(chain_inputs.get("agent_instructions", "")) + len(chain_inputs.get("context", "")) + len(chain_inputs.get("question", ""))
         if hist is not None:
@@ -199,9 +231,8 @@ class ConversationService:
             chat_log.info(f"Payload ~{int(estimated_tokens)} tokens. Dynamically switching to {target_model}")
         
         if self.llm and getattr(self.llm, "model_name", "llama-3.3-70b-versatile") != target_model:
-            api_key = settings.GROQ_API_KEY
             self.llm = ChatGroq(
-                api_key=api_key,
+                api_key=configured_key,
                 model=target_model,
                 temperature=0.0,
                 max_tokens=2048,
@@ -211,6 +242,13 @@ class ConversationService:
 
         chat_log.info(f"Invoking LangChain chain: model={target_model}, followup={is_followup}")
         _logger.info(f"[CHAT] session={session_id}, context_len={len(context)}, is_followup={is_followup}")
+        if not self._chain_with_history:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail="Groq LLM chain initialization failed. Please re-enter your Groq API Key in AI Settings."
+            )
+
         t0 = time.time()
         response = self._chain_with_history.invoke(
             chain_inputs,

@@ -26,9 +26,9 @@ class GroqService:
         self._vision_model_idx = 0
         self.available = False
         self.vision_available = True
-        # Try provider_manager first, then fall back to env
+        # Only use key configured via AI Settings (provider_manager)
         groq_config = provider_manager.get_provider("groq")
-        key = groq_config.api_key if groq_config else (settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY", ""))
+        key = groq_config.api_key if groq_config else ""
         self._configure(key)
 
     def _configure(self, api_key: str):
@@ -36,30 +36,32 @@ class GroqService:
         placeholders = {"", "gsk_your_groq_api_key", "gsk_your_groq_key_here", "your-api-key-here"}
         # Groq keys start with gsk_; reject Gemini/OpenAI/placeholder keys
         invalid = (
-            key in placeholders
+            not key
+            or key in placeholders
             or key.startswith("gsk_your_")
             or key.startswith("AIza")  # Google
             or key.startswith("sk-ant-")  # Anthropic mistaken as Groq
             or (key.startswith("sk-") and not key.startswith("gsk_"))  # OpenAI
         )
         if invalid:
-            # Fall back to settings/env if provider_manager handed a bad key
-            env_key = (settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
-            if env_key and env_key != key and env_key.startswith("gsk_") and env_key not in placeholders:
-                key = env_key
-            else:
-                self.client = None
-                self.available = False
-                return
+            self.client = None
+            self.available = False
+            return
+
         self.client = Groq(api_key=key, timeout=httpx.Timeout(120.0))
         self.available = True
         settings.GROQ_API_KEY = key
-        os.environ["GROQ_API_KEY"] = key
 
     def reconfigure(self, api_key: str) -> bool:
+        provider_manager.set_provider("groq", api_key)
         self._configure(api_key)
         if self.available:
             groq_limit_state.clear_limit()
+            try:
+                from .conversation_service import conversation_service
+                conversation_service.reconfigure(api_key)
+            except Exception as e:
+                print(f"[GROQ SERVICE] Warning sync with conversation_service: {e}")
         return self.available
 
     def _raise_if_locked(self):
