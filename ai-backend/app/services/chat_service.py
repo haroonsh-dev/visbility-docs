@@ -275,14 +275,17 @@ class ChatService:
                 break
         return out
 
-    def _build_multi_prompt_for_search_results(self, doc_type_counts: dict, agents: set) -> tuple[str, list[str]]:
+    def _build_multi_prompt_for_search_results(self, doc_type_counts: dict, agents: set, allowed_agents: list = None) -> tuple[str, list[str]]:
         """Load and sanitize multiple .md prompt files for top matched document types.
+        Strictly enforces user plan entitlements: Only loads skill files for agents allowed in allowed_agents.
         Compactly limits loaded prompts to top 3 matched types (max ~1,200 chars per prompt)
         to stay safely under Groq token limits while providing specialized domain guidelines."""
         import re
         loaded_prompts = []
         loaded_paths = []
         seen_paths = set()
+
+        allowed_set = set(allowed_agents) if allowed_agents else None
 
         sorted_types = [dt for dt, _ in sorted(doc_type_counts.items(), key=lambda x: x[1], reverse=True) if dt]
         if len(sorted_types) > 1 and "other" in sorted_types:
@@ -293,11 +296,15 @@ class ChatService:
         pairs = []
         for dt in top_types:
             p3a = DOCUMENT_TO_PHASE3_AGENT.get(dt, "other_agent")
+            if allowed_set and p3a != "other_agent" and p3a not in allowed_set:
+                continue
             pairs.append((dt, p3a))
 
         if not pairs and agents:
             for ag in list(agents)[:3]:
                 if ag and ag != "other_agent":
+                    if allowed_set and ag not in allowed_set:
+                        continue
                     pairs.append(("", ag))
 
         if not pairs:
@@ -906,12 +913,15 @@ class ChatService:
         # Load agent / per-type .md prompts dynamically based on search result metadata
         qa_prompt = ""
         try:
-            # Build prompts from ACTUAL document types found in search results (Fully Generic for ALL agents)
+            # Build prompts from ACTUAL document types found in search results, strictly filtered by user plan entitlements
             matched_agents = set(merged_agent_counts.keys())
+            if allowed_list:
+                matched_agents = {ag for ag in matched_agents if ag in allowed_list}
             if phase3_agent:
-                matched_agents.add(phase3_agent)
+                if not allowed_list or phase3_agent in allowed_list:
+                    matched_agents.add(phase3_agent)
             merged_rules, loaded_paths = self._build_multi_prompt_for_search_results(
-                merged_type_counts, matched_agents
+                merged_type_counts, matched_agents, allowed_agents=allowed_list
             )
             if merged_rules:
                 chat_log.info(
