@@ -26,7 +26,7 @@ def _load_phase3_prompt(filename: str) -> str:
 
 
 def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str, str]:
-    """Resolve per-type prompt under phase3/{agent}/{doc_type}.md, then agent fallback."""
+    """Resolve per-type prompt under phase3/{agent}/{doc_type}/skill.md, then agent fallback."""
     agent = agent_type or DOCUMENT_TO_PHASE3_AGENT.get(doc_type, "other_agent")
     folder_name = agent.replace("_agent", "")
 
@@ -34,15 +34,26 @@ def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str,
         subfolder_path = os.path.join("phase3", folder_name, doc_type, "skill.md")
         content = _load_prompt(subfolder_path)
         if content:
+            print("\n" + "★"*65)
+            print(f"[SKILL.MD LOADED] Subfolder Skill File Used: app/prompts/{subfolder_path}")
+            print(f"[SKILL.MD LOADED] Category: '{folder_name}' | DocType: '{doc_type}' | Agent: '{agent}'")
+            print("★"*65 + "\n")
             return content, subfolder_path
 
     if agent and agent != "other_agent":
         agent_path = os.path.join("phase3", f"{agent}.md")
         content = _load_prompt(agent_path)
         if content:
+            print("\n" + "★"*65)
+            print(f"[PARENT AGENT PROMPT LOADED] Main Agent File Used: app/prompts/{agent_path}")
+            print(f"[PARENT AGENT PROMPT LOADED] Agent: '{agent}'")
+            print("★"*65 + "\n")
             return content, agent_path
 
     fallback_path = os.path.join("phase3", "other.md")
+    print("\n" + "★"*65)
+    print(f"[FALLBACK PROMPT LOADED] Generic File Used: app/prompts/{fallback_path}")
+    print("★"*65 + "\n")
     return _load_prompt(fallback_path), fallback_path
 
 
