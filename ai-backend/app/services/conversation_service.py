@@ -229,10 +229,6 @@ class ConversationService:
         
         estimated_tokens = estimated_chars / 4
         target_model = "llama-3.3-70b-versatile"
-        if estimated_tokens > 4500:
-            target_model = "llama-3.2-90b-vision-preview"
-            chat_log.info(f"Payload ~{int(estimated_tokens)} tokens. Dynamically switching to {target_model}")
-        
         if self.llm and getattr(self.llm, "model_name", "llama-3.3-70b-versatile") != target_model:
             self.llm = ChatGroq(
                 api_key=configured_key,

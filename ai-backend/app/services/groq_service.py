@@ -21,7 +21,7 @@ class GroqService:
         self.client = None
         self.model = "llama-3.3-70b-versatile"
         self.vision_models = [
-            "llama-3.2-90b-vision-preview",
+            "llama-3.2-11b-vision-preview",
         ]
         self._vision_model_idx = 0
         self.available = False
