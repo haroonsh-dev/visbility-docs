@@ -77,6 +77,8 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         session_id=request.session_id,
         user_id=request.user_id,
         selected_text=request.selected_text,
+        provider=request.provider,
+        model=request.model,
     )
 
     return ChatResponse(
