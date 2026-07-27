@@ -687,9 +687,12 @@ class ChatService:
                     "If the answer is missing, say you cannot find it in the documents.\n"
                     "Do not invent numbers, dates, or names.\n"
                 )
-                chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1)
+                chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1, provider=provider)
                 llm_t0 = time.time()
-                answer = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt)
+                res_dict = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt, provider=provider)
+                answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+                res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+                res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
                 chat_log.llm_response(time.time() - llm_t0, len(answer))
                 self._save_exchange(sid, question, answer, [], is_first)
                 total = time.time() - t_start
@@ -700,23 +703,26 @@ class ChatService:
                     "document_id": resolved_ids[0] if resolved_ids else "",
                     "history": conversation_service.get_history(sid),
                     "session_id": sid,
+                    "provider": res_provider,
+                    "model": res_model,
                 }
 
             chat_log.search_strategy("Context Building", "no results found")
             chat_log.warn("No relevant documents found in search")
-            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0)
+            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0, provider=provider)
             system_prompt = ""
             if resume_context:
                 system_prompt = "You are a Resume Screening assistant. Use the [Resume Rankings] block to answer ranking/comparison questions. Do not make up information."
+            llm_t0 = time.time()
             if is_first:
-                llm_t0 = time.time()
-                answer = conversation_service.chat(question, resume_context, session_id=sid,
-                    system_prompt=system_prompt)
-                chat_log.llm_response(time.time() - llm_t0, len(answer))
+                res_dict = conversation_service.chat(question, resume_context, session_id=sid,
+                    system_prompt=system_prompt, provider=provider)
             else:
-                llm_t0 = time.time()
-                answer = conversation_service.chat(question, resume_context, session_id=sid, is_followup=True)
-                chat_log.llm_response(time.time() - llm_t0, len(answer))
+                res_dict = conversation_service.chat(question, resume_context, session_id=sid, is_followup=True, provider=provider)
+            answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+            res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+            res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+            chat_log.llm_response(time.time() - llm_t0, len(answer))
             unique_resume_sources = self._dedupe_sources(resume_sources, limit=3)
             self._save_exchange(sid, question, answer, unique_resume_sources, is_first)
             total = time.time() - t_start
@@ -727,6 +733,8 @@ class ChatService:
                 "document_id": resolved_ids[0] if resolved_ids else "",
                 "history": conversation_service.get_history(sid),
                 "session_id": sid,
+                "provider": res_provider,
+                "model": res_model,
             }
 
         context_parts = []
@@ -1037,7 +1045,7 @@ class ChatService:
         }
 
     def _answer_on_excerpt(self, question: str, selected_text: str, organization_id: str,
-                           sid: str, is_first: bool) -> dict:
+                           sid: str, is_first: bool, provider: str = None, model: str = None) -> dict:
         """Answer a follow-up question grounded STRICTLY on a user-selected excerpt.
 
         Used for the ChatGPT-style "highlight a response → ask about it" flow. No
@@ -1061,12 +1069,16 @@ class ChatService:
             "Do not invent facts.\n"
         )
         chat_log.info(f"Focused excerpt Q&A — excerpt {len(selected_text)} chars, question {len(question)} chars")
-        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0)
+        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0, provider=provider)
         llm_t0 = time.time()
-        answer = conversation_service.chat(
+        res_dict = conversation_service.chat(
             question, excerpt_context, session_id=sid,
             is_followup=not is_first, system_prompt=system_prompt,
+            provider=provider,
         )
+        answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+        res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+        res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
         chat_log.llm_response(time.time() - llm_t0, len(answer))
         self._save_exchange(sid, question, answer, [], is_first)
         history = conversation_service.get_history(sid)
@@ -1076,6 +1088,8 @@ class ChatService:
             "document_id": "",
             "history": history,
             "session_id": sid,
+            "provider": res_provider,
+            "model": res_model,
         }
 
 
