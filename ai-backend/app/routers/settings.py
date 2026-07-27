@@ -45,14 +45,14 @@ async def update_provider(body: ProviderUpdateBody):
         base_url=body.baseUrl or "",
     )
 
-    if body.provider == "groq":
-        try:
+    try:
+        from ..services.conversation_service import conversation_service
+        conversation_service.reconfigure(preferred_provider=body.provider)
+        if body.provider == "groq":
             from ..services.groq_service import groq_service
-            from ..services.conversation_service import conversation_service
             groq_service.reconfigure(body.apiKey)
-            conversation_service.reconfigure(body.apiKey)
-        except Exception as e:
-            print(f"[SETTINGS] Warning reconfiguring Services: {e}")
+    except Exception as e:
+        print(f"[SETTINGS] Warning reconfiguring Services for {body.provider}: {e}")
 
     return {
         "success": True,
