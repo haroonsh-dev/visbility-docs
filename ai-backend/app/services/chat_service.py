@@ -1000,11 +1000,16 @@ class ChatService:
 
         chat_log.info(f"Built Q&A prompt for agent: {dominant_agent} ({len(qa_prompt)} chars)")
 
-        chat_log.llm_call("llama-3.3-70b-versatile", context_len, len(question), len(sources))
+        chat_log.llm_call(model or "active-llm", context_len, len(question), len(sources), provider=provider)
         llm_t0 = time.time()
         is_followup = not is_first
-        answer = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
-                                            system_prompt=qa_prompt)
+        res_dict = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
+                                            system_prompt=qa_prompt, provider=provider)
+        
+        answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+        res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+        res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+
         chat_log.llm_response(time.time() - llm_t0, len(answer))
 
         history = conversation_service.get_history(sid)
@@ -1020,6 +1025,8 @@ class ChatService:
             "document_id": sources[0]["document_id"] if sources else "",
             "history": history,
             "session_id": sid,
+            "provider": res_provider,
+            "model": res_model,
         }
 
     def _answer_on_excerpt(self, question: str, selected_text: str, organization_id: str,

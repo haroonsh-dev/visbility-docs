@@ -193,6 +193,8 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     sessionId: result.session_id,
                     chatScope,
                     model: 'visibility-ai-rag',
+                    aiProvider: (result as any).provider || provider,
+                    aiModel: (result as any).model || model,
                 },
             });
             recordActivityFromReq(req, {

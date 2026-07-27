@@ -24,6 +24,8 @@ type ChatMessage = {
     id: string;
     role: "user" | "assistant";
     content: string;
+    aiProvider?: string;
+    aiModel?: string;
     citations?: Array<{
         documentId?: string;
         filename?: string;
@@ -411,6 +413,8 @@ function ChatContent() {
                     role: "assistant",
                     content: data?.data?.reply || "No response.",
                     citations: dedupeCitations(data?.data?.citations || []),
+                    aiProvider: data?.data?.aiProvider,
+                    aiModel: data?.data?.aiModel,
                 },
             ]);
         } catch (e: any) {
@@ -628,6 +632,11 @@ function ChatContent() {
                                         {msg.role === "assistant" ? (
                                             <div className={`prose prose-sm max-w-none ${isDark ? "prose-invert" : "prose-slate"}`}>
                                                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                                                {msg.aiProvider && (
+                                                    <div className="mt-2 text-[10px] flex items-center gap-1 font-mono text-[var(--accent)] opacity-80 not-prose">
+                                                        <Sparkles size={10} /> Powered by {msg.aiProvider.toUpperCase()}{msg.aiModel ? ` (${msg.aiModel})` : ""}
+                                                    </div>
+                                                )}
                                                 {msg.citations && msg.citations.length > 0 && (
                                                     <div className={`mt-3 pt-3 border-t ${colors.borderPrimary} not-prose`}>
                                                         <p className={`text-[10px] font-semibold uppercase tracking-wider mb-2 ${colors.textMuted}`}>

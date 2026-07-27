@@ -193,6 +193,8 @@ class ChatResponse(BaseModel):
     document_id: str
     history: list[dict] = []
     session_id: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 class ProcessRequest(BaseModel):

@@ -1,10 +1,10 @@
 import time
 import logging
+from typing import Optional
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_groq import ChatGroq
 from ..config import settings
 from .orchestration_logger import get_chat_logger, C
 
@@ -16,7 +16,7 @@ SYSTEM_PROMPT = (
     "You are a strict, direct document analysis assistant.\n"
     "CRITICAL RULES:\n"
     "1. Answer questions DIRECTLY using ONLY the provided Document Context.\n"
-    "2. DO NOT provide general background info, textbook definitions, introductory essays, or domain explanations (e.g. NEVER explain what 'Electrical Engineering' or 'Invoices' are in general).\n"
+    "2. DO NOT provide general background info, textbook definitions, introductory essays, or domain explanations.\n"
     "3. DO NOT use external world knowledge. DO NOT hallucinate, guess, or invent details.\n"
     "4. Support queries in English, Urdu (اردو), and Roman Urdu. Reply in the EXACT same language and script as the user's question.\n"
     "5. If the answer is not in the context, say 'I cannot find this information in the document.' and STOP immediately."
@@ -26,7 +26,7 @@ AGENT_SYSTEM_PROMPT = (
     "You are a strict, direct document analysis assistant. Follow the Agent Instructions carefully.\n"
     "CRITICAL RULES:\n"
     "1. Answer DIRECTLY using ONLY the provided Document Context.\n"
-    "2. DO NOT include general background info, textbook definitions, or domain explanations (e.g., NEVER explain what 'Electrical Engineering' is in general).\n"
+    "2. DO NOT include general background info, textbook definitions, or domain explanations.\n"
     "3. DO NOT use external world knowledge. DO NOT hallucinate, guess, or invent details.\n"
     "4. Answer in the same language and script as the user's question (e.g. reply in Roman Urdu if asked in Roman Urdu).\n"
     "5. If the exact answer is not in the context, state that it is not available in the documents."
@@ -39,36 +39,97 @@ def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
     return _store[session_id]
 
 
+def create_llm_from_config(provider_cfg):
+    """Factory to create dynamic LangChain LLM instance for Groq, OpenAI, Anthropic, Gemini, or Custom endpoints."""
+    if not provider_cfg or not provider_cfg.api_key:
+        return None, None
+
+    p_name = (provider_cfg.provider or "").lower().strip()
+    key = (provider_cfg.api_key or "").strip()
+    model_name = (provider_cfg.model or "").strip()
+    base_url = (provider_cfg.base_url or "").strip()
+
+    if not key or len(key) < 6:
+        return None, None
+
+    try:
+        if p_name == "groq":
+            from langchain_groq import ChatGroq
+            return ChatGroq(
+                api_key=key,
+                model=model_name or "llama-3.3-70b-versatile",
+                temperature=0.0,
+                max_tokens=2048,
+            ), "groq"
+        elif p_name == "openai":
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                api_key=key,
+                model=model_name or "gpt-4o",
+                temperature=0.0,
+                max_tokens=2048,
+            ), "openai"
+        elif p_name == "anthropic":
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                api_key=key,
+                model=model_name or "claude-3-5-sonnet-20241022",
+                temperature=0.0,
+                max_tokens=2048,
+            ), "anthropic"
+        elif p_name == "gemini":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            g_model = model_name or "gemini-1.5-flash"
+            return ChatGoogleGenerativeAI(
+                google_api_key=key,
+                model=g_model,
+                temperature=0.0,
+                max_output_tokens=2048,
+                max_retries=1,
+            ), "gemini"
+        elif p_name == "custom":
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                api_key=key,
+                base_url=base_url or "https://api.mistral.ai/v1",
+                model=model_name or "ministral-3b-latest",
+                temperature=0.0,
+                max_tokens=2048,
+            ), "custom"
+    except Exception as e:
+        _logger.warning(f"Failed to create LLM for provider {p_name}: {e}")
+        return None, None
+
+    return None, None
+
+
 class ConversationService:
     def __init__(self):
-        from .provider_manager import provider_manager
-        api_key = provider_manager.get_groq_key()
         self.llm = None
         self._chain = None
         self._chain_with_history = None
         self._last_context: dict[str, str] = {}
         self._current_system_prompt = SYSTEM_PROMPT
-        if api_key and api_key.startswith("gsk_") and "your_groq" not in api_key:
-            self.reconfigure(api_key)
+        self.reconfigure()
 
-    def reconfigure(self, api_key: str = None):
+    def reconfigure(self, preferred_provider: str = None):
+        """Re-initializes LLMs using all active providers in priority order."""
         from .provider_manager import provider_manager
-        key = api_key or provider_manager.get_groq_key()
-        key = (key or "").strip()
-        if not key or not key.startswith("gsk_") or "your_groq" in key:
-            self.llm = None
-            self._chain = None
-            self._chain_with_history = None
-            return False
+        active_providers = provider_manager.get_active_providers(preferred_provider=preferred_provider)
+        self.llm = None
+        self._chain = None
+        self._chain_with_history = None
 
-        self.llm = ChatGroq(
-            api_key=key,
-            model="llama-3.3-70b-versatile",
-            temperature=0.0,
-            max_tokens=2048,
-        )
-        self._setup_chain(self._current_system_prompt)
-        return True
+        for p_cfg in active_providers:
+            llm_inst, p_name = create_llm_from_config(p_cfg)
+            if llm_inst:
+                self.llm = llm_inst
+                self._setup_chain(self._current_system_prompt)
+                _logger.info(f"[CONVERSATION_SERVICE] Active primary LLM set to {p_name} ({p_cfg.model})")
+                return True
+
+        _logger.warning("[CONVERSATION_SERVICE] No valid active AI providers configured.")
+        return False
 
     def _setup_chain(self, system_prompt: str = None):
         if not self.llm:
@@ -134,15 +195,11 @@ class ConversationService:
         return self._last_context.get(session_id, "")
 
     def chat(self, question: str, context: str, session_id: str = None, is_followup: bool = False,
-             system_prompt: str = None) -> str:
-        if not self._chain_with_history:
-            return "Groq API is not configured."
-
+             system_prompt: str = None, provider: str = None) -> dict:
         chat_log = get_chat_logger()
         config = {"configurable": {"session_id": session_id or "default"}} if session_id else \
                  {"configurable": {"session_id": "default"}}
 
-        # Build chain inputs based on whether we have agent instructions
         chain_inputs = {"question": question}
 
         if system_prompt:
@@ -151,7 +208,6 @@ class ConversationService:
                 chat_log.info(f"System prompt updated to agent-specific prompt ({len(system_prompt)} chars)")
 
         if system_prompt and "{" in system_prompt:
-            # Agent prompt has {text}/{filename} — pass as agent_instructions instead
             chain_inputs["agent_instructions"] = "Agent Instructions:\n" + system_prompt + "\n\n"
         else:
             chain_inputs["agent_instructions"] = ""
@@ -165,7 +221,6 @@ class ConversationService:
         if context:
             self.set_last_context(session_id, context)
 
-        # Inject last assistant response for conversational continuity
         if context:
             try:
                 h = get_session_history(session_id or "default")
@@ -179,70 +234,120 @@ class ConversationService:
             except Exception:
                 pass
 
-        # Ensure we ONLY keep the very last question and answer (2 messages)
+        # Keep last question and answer
         hist = None
         try:
             hist = get_session_history(session_id or "default")
             if hist is not None and len(hist.messages) > 2:
-                # Keep exactly the last human message and AI response
-                kept = hist.messages[-2:]
+                messages_to_compress = hist.messages[:-4]
+                kept = hist.messages[-4:]
+                
+                # Summarize old messages using active LLM
+                old_text = ""
+                for m in messages_to_compress:
+                    role = "User" if isinstance(m, HumanMessage) else "Assistant"
+                    old_text += f"{role}: {m.content}\n"
+                
+                summary_prompt = "Summarize the key points of the following chat history in 1-2 short sentences so an AI assistant can remember the context:\n\n" + old_text
+                summary_result = ""
+                if self.llm:
+                    res = self.llm.invoke([HumanMessage(content=summary_prompt)])
+                    summary_result = res.content if hasattr(res, "content") else str(res)
+                else:
+                    from .groq_service import groq_service
+                    summary_result = groq_service.chat([{"role": "user", "content": summary_prompt}], max_tokens=150, temperature=0.1, model="llama-3.3-70b-versatile")
+                
                 hist.clear()
+                hist.add_message(SystemMessage(content=f"[Prior Conversation Summary: {summary_result.strip()}]"))
                 for m in kept:
                     hist.add_message(m)
-                chat_log.info("Trimmed history to strictly keep ONLY the last question and answer.")
+                chat_log.info(f"Compressed {len(messages_to_compress)} old messages into a summary.")
         except Exception as e:
-            chat_log.info(f"History trim failed: {e}")
+            chat_log.info(f"History compression failed: {e}")
 
-        # Ensure API key from AI Settings is active
+        # Ensure active provider is loaded from provider_manager (placing selected provider first)
         from .provider_manager import provider_manager
-        configured_key = provider_manager.get_groq_key()
-        if not configured_key or not configured_key.startswith("gsk_"):
+        active_providers = provider_manager.get_active_providers(preferred_provider=provider)
+
+        if not active_providers:
             from fastapi import HTTPException
             raise HTTPException(
                 status_code=400,
-                detail="Groq API Key is not configured. Please configure your Groq API Key in AI Settings."
+                detail="No active AI provider configured. Please configure an API Key in AI Settings."
             )
 
-        if self.llm is None or getattr(self.llm, "groq_api_key", None) != configured_key:
-            self.reconfigure(configured_key)
+        last_error = None
+        # Provider Failover Waterfall
+        for p_cfg in active_providers:
+            llm_inst, p_name = create_llm_from_config(p_cfg)
+            if not llm_inst:
+                continue
 
-        # Dynamic Model Routing (Waterfall)
-        estimated_chars = len(chain_inputs.get("agent_instructions", "")) + len(chain_inputs.get("context", "")) + len(chain_inputs.get("question", ""))
-        if hist is not None:
-            for m in hist.messages:
-                estimated_chars += len(m.content)
-        
-        estimated_tokens = estimated_chars / 4
-        target_model = "llama-3.3-70b-versatile"
-        if self.llm and getattr(self.llm, "model_name", "llama-3.3-70b-versatile") != target_model:
-            self.llm = ChatGroq(
-                api_key=configured_key,
-                model=target_model,
-                temperature=0.0,
-                max_tokens=2048,
-            )
+            self.llm = llm_inst
             self._setup_chain(self._current_system_prompt)
 
+            if not self._chain_with_history:
+                continue
 
-        chat_log.info(f"Invoking LangChain chain: model={target_model}, followup={is_followup}")
-        _logger.info(f"[CHAT] session={session_id}, context_len={len(context)}, is_followup={is_followup}")
-        if not self._chain_with_history:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=400,
-                detail="Groq LLM chain initialization failed. Please re-enter your Groq API Key in AI Settings."
-            )
+            m_name = getattr(p_cfg, "model", "") or "default"
+            print(f"\n==================================================")
+            print(f"  🤖 [CHAT EXECUTION]")
+            print(f"  Active Provider: {p_name.upper()}")
+            print(f"  Active Model:    {m_name}")
+            print(f"  Session ID:      {session_id or 'default'}")
+            print(f"==================================================\n")
 
-        t0 = time.time()
-        response = self._chain_with_history.invoke(
-            chain_inputs,
-            config=config,
+            chat_log.info(f"Invoking LangChain chain: provider={p_name}, model={m_name}, followup={is_followup}")
+            _logger.info(f"[CHAT] session={session_id}, provider={p_name}, model={m_name}, context_len={len(context)}, is_followup={is_followup}")
+
+            try:
+                t0 = time.time()
+                response = self._chain_with_history.invoke(
+                    chain_inputs,
+                    config=config,
+                )
+                duration = time.time() - t0
+                output_len = len(response.content)
+                chat_log.info(f"LangChain invoke done on {p_name}: {output_len} chars in {duration:.1f}s")
+                
+                content = response.content if hasattr(response, "content") else str(response)
+                import re
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                return {
+                    "answer": content,
+                    "provider": p_name,
+                    "model": m_name,
+                }
+            except Exception as e:
+                err_str = str(e)
+                last_error = err_str
+                _logger.warning(f"LLM call failed on provider '{p_cfg.provider}': {err_str}")
+                is_limit_err = any(term in err_str.lower() for term in [
+                    "429", "413", "rate limit", "rate_limit", "quota", "tpm",
+                    "tokens per minute", "request too large", "too many requests", "resource_exhausted"
+                ])
+                if is_limit_err:
+                    chat_log.info(f"Rate/Token limit hit on {p_name} — attempting automatic fallback to next available provider...")
+                    continue
+                else:
+                    break
+
+        is_final_limit = last_error and any(term in last_error.lower() for term in [
+            "429", "413", "rate limit", "rate_limit", "quota", "tpm",
+            "tokens per minute", "request too large", "too many requests", "resource_exhausted"
+        ])
+        if is_final_limit:
+            return {
+                "answer": "Rate Limit Exceeded: The active AI provider key has reached its daily/minute token limit. Please switch providers in AI Settings or wait a cooldown period.",
+                "provider": "system",
+                "model": "error",
+            }
+        
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI service call failed: {last_error or 'No active provider available'}"
         )
-        duration = time.time() - t0
-        output_len = len(response.content)
-        chat_log.info(f"LangChain invoke done: {output_len} chars in {duration:.1f}s")
-        _logger.info(f"[CHAT] LLM response: {output_len} chars in {duration:.1f}s")
-        return response.content
 
     def get_history(self, session_id: str = None) -> list[dict]:
         sid = session_id or "default"
