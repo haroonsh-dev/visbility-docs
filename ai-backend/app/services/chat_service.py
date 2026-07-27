@@ -214,12 +214,10 @@ class ChatService:
         if not q:
             return False, []
         is_cross = any(p in q for p in _CROSS_DOC_PHRASES)
+        # We no longer aggressively trigger cross_doc on single words like "all" or "list" 
+        # unless accompanied by explicit document phrases.
         if not is_cross:
-            # single aggregation word (e.g. "har file ka phone number") + a content word
-            hits = sum(1 for w in q.split() if w in _CROSS_DOC_WORDS)
-            if hits == 0:
-                return False, []
-            is_cross = True
+            return False, []
         terms = [t for t in re.sub(r'[^\w\s]', ' ', q).split()
                  if t and t not in _CROSS_DOC_DROP and t not in _CROSS_DOC_WORDS and len(t) >= 2]
         return True, terms
@@ -325,6 +323,12 @@ class ChatService:
                 loaded_paths.append(prompt_path)
 
         merged_prompt = "\n\n".join(loaded_prompts)
+        if loaded_paths:
+            print("\n" + "★"*65)
+            print(f"[DYNAMIC ROUTING PROMPT] Merged {len(loaded_paths)} Skill.md File(s):")
+            for p in loaded_paths:
+                print(f"  -> app/prompts/{p}")
+            print("★"*65 + "\n")
         return merged_prompt, loaded_paths
 
     def _auto_title(self, session_id: str, first_question: str):
@@ -550,38 +554,24 @@ class ChatService:
                 "session_id": sid,
             }
 
-        # ── Agent-context anchoring for retrieval (search query only) ──
-        anchor_agent = phase3_agent or None
-        if resolved_ids and not anchor_agent:
-            try:
-                doc_result = SupabaseDB.select("documents",
-                    columns="id, document_type, phase3_agent",
-                    filters={"organization_id": organization_id},
-                )
-                doc_data = getattr(doc_result, "data", doc_result if isinstance(doc_result, list) else [])
-                resolved_set = set(resolved_ids)
-                _agent_counts = {}
-                for d in doc_data:
-                    if d.get("id") in resolved_set:
-                        p3a = d.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(d.get("document_type", ""), "other_agent")
-                        if p3a:
-                            _agent_counts[p3a] = _agent_counts.get(p3a, 0) + 1
-                if _agent_counts:
-                    anchor_agent = max(_agent_counts, key=_agent_counts.get)
-            except Exception:
-                pass
-        if not anchor_agent:
-            anchor_agent = self._detect_query_agent(question)
-
+        # ── SEARCH-FIRST ROUTING: Search WITHOUT keyword bias, then route by metadata ──
+        # Step 1: Use the raw question for search (no keyword-based agent anchoring)
         search_query = question
-        if anchor_agent and anchor_agent in self.AGENT_CONTEXT_ANCHORS:
-            search_query = f"{question} | {self.AGENT_CONTEXT_ANCHORS[anchor_agent]}"
 
-        # ── Keyword → document_type filter (org-wide / no_scope only) ──
-        detected_doc_type = self.detect_doc_type_keyword(question)
-        apply_type_filter = bool(detected_doc_type) and not resolved_ids and not document_type
-        if apply_type_filter:
-            document_type = detected_doc_type
+        # If follow-up, contextualize the search query with the previous question
+        if not is_first:
+            try:
+                hist = conversation_service.get_history(sid)
+                if hist:
+                    for m in reversed(hist):
+                        if m.get("role") == "user":
+                            last_q = m.get("content", "")
+                            if last_q and last_q != question:
+                                search_query = f"{last_q} - {question}"
+                                chat_log.info(f"Contextualized search query: '{search_query}'")
+                            break
+            except Exception as e:
+                chat_log.warn(f"Failed to contextualize search query: {e}")
 
         # Cross-document "list a field from every file" intent (only when no doc chosen)
         cross_doc = False
@@ -613,6 +603,17 @@ class ChatService:
                 search_results = rag_service.hybrid_search(**hybrid_kwargs)
         else:
             search_results = rag_service.hybrid_search(**hybrid_kwargs)
+
+        # Step 2: Determine agents from ACTUAL search result metadata (not keywords)
+        _search_doc_types = {}
+        for r in search_results:
+            dt = r.get("document_type") or ""
+            if dt:
+                _search_doc_types[dt] = _search_doc_types.get(dt, 0) + 1
+        if _search_doc_types:
+            chat_log.info(f"[SEARCH-FIRST ROUTING] Document types found in results: {_search_doc_types}")
+        else:
+            chat_log.info("[SEARCH-FIRST ROUTING] No document types in results — will use fallback")
 
         q_lower = question.lower()
         is_resume_query = any(
@@ -738,6 +739,14 @@ class ChatService:
 
         context = "\n\n".join(context_parts)
         
+        print("\n" + "="*70)
+        print("[CHAT RAG] === FINALIZED CHUNKS FOR LLM CONTEXT ===")
+        for idx, cp in enumerate(context_parts, 1):
+            print(f"\n--- [Finalized Chunk {idx}/{len(context_parts)}] ---")
+            print(cp)
+            print("-" * 50)
+        print("="*70 + "\n")
+
         # Limit context size to prevent Groq API Token limits (Limit 6000 TPM for Llama-3.1-8b on free tier)
         if len(context) > 16000:
             chat_log.warn(f"Truncating search context from {len(context)} to 16000 characters to respect token limits.")
@@ -821,7 +830,7 @@ class ChatService:
             agent_tag = f" [{p3a}]" if p3a else ""
             chat_log.source_item(i, s["document_title"], (s.get("document_type") or "") + agent_tag, s["score"])
 
-        # ── Determine dominant agent and document_type from selected documents ──
+        # ── SEARCH-FIRST: Determine dominant agent from ACTUAL document metadata ──
         doc_agent_counts = {}
         doc_type_counts = {}
         if resolved_ids:
@@ -843,84 +852,58 @@ class ChatService:
             except Exception:
                 pass
 
-        # Also count from search results as fallback
-        agent_counts = {}
+        # Primary: Use search result metadata (most reliable — based on actual matched docs)
         search_doc_type_counts = {}
+        agent_counts = {}
         for r in search_results:
-            dt = r.get("document_type", "")
+            dt = r.get("document_type") or ""
             if dt:
                 search_doc_type_counts[dt] = search_doc_type_counts.get(dt, 0) + 1
             p3a = r.get("phase3_agent") or DOCUMENT_TO_PHASE3_AGENT.get(dt, "other_agent")
             agent_counts[p3a] = agent_counts.get(p3a, 0) + 1
 
-        # Use selected-doc agents if available, otherwise fall back to search result agents
-        dominant_source = doc_agent_counts if doc_agent_counts else agent_counts
-        dominant_agent = max(dominant_source, key=dominant_source.get) if dominant_source else "other_agent"
+        # Merge: selected doc metadata + search result metadata (search results take priority)
+        merged_type_counts = dict(doc_type_counts)
+        for dt, cnt in search_doc_type_counts.items():
+            merged_type_counts[dt] = merged_type_counts.get(dt, 0) + cnt
+        merged_agent_counts = dict(doc_agent_counts)
+        for ag, cnt in agent_counts.items():
+            merged_agent_counts[ag] = merged_agent_counts.get(ag, 0) + cnt
 
-        dominant_dt_source = doc_type_counts if doc_type_counts else search_doc_type_counts
-        dominant_doc_type = max(dominant_dt_source, key=dominant_dt_source.get) if dominant_dt_source else (document_type or "")
+        dominant_agent = max(merged_agent_counts, key=merged_agent_counts.get) if merged_agent_counts else "other_agent"
+        dominant_doc_type = max(merged_type_counts, key=merged_type_counts.get) if merged_type_counts else (document_type or "")
 
         no_scope = not resolved_ids and not document_type and not phase3_agent
         is_folder_selection = bool(phase3_agent and not resolved_ids and not document_type)
         target_doc_type = "" if is_folder_selection else dominant_doc_type
 
-        if phase3_agent and (is_folder_selection or not dominant_source):
+        if phase3_agent and (is_folder_selection or not merged_agent_counts):
             dominant_agent = phase3_agent
-        elif no_scope:
-            detected = self._detect_query_agent(question)
-            if detected:
-                dominant_agent = detected
+        # NOTE: We do NOT fall back to keyword detection anymore.
+        # The agent is determined purely from search result document metadata.
 
         if allowed_list:
             dominant_agent = clamp_agent(dominant_agent, allowed_list) or dominant_agent
 
-        # Load agent / per-type .md prompts and adapt them for Q&A
+        chat_log.info(f"[SEARCH-FIRST ROUTING] Dominant agent: {dominant_agent} | Dominant doc_type: {dominant_doc_type}")
+        chat_log.info(f"[SEARCH-FIRST ROUTING] All types: {merged_type_counts} | All agents: {merged_agent_counts}")
+
+        # Load agent / per-type .md prompts dynamically based on search result metadata
         qa_prompt = ""
         try:
-            if is_finance_query or dominant_agent == "finance_agent":
-                qa_prompt = (
-                    "You are the Finance Agent for Visibility Docs AI, answering questions about invoices and other financial documents.\n\n"
-                    "Use ONLY the provided context. Prefer the structured extraction summary when it exists, because it contains exact extracted fields.\n\n"
-                    "Rules:\n"
-                    "0. Always answer in the same language as the user's question — Urdu/Saraiki question → Urdu answer, English question → English answer.\n"
-                    "1. Answer directly and precisely.\n"
-                    "2. For invoice questions, use exact values for invoice number, dates, vendor, customer, subtotal, tax, total, due date, payment terms, and line items.\n"
-                    "3. Keep currency symbols and units intact.\n"
-                    "4. If the answer is not present, say \"I cannot find this information in the documents.\"\n"
-                    "5. If there is a mismatch between structured data and raw text, mention it briefly.\n"
-                    "6. Do not invent values.\n"
-                    "7. If line items are present, list them cleanly and include quantities/prices when available.\n"
-                    "8. Do not output JSON, unless the user explicitly requests JSON format.\n"
+            # Build prompts from ACTUAL document types found in search results (Fully Generic for ALL agents)
+            matched_agents = set(merged_agent_counts.keys())
+            if phase3_agent:
+                matched_agents.add(phase3_agent)
+            merged_rules, loaded_paths = self._build_multi_prompt_for_search_results(
+                merged_type_counts, matched_agents
+            )
+            if merged_rules:
+                chat_log.info(
+                    f"[SEARCH-FIRST GENERIC] Loaded skill.md files from search result metadata "
+                    f"({len(loaded_paths)} files): {', '.join(loaded_paths)}"
                 )
-            else:
-                multi_types = dominant_dt_source or search_doc_type_counts
-                use_multi = no_scope or (len(multi_types) > 1)
-
-                if use_multi:
-                    matched_counts = dict(search_doc_type_counts)
-                    if doc_type_counts:
-                        for dt, c in doc_type_counts.items():
-                            matched_counts[dt] = matched_counts.get(dt, 0) + c
-                    if no_scope:
-                        query_doc_type = self.detect_doc_type_keyword(question)
-                        if query_doc_type:
-                            matched_counts[query_doc_type] = matched_counts.get(query_doc_type, 0) + 100
-                            chat_log.info(f"Query intent classified as doc_type: '{query_doc_type}'")
-                    matched_agents = set(agent_counts.keys())
-                    if phase3_agent:
-                        matched_agents.add(phase3_agent)
-                    detected_agent = self._detect_query_agent(question)
-                    if detected_agent:
-                        matched_agents.add(detected_agent)
-                    merged_rules, loaded_paths = self._build_multi_prompt_for_search_results(
-                        matched_counts, matched_agents
-                    )
-                    if merged_rules:
-                        chat_log.info(
-                            f"Dynamically loaded intent-matched .md prompt file(s) "
-                            f"({len(loaded_paths)} files): {', '.join(loaded_paths)}"
-                        )
-                        qa_prompt = merged_rules
+                qa_prompt = merged_rules
 
                 if not qa_prompt:
                     raw_prompt, prompt_path = get_phase3_prompt_for_doc(

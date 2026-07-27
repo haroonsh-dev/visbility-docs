@@ -1169,11 +1169,12 @@ class RAGService:
             print(f"[INDEX] No chunks generated")
             return
 
-        print(f"\n[INDEX-VERBOSE] === STEP BY STEP CHUNK EXTRACTION ===")
+        print(f"\n[INDEX-VERBOSE] === STEP BY STEP FULL CHUNK EXTRACTION ===")
         for i, chunk in enumerate(chunks):
-            preview = (chunk[:100] + "...") if len(chunk) > 100 else chunk
-            preview = preview.replace("\n", " ")
-            print(f"  -> Extracted Chunk {i+1}/{len(chunks)} (Size: {len(chunk)} chars): {preview}")
+            chunk_str = chunk if isinstance(chunk, str) else chunk.get("text", str(chunk))
+            print(f"\n--- [Chunk {i+1}/{len(chunks)}] (Size: {len(chunk_str)} chars) ---")
+            print(chunk_str)
+            print("-" * 50)
         print(f"[INDEX-VERBOSE] =======================================\n")
         print(f"[INDEX] Generated {len(chunks)} chunks")
 
@@ -1913,28 +1914,25 @@ class RAGService:
             aggregate=True,
         )
 
-        # Phase 2 – per-doc guarantee: keep best chunk per doc
+        # Phase 2 – per-doc guarantee: keep best chunks per doc (up to 3)
         best_per_doc = {}
         for r in broad_results:
             did = r["document_id"]
-            score = r.get("score", 0)
-            if did not in best_per_doc or score > best_per_doc[did].get("score", 0):
-                best_per_doc[did] = r
+            if did not in best_per_doc:
+                best_per_doc[did] = []
+            if len(best_per_doc[did]) < 3:
+                best_per_doc[did].append(r)
 
-        # Phase 3 – lazy fallback for any uncovered doc
-        uncovered = [did for did in target_ids if did not in best_per_doc]
-        if uncovered:
-            fallback = self._fetch_any_chunks(uncovered, organization_id)
-            for fb in fallback:
-                did = fb["document_id"]
-                if did not in best_per_doc:
-                    best_per_doc[did] = fb
-            chat_log.info(f"Fallback covered {len(fallback)}/{len(uncovered)} uncovered docs")
-
-        # Phase 4 – rerank
-        merged = list(best_per_doc.values())
+        # Phase 3 – omitted (no lazy fallback of empty chunks)
+        
+        # Phase 4 – merge and fetch neighbors
+        merged = []
+        for did, chunks in best_per_doc.items():
+            merged.extend(chunks)
+            
         if merged:
             merged = self._rerank(merged, query, len(merged))
+            
         merged = self._fetch_neighbor_chunks(merged, organization_id)
         chat_log.info(f"Aggregate final: {len(merged)} chunks across {len(set(r['document_id'] for r in merged))} docs")
         return merged
