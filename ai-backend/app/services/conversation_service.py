@@ -270,11 +270,12 @@ class ConversationService:
         active_providers = provider_manager.get_active_providers(preferred_provider=provider)
 
         if not active_providers:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=400,
-                detail="No active AI provider configured. Please configure an API Key in AI Settings."
-            )
+            chat_log.warn("No active AI provider configured in settings")
+            return {
+                "answer": "⚠️ No active AI provider configured. Please go to AI Settings and enter your API key (Groq, OpenAI, Gemini, or Anthropic).",
+                "provider": "system",
+                "model": "configuration_required",
+            }
 
         last_error = None
         # Provider Failover Waterfall
@@ -330,7 +331,7 @@ class ConversationService:
                     chat_log.info(f"Rate/Token limit hit on {p_name} — attempting automatic fallback to next available provider...")
                     continue
                 else:
-                    break
+                    continue
 
         is_final_limit = last_error and any(term in last_error.lower() for term in [
             "429", "413", "rate limit", "rate_limit", "quota", "tpm",
@@ -338,16 +339,16 @@ class ConversationService:
         ])
         if is_final_limit:
             return {
-                "answer": "Rate Limit Exceeded: The active AI provider key has reached its daily/minute token limit. Please switch providers in AI Settings or wait a cooldown period.",
+                "answer": "⚠️ All configured AI providers have reached their rate/quota limits. Please switch providers in AI Settings or wait a few minutes for token replenishment.",
                 "provider": "system",
-                "model": "error",
+                "model": "rate_limit_cooldown",
             }
         
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=500,
-            detail=f"AI service call failed: {last_error or 'No active provider available'}"
-        )
+        return {
+            "answer": f"⚠️ AI Service Call Failed: {last_error or 'No active provider available. Please check your API key in AI Settings.'}",
+            "provider": "system",
+            "model": "error",
+        }
 
     def get_history(self, session_id: str = None) -> list[dict]:
         sid = session_id or "default"
