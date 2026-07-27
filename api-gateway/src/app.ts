@@ -16,6 +16,7 @@ import groqRoutes from './routes/groq';
 import departmentRoutes from './routes/departments';
 import settingsRoutes from './routes/settings';
 import plansRoutes from './routes/plans';
+import integrationsRoutes from './routes/integrations';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { authenticate } from './middleware/auth';
 import { listAllDocumentIntelligence, reprocessDocument } from './controllers/documentsController';
@@ -32,7 +33,7 @@ app.use(
             : '*',
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Integration-Key'],
         exposedHeaders: ['set-cookie'],
     })
 );
@@ -65,6 +66,7 @@ app.use('/api/docs/groq', groqRoutes);
 app.use('/api/docs/departments', departmentRoutes);
 app.use('/api/docs/settings', settingsRoutes);
 app.use('/api/docs/plans', plansRoutes);
+app.use('/api/docs/integrations', integrationsRoutes);
 app.use('/api/docs/super-admin', superAdminRoutes);
 
 app.use(notFound);

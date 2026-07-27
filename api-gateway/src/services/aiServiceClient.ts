@@ -123,6 +123,30 @@ export type AiChatResult = {
     model?: string;
 };
 
+export type AiProviderConfig = {
+    provider: string;
+    apiKey: string;
+    model?: string;
+    baseUrl?: string | null;
+};
+
+export async function syncProviderToAIBackend(config: AiProviderConfig): Promise<void> {
+    if (!ENABLED) return;
+    try {
+        const res = await client().post('/api/v1/settings/providers', {
+            provider: config.provider,
+            apiKey: config.apiKey,
+            model: config.model || '',
+            baseUrl: config.baseUrl || '',
+        });
+        if (res.status >= 400) {
+            logger.warn(`AI provider sync failed for ${config.provider}: ${JSON.stringify(res.data)}`);
+        }
+    } catch (err) {
+        logger.warn(`AI provider sync failed for ${config.provider}: ${err}`);
+    }
+}
+
 export async function chatWithAi(params: {
     organizationId: string;
     question: string;
@@ -136,6 +160,7 @@ export async function chatWithAi(params: {
     allowedAgents?: string[];
     provider?: string;
     model?: string;
+    providerConfig?: AiProviderConfig;
 }): Promise<AiChatResult> {
     if (!ENABLED) {
         throw new Error('AI service is disabled');
@@ -155,6 +180,14 @@ export async function chatWithAi(params: {
     if (params.allowedAgents?.length) body.allowed_agents = params.allowedAgents;
     if (params.provider) body.provider = params.provider;
     if (params.model) body.model = params.model;
+    if (params.providerConfig) {
+        body.provider_config = {
+            provider: params.providerConfig.provider,
+            apiKey: params.providerConfig.apiKey,
+            model: params.providerConfig.model || params.model || '',
+            baseUrl: params.providerConfig.baseUrl || '',
+        };
+    }
 
     // Prefer /chat when docs selected; /chat/all for org-wide or agent-folder scope
     const path =

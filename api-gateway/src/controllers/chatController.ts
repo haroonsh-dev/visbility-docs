@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import Document from '../models/Document';
+import ApiKey, { AIProvider } from '../models/ApiKey';
 import { buildDocumentFilter, hasPermission } from '../services/accessScope';
 import {
     chatWithAi,
@@ -10,10 +11,45 @@ import {
     isAiServiceEnabled,
     listChatSessions,
     resolveAiOrganizationId,
+    syncProviderToAIBackend,
+    type AiProviderConfig,
 } from '../services/aiServiceClient';
 import { PERMISSIONS } from '../types/permissions';
 import logger from '../utils/logger';
 import { recordActivityFromReq } from '../services/activityLog';
+
+async function resolveChatProviderConfig(
+    organizationId: string,
+    provider?: string,
+    model?: string,
+): Promise<AiProviderConfig | null> {
+    const filter: { isActive: boolean; organizationId?: string; provider?: AIProvider } = {
+        isActive: true,
+    };
+    if (organizationId) filter.organizationId = organizationId;
+
+    if (provider) {
+        filter.provider = provider as AIProvider;
+        const key = await ApiKey.findOne(filter).lean();
+        if (!key?.apiKey) return null;
+        return {
+            provider: key.provider,
+            apiKey: key.apiKey,
+            model: model || key.aiModel || '',
+            baseUrl: key.baseUrl || null,
+        };
+    }
+
+    const keys = await ApiKey.find(filter).sort({ createdAt: 1 }).lean();
+    const primary = keys.find((k) => k.provider === 'groq') || keys[0];
+    if (!primary?.apiKey) return null;
+    return {
+        provider: primary.provider,
+        apiKey: primary.apiKey,
+        model: model || primary.aiModel || '',
+        baseUrl: primary.baseUrl || null,
+    };
+}
 
 export const chatWithDocuments = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -134,6 +170,19 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
 
             const phase3AgentRaw = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
             const documentType = (req.body.document_type || req.body.documentType || '').toString().trim() || undefined;
+            const provider = (req.body.provider || req.body.modelProvider || '').toString().trim() || undefined;
+            const model = (req.body.model || req.body.aiModel || '').toString().trim() || undefined;
+
+            const providerConfig = await resolveChatProviderConfig(orgId, provider, model);
+            if (provider && !providerConfig) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Selected AI provider "${provider}" is not configured. Add an API key in AI Settings.`,
+                });
+            }
+            if (providerConfig) {
+                await syncProviderToAIBackend(providerConfig);
+            }
 
             let phase3Agent = phase3AgentRaw;
             let allowedAgents: string[] | undefined;
@@ -153,9 +202,6 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 // AI receives allowed_agents for all routing.
             }
 
-            const provider = (req.body.provider || req.body.modelProvider || '').toString().trim() || undefined;
-            const model = (req.body.model || req.body.aiModel || '').toString().trim() || undefined;
-
             const result = await chatWithAi({
                 organizationId: orgId,
                 question: message,
@@ -167,8 +213,9 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 phase3Agent,
                 documentType,
                 allowedAgents,
-                provider,
-                model,
+                provider: providerConfig?.provider || provider,
+                model: providerConfig?.model || model,
+                providerConfig: providerConfig || undefined,
             });
 
             const seenCite = new Set<string>();
@@ -198,8 +245,8 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     sessionId: result.session_id,
                     chatScope,
                     model: 'visibility-ai-rag',
-                    aiProvider: (result as any).provider || provider,
-                    aiModel: (result as any).model || model,
+                    aiProvider: (result as any).provider || providerConfig?.provider || provider,
+                    aiModel: (result as any).model || providerConfig?.model || model,
                 },
             });
             recordActivityFromReq(req, {
@@ -234,6 +281,40 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 error: formatAiError(aiError),
             });
         }
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const listChatModelsHandler = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.CHAT_USE)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        const organizationId = req.user.organizationId || null;
+        if (!organizationId && req.user.role !== 'superAdmin') {
+            return res.json({ success: true, data: { models: [], primary: null } });
+        }
+
+        const keys = await ApiKey.find({
+            organizationId: organizationId || undefined,
+            isActive: true,
+        })
+            .sort({ createdAt: 1 })
+            .lean();
+
+        const models = keys.map((k) => ({
+            provider: k.provider,
+            label: k.label || k.provider,
+            model: k.aiModel || '',
+            baseUrl: k.baseUrl || null,
+        }));
+        const primary = models[0] || null;
+
+        res.json({
+            success: true,
+            data: { models, primary },
+        });
     } catch (error) {
         next(error);
     }

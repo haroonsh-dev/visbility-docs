@@ -142,13 +142,13 @@ class ConversationService:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", sp),
                 MessagesPlaceholder(variable_name="history"),
-                ("human", "{agent_instructions}Document Context:\n{context}\n\nQuestion: {question}"),
+                ("human", "{agent_instructions}Document Context:\n{context}\n\nCRITICAL INSTRUCTION: If the context contains a table or list, carefully scan the ENTIRE table from top to bottom. Extract ALL matching rows or data points. DO NOT skip any rows or hallucinate missing data.\n\nQuestion: {question}"),
             ])
         else:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", AGENT_SYSTEM_PROMPT),
                 MessagesPlaceholder(variable_name="history"),
-                ("human", "{agent_instructions}Document Context:\n{context}\n\nQuestion: {question}"),
+                ("human", "{agent_instructions}Document Context:\n{context}\n\nCRITICAL INSTRUCTION: If the context contains a table or list, carefully scan the ENTIRE table from top to bottom. Extract ALL matching rows or data points. DO NOT skip any rows or hallucinate missing data.\n\nQuestion: {question}"),
             ])
 
         self._chain = prompt | self.llm

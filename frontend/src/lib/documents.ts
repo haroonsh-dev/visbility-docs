@@ -30,5 +30,21 @@ export function getDocumentAiImageUrl(documentId: string, imagePath: string): st
 }
 
 export function canPreviewMime(mime: string): boolean {
-    return mime.startsWith('image/') || mime === 'application/pdf';
+    return (
+        mime.startsWith('image/') ||
+        mime.startsWith('text/') ||
+        mime.startsWith('audio/') ||
+        mime.startsWith('video/') ||
+        mime === 'application/pdf' ||
+        mime === 'text/csv' ||
+        mime === 'application/json' ||
+        mime === 'application/xml' ||
+        mime === 'text/xml' ||
+        mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        mime === 'application/msword' ||
+        mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        mime === 'application/vnd.ms-excel' ||
+        mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+        mime === 'application/vnd.ms-powerpoint'
+    );
 }
