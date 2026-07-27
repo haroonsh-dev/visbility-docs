@@ -167,14 +167,17 @@ class OrchestrationLogger:
         connector = "├─" if idx > 0 else " └─"
         self._line(f" {connector} {C.BOLD}{title}{C.RESET}  ({C.DIM}{doc_type}, score: {score:.2f}{C.RESET})")
 
-    def llm_call(self, model: str, context_len: int, question_len: int, source_count: int):
+    def llm_call(self, model: str, context_len: int, question_len: int, source_count: int, provider: str = None, **kwargs):
         print()
         print(f"  {C.BOLD}{C.CYAN}+-LLM CALL {TR}{C.RESET}")
         print(f"  {C.CYAN}{V}{C.RESET}")
+        if provider:
+            self._line(f"Provider: {C.BOLD}{provider.upper()}{C.RESET}")
         self._line(f"Model: {C.BOLD}{model}{C.RESET}")
         self._line(f"Context: {_plural(context_len, 'char')} from {_plural(source_count, 'source')}")
         self._line(f"Question: {_plural(question_len, 'char')}")
-        self._line("Calling Groq API...")
+        prov_label = provider.upper() if provider else "AI"
+        self._line(f"Calling {prov_label} API...")
 
     def llm_response(self, duration: float, output_chars: int, finish_reason: str = "stop"):
         self._line(f"  {C.GREEN}[OK]{C.RESET}  Response received in {C.BOLD}{duration:.1f}s{C.RESET} ({_plural(output_chars, 'char')})")

@@ -69,7 +69,7 @@ class ChatService:
             return False
         return any(re.search(p, q, re.IGNORECASE) for p in _CHITCHAT_PATTERNS)
 
-    def _chitchat_reply(self, question: str, session_id: str, is_first: bool) -> str:
+    def _chitchat_reply(self, question: str, session_id: str, is_first: bool, provider: str = None) -> str:
         prompt = (
             "You are Visibility Docs AI, a friendly document assistant.\n"
             "The user sent a greeting or casual message — NOT a document question.\n"
@@ -85,6 +85,7 @@ class ChatService:
             session_id=session_id,
             is_followup=not is_first,
             system_prompt=prompt,
+            provider=provider,
         )
 
     # Keyword → agent intent map for query-type detection (used when no doc is selected)
@@ -274,14 +275,17 @@ class ChatService:
                 break
         return out
 
-    def _build_multi_prompt_for_search_results(self, doc_type_counts: dict, agents: set) -> tuple[str, list[str]]:
+    def _build_multi_prompt_for_search_results(self, doc_type_counts: dict, agents: set, allowed_agents: list = None) -> tuple[str, list[str]]:
         """Load and sanitize multiple .md prompt files for top matched document types.
+        Strictly enforces user plan entitlements: Only loads skill files for agents allowed in allowed_agents.
         Compactly limits loaded prompts to top 3 matched types (max ~1,200 chars per prompt)
         to stay safely under Groq token limits while providing specialized domain guidelines."""
         import re
         loaded_prompts = []
         loaded_paths = []
         seen_paths = set()
+
+        allowed_set = set(allowed_agents) if allowed_agents else None
 
         sorted_types = [dt for dt, _ in sorted(doc_type_counts.items(), key=lambda x: x[1], reverse=True) if dt]
         if len(sorted_types) > 1 and "other" in sorted_types:
@@ -292,11 +296,15 @@ class ChatService:
         pairs = []
         for dt in top_types:
             p3a = DOCUMENT_TO_PHASE3_AGENT.get(dt, "other_agent")
+            if allowed_set and p3a != "other_agent" and p3a not in allowed_set:
+                continue
             pairs.append((dt, p3a))
 
         if not pairs and agents:
             for ag in list(agents)[:3]:
                 if ag and ag != "other_agent":
+                    if allowed_set and ag not in allowed_set:
+                        continue
                     pairs.append(("", ag))
 
         if not pairs:
@@ -508,7 +516,8 @@ class ChatService:
                            allowed_agents: list = None,
                            status: str = None, date_from: str = None, date_to: str = None,
                            chat_history: list[dict] = None, session_id: str = None,
-                           user_id: str = None, selected_text: str = None) -> dict:
+                           user_id: str = None, selected_text: str = None,
+                           provider: str = None, model: str = None) -> dict:
         chat_log = get_chat_logger()
         chat_log.chat_start(question, session_id=session_id or "", doc_count=len(document_ids or []))
         t_start = time.time()
@@ -530,7 +539,10 @@ class ChatService:
         # Greetings / small-talk → reply without searching documents
         if self._is_chitchat(question):
             chat_log.info("Chitchat detected — skipping document search")
-            answer = self._chitchat_reply(question, sid, is_first)
+            res_dict = self._chitchat_reply(question, sid, is_first, provider=provider)
+            answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+            res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+            res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
             self._save_exchange(sid, question, answer, [], is_first)
             total = time.time() - t_start
             chat_log.chat_end(total, 0)
@@ -540,6 +552,8 @@ class ChatService:
                 "document_id": "",
                 "history": conversation_service.get_history(sid),
                 "session_id": sid,
+                "provider": res_provider,
+                "model": res_model,
             }
 
         # Selected scope with empty list → no docs (do not search everything)
@@ -680,9 +694,12 @@ class ChatService:
                     "If the answer is missing, say you cannot find it in the documents.\n"
                     "Do not invent numbers, dates, or names.\n"
                 )
-                chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1)
+                chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1, provider=provider)
                 llm_t0 = time.time()
-                answer = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt)
+                res_dict = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt, provider=provider)
+                answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+                res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+                res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
                 chat_log.llm_response(time.time() - llm_t0, len(answer))
                 self._save_exchange(sid, question, answer, [], is_first)
                 total = time.time() - t_start
@@ -693,23 +710,26 @@ class ChatService:
                     "document_id": resolved_ids[0] if resolved_ids else "",
                     "history": conversation_service.get_history(sid),
                     "session_id": sid,
+                    "provider": res_provider,
+                    "model": res_model,
                 }
 
             chat_log.search_strategy("Context Building", "no results found")
             chat_log.warn("No relevant documents found in search")
-            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0)
+            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0, provider=provider)
             system_prompt = ""
             if resume_context:
                 system_prompt = "You are a Resume Screening assistant. Use the [Resume Rankings] block to answer ranking/comparison questions. Do not make up information."
+            llm_t0 = time.time()
             if is_first:
-                llm_t0 = time.time()
-                answer = conversation_service.chat(question, resume_context, session_id=sid,
-                    system_prompt=system_prompt)
-                chat_log.llm_response(time.time() - llm_t0, len(answer))
+                res_dict = conversation_service.chat(question, resume_context, session_id=sid,
+                    system_prompt=system_prompt, provider=provider)
             else:
-                llm_t0 = time.time()
-                answer = conversation_service.chat(question, resume_context, session_id=sid, is_followup=True)
-                chat_log.llm_response(time.time() - llm_t0, len(answer))
+                res_dict = conversation_service.chat(question, resume_context, session_id=sid, is_followup=True, provider=provider)
+            answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+            res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+            res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+            chat_log.llm_response(time.time() - llm_t0, len(answer))
             unique_resume_sources = self._dedupe_sources(resume_sources, limit=3)
             self._save_exchange(sid, question, answer, unique_resume_sources, is_first)
             total = time.time() - t_start
@@ -720,6 +740,8 @@ class ChatService:
                 "document_id": resolved_ids[0] if resolved_ids else "",
                 "history": conversation_service.get_history(sid),
                 "session_id": sid,
+                "provider": res_provider,
+                "model": res_model,
             }
 
         context_parts = []
@@ -891,12 +913,15 @@ class ChatService:
         # Load agent / per-type .md prompts dynamically based on search result metadata
         qa_prompt = ""
         try:
-            # Build prompts from ACTUAL document types found in search results (Fully Generic for ALL agents)
+            # Build prompts from ACTUAL document types found in search results, strictly filtered by user plan entitlements
             matched_agents = set(merged_agent_counts.keys())
+            if allowed_list:
+                matched_agents = {ag for ag in matched_agents if ag in allowed_list}
             if phase3_agent:
-                matched_agents.add(phase3_agent)
+                if not allowed_list or phase3_agent in allowed_list:
+                    matched_agents.add(phase3_agent)
             merged_rules, loaded_paths = self._build_multi_prompt_for_search_results(
-                merged_type_counts, matched_agents
+                merged_type_counts, matched_agents, allowed_agents=allowed_list
             )
             if merged_rules:
                 chat_log.info(
@@ -1000,11 +1025,16 @@ class ChatService:
 
         chat_log.info(f"Built Q&A prompt for agent: {dominant_agent} ({len(qa_prompt)} chars)")
 
-        chat_log.llm_call("llama-3.3-70b-versatile", context_len, len(question), len(sources))
+        chat_log.llm_call(model or "active-llm", context_len, len(question), len(sources), provider=provider)
         llm_t0 = time.time()
         is_followup = not is_first
-        answer = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
-                                            system_prompt=qa_prompt)
+        res_dict = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
+                                            system_prompt=qa_prompt, provider=provider)
+        
+        answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+        res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+        res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+
         chat_log.llm_response(time.time() - llm_t0, len(answer))
 
         history = conversation_service.get_history(sid)
@@ -1020,10 +1050,12 @@ class ChatService:
             "document_id": sources[0]["document_id"] if sources else "",
             "history": history,
             "session_id": sid,
+            "provider": res_provider,
+            "model": res_model,
         }
 
     def _answer_on_excerpt(self, question: str, selected_text: str, organization_id: str,
-                           sid: str, is_first: bool) -> dict:
+                           sid: str, is_first: bool, provider: str = None, model: str = None) -> dict:
         """Answer a follow-up question grounded STRICTLY on a user-selected excerpt.
 
         Used for the ChatGPT-style "highlight a response → ask about it" flow. No
@@ -1047,12 +1079,16 @@ class ChatService:
             "Do not invent facts.\n"
         )
         chat_log.info(f"Focused excerpt Q&A — excerpt {len(selected_text)} chars, question {len(question)} chars")
-        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0)
+        chat_log.llm_call("llama-3.3-70b-versatile", len(excerpt_context), len(question), 0, provider=provider)
         llm_t0 = time.time()
-        answer = conversation_service.chat(
+        res_dict = conversation_service.chat(
             question, excerpt_context, session_id=sid,
             is_followup=not is_first, system_prompt=system_prompt,
+            provider=provider,
         )
+        answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+        res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+        res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
         chat_log.llm_response(time.time() - llm_t0, len(answer))
         self._save_exchange(sid, question, answer, [], is_first)
         history = conversation_service.get_history(sid)
@@ -1062,6 +1098,8 @@ class ChatService:
             "document_id": "",
             "history": history,
             "session_id": sid,
+            "provider": res_provider,
+            "model": res_model,
         }
 
 

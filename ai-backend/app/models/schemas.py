@@ -185,6 +185,8 @@ class ChatRequest(BaseModel):
     chat_history: Optional[list[dict]] = None
     session_id: Optional[str] = None
     selected_text: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -193,6 +195,8 @@ class ChatResponse(BaseModel):
     document_id: str
     history: list[dict] = []
     session_id: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 class ProcessRequest(BaseModel):

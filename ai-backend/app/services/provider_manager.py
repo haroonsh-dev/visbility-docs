@@ -49,6 +49,7 @@ class ProviderManager:
 
     def __init__(self):
         self._providers: Dict[str, ProviderConfig] = {}
+        self._primary_provider: Optional[str] = None
         self._load_from_state()
 
     def _load_from_state(self):
@@ -57,10 +58,11 @@ class ProviderManager:
             if PROVIDERS_STATE_FILE.exists():
                 with open(PROVIDERS_STATE_FILE, "r") as f:
                     data = json.load(f)
+                self._primary_provider = data.get("primary")
                 for p in data.get("providers", []):
                     if p.get("api_key"):
                         self._providers[p["provider"]] = ProviderConfig(**p)
-                logger.info(f"Loaded {len(self._providers)} providers from state file")
+                logger.info(f"Loaded {len(self._providers)} providers from state file (primary={self._primary_provider})")
         except Exception as e:
             logger.warning(f"Failed to load providers state: {e}")
 
@@ -69,7 +71,8 @@ class ProviderManager:
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             data = {
-                "providers": [p.to_dict() for p in self._providers.values()]
+                "providers": [p.to_dict() for p in self._providers.values()],
+                "primary": self._primary_provider or (list(self._providers.keys())[0] if self._providers else None),
             }
             with open(PROVIDERS_STATE_FILE, "w") as f:
                 json.dump(data, f, indent=2)
@@ -81,6 +84,7 @@ class ProviderManager:
         self._providers[provider] = ProviderConfig(
             provider=provider, api_key=api_key, model=model, base_url=base_url
         )
+        self._primary_provider = provider
         self._save_state()
         # Also update environment variables for compatibility
         env_key_map = {
@@ -96,18 +100,28 @@ class ProviderManager:
     def remove_provider(self, provider: str):
         """Remove a provider configuration."""
         self._providers.pop(provider, None)
+        if getattr(self, "_primary_provider", None) == provider:
+            self._primary_provider = list(self._providers.keys())[0] if self._providers else None
         self._save_state()
 
     def get_provider(self, provider: str) -> Optional[ProviderConfig]:
         """Get a specific provider config."""
         return self._providers.get(provider)
 
-    def get_active_providers(self) -> List[ProviderConfig]:
-        """Get all configured providers in priority order."""
+    def get_active_providers(self, preferred_provider: str = None) -> List[ProviderConfig]:
+        """Get all configured providers in priority order, placing preferred_provider or primary provider first."""
         result = []
         for p in self.PROVIDER_PRIORITY:
             if p in self._providers and self._providers[p].api_key:
                 result.append(self._providers[p])
+
+        target_pref = (preferred_provider or getattr(self, "_primary_provider", None) or "").lower().strip()
+        if target_pref:
+            pref_cfg = next((cfg for cfg in result if cfg.provider == target_pref), None)
+            if pref_cfg:
+                result.remove(pref_cfg)
+                result.insert(0, pref_cfg)
+
         return result
 
     def get_primary_provider(self) -> Optional[ProviderConfig]:

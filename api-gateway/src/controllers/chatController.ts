@@ -153,6 +153,9 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 // AI receives allowed_agents for all routing.
             }
 
+            const provider = (req.body.provider || req.body.modelProvider || '').toString().trim() || undefined;
+            const model = (req.body.model || req.body.aiModel || '').toString().trim() || undefined;
+
             const result = await chatWithAi({
                 organizationId: orgId,
                 question: message,
@@ -164,6 +167,8 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 phase3Agent,
                 documentType,
                 allowedAgents,
+                provider,
+                model,
             });
 
             const seenCite = new Set<string>();
@@ -193,6 +198,8 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     sessionId: result.session_id,
                     chatScope,
                     model: 'visibility-ai-rag',
+                    aiProvider: (result as any).provider || provider,
+                    aiModel: (result as any).model || model,
                 },
             });
             recordActivityFromReq(req, {

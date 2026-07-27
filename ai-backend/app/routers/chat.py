@@ -77,6 +77,8 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         session_id=request.session_id,
         user_id=request.user_id,
         selected_text=request.selected_text,
+        provider=request.provider,
+        model=request.model,
     )
 
     return ChatResponse(
@@ -85,6 +87,8 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         document_id=result["document_id"],
         history=result.get("history", []),
         session_id=result.get("session_id"),
+        provider=result.get("provider"),
+        model=result.get("model"),
     )
 
 
@@ -112,6 +116,8 @@ async def chat_all_documents(request: ChatRequest = Body(...)):
         session_id=request.session_id,
         user_id=request.user_id,
         selected_text=request.selected_text,
+        provider=request.provider,
+        model=request.model,
     )
 
     return ChatResponse(
@@ -120,4 +126,6 @@ async def chat_all_documents(request: ChatRequest = Body(...)):
         document_id=result["document_id"],
         history=result.get("history", []),
         session_id=result.get("session_id"),
+        provider=result.get("provider"),
+        model=result.get("model"),
     )

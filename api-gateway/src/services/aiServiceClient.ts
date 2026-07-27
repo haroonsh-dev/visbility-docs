@@ -119,6 +119,8 @@ export type AiChatResult = {
     sources: Array<Record<string, unknown>>;
     document_id: string;
     session_id?: string;
+    provider?: string;
+    model?: string;
 };
 
 export async function chatWithAi(params: {
@@ -132,6 +134,8 @@ export async function chatWithAi(params: {
     phase3Agent?: string;
     documentType?: string;
     allowedAgents?: string[];
+    provider?: string;
+    model?: string;
 }): Promise<AiChatResult> {
     if (!ENABLED) {
         throw new Error('AI service is disabled');
@@ -149,6 +153,8 @@ export async function chatWithAi(params: {
     if (params.phase3Agent) body.phase3_agent = params.phase3Agent;
     if (params.documentType) body.document_type = params.documentType;
     if (params.allowedAgents?.length) body.allowed_agents = params.allowedAgents;
+    if (params.provider) body.provider = params.provider;
+    if (params.model) body.model = params.model;
 
     // Prefer /chat when docs selected; /chat/all for org-wide or agent-folder scope
     const path =
