@@ -3,6 +3,7 @@ import json
 import sqlite3
 import threading
 from datetime import datetime
+from typing import Any, Optional
 from .config import settings
 
 _local = threading.local()
