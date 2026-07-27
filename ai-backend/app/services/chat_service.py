@@ -69,7 +69,9 @@ class ChatService:
             return False
         return any(re.search(p, q, re.IGNORECASE) for p in _CHITCHAT_PATTERNS)
 
-    def _chitchat_reply(self, question: str, session_id: str, is_first: bool, provider: str = None) -> str:
+    def _chitchat_reply(self, question: str, session_id: str, is_first: bool,
+                        provider: str = None, model: str = None,
+                        provider_config: dict | None = None):
         prompt = (
             "You are Visibility Docs AI, a friendly document assistant.\n"
             "The user sent a greeting or casual message — NOT a document question.\n"
@@ -86,6 +88,8 @@ class ChatService:
             is_followup=not is_first,
             system_prompt=prompt,
             provider=provider,
+            model=model,
+            provider_config=provider_config,
         )
 
     # Keyword → agent intent map for query-type detection (used when no doc is selected)
@@ -514,6 +518,7 @@ class ChatService:
     def chat_with_document(self, question: str, document_ids: list, organization_id: str,
                            document_type: str = None, phase3_agent: str = None,
                            allowed_agents: list = None,
+                           provider_config: dict | None = None,
                            status: str = None, date_from: str = None, date_to: str = None,
                            chat_history: list[dict] = None, session_id: str = None,
                            user_id: str = None, selected_text: str = None,
@@ -534,12 +539,15 @@ class ChatService:
             return self._answer_on_excerpt(
                 question=question, selected_text=selected_text.strip(),
                 organization_id=organization_id, sid=sid, is_first=is_first,
+                provider=provider, model=model, provider_config=provider_config,
             )
 
         # Greetings / small-talk → reply without searching documents
         if self._is_chitchat(question):
             chat_log.info("Chitchat detected — skipping document search")
-            res_dict = self._chitchat_reply(question, sid, is_first, provider=provider)
+            res_dict = self._chitchat_reply(
+                question, sid, is_first, provider=provider, model=model, provider_config=provider_config
+            )
             answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
             res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
             res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
@@ -696,7 +704,10 @@ class ChatService:
                 )
                 chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1, provider=provider)
                 llm_t0 = time.time()
-                res_dict = conversation_service.chat(question, finance_context, session_id=sid, system_prompt=finance_prompt, provider=provider)
+                res_dict = conversation_service.chat(
+                    question, finance_context, session_id=sid, system_prompt=finance_prompt,
+                    provider=provider, model=model, provider_config=provider_config,
+                )
                 answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
                 res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
                 res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
@@ -722,10 +733,16 @@ class ChatService:
                 system_prompt = "You are a Resume Screening assistant. Use the [Resume Rankings] block to answer ranking/comparison questions. Do not make up information."
             llm_t0 = time.time()
             if is_first:
-                res_dict = conversation_service.chat(question, resume_context, session_id=sid,
-                    system_prompt=system_prompt, provider=provider)
+                res_dict = conversation_service.chat(
+                    question, resume_context, session_id=sid,
+                    system_prompt=system_prompt, provider=provider, model=model,
+                    provider_config=provider_config,
+                )
             else:
-                res_dict = conversation_service.chat(question, resume_context, session_id=sid, is_followup=True, provider=provider)
+                res_dict = conversation_service.chat(
+                    question, resume_context, session_id=sid, is_followup=True,
+                    provider=provider, model=model, provider_config=provider_config,
+                )
             answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
             res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
             res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
@@ -1028,13 +1045,14 @@ class ChatService:
         chat_log.llm_call(model or "active-llm", context_len, len(question), len(sources), provider=provider)
         llm_t0 = time.time()
         is_followup = not is_first
-        res_dict = conversation_service.chat(question, context, session_id=sid, is_followup=is_followup,
-                                            system_prompt=qa_prompt, provider=provider)
-        
+        res_dict = conversation_service.chat(
+            question, context, session_id=sid, is_followup=is_followup,
+            system_prompt=qa_prompt, provider=provider, model=model,
+            provider_config=provider_config,
+        )
         answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
         res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
         res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
-
         chat_log.llm_response(time.time() - llm_t0, len(answer))
 
         history = conversation_service.get_history(sid)
@@ -1055,7 +1073,8 @@ class ChatService:
         }
 
     def _answer_on_excerpt(self, question: str, selected_text: str, organization_id: str,
-                           sid: str, is_first: bool, provider: str = None, model: str = None) -> dict:
+                           sid: str, is_first: bool, provider: str = None,
+                           model: str = None, provider_config: dict | None = None) -> dict:
         """Answer a follow-up question grounded STRICTLY on a user-selected excerpt.
 
         Used for the ChatGPT-style "highlight a response → ask about it" flow. No
@@ -1084,7 +1103,7 @@ class ChatService:
         res_dict = conversation_service.chat(
             question, excerpt_context, session_id=sid,
             is_followup=not is_first, system_prompt=system_prompt,
-            provider=provider,
+            provider=provider, model=model, provider_config=provider_config,
         )
         answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
         res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider

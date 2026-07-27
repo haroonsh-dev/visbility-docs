@@ -161,10 +161,8 @@ class ConversationService:
         )
 
     def update_system_prompt(self, prompt_text: str):
-        """Rebuild the chain with a new system prompt (e.g. an agent .md file)."""
         if prompt_text and prompt_text != self._current_system_prompt:
             self._current_system_prompt = prompt_text
-            self._setup_chain(prompt_text)
             return True
         return False
 
@@ -195,7 +193,8 @@ class ConversationService:
         return self._last_context.get(session_id, "")
 
     def chat(self, question: str, context: str, session_id: str = None, is_followup: bool = False,
-             system_prompt: str = None, provider: str = None) -> dict:
+             system_prompt: str = None, provider: str = None, model: str = None,
+             provider_config: dict | None = None) -> dict:
         chat_log = get_chat_logger()
         config = {"configurable": {"session_id": session_id or "default"}} if session_id else \
                  {"configurable": {"session_id": "default"}}
@@ -215,16 +214,16 @@ class ConversationService:
 
         if is_followup and not context:
             context = self.get_last_context(session_id)
-            chain_inputs["context"] = context
             chat_log.info(f"No new context — reusing previous session context ({len(context)} chars)")
+            chain_inputs["context"] = context
 
         if context:
             self.set_last_context(session_id, context)
 
         if context:
             try:
-                h = get_session_history(session_id or "default")
-                for m in reversed(h.messages):
+                hist = get_session_history(session_id or "default")
+                for m in reversed(hist.messages):
                     if isinstance(m, AIMessage):
                         txt = m.content.strip()
                         if txt and txt not in context:
@@ -241,13 +240,13 @@ class ConversationService:
             if hist is not None and len(hist.messages) > 2:
                 messages_to_compress = hist.messages[:-4]
                 kept = hist.messages[-4:]
-                
+
                 # Summarize old messages using active LLM
                 old_text = ""
                 for m in messages_to_compress:
                     role = "User" if isinstance(m, HumanMessage) else "Assistant"
                     old_text += f"{role}: {m.content}\n"
-                
+
                 summary_prompt = "Summarize the key points of the following chat history in 1-2 short sentences so an AI assistant can remember the context:\n\n" + old_text
                 summary_result = ""
                 if self.llm:
@@ -256,7 +255,7 @@ class ConversationService:
                 else:
                     from .groq_service import groq_service
                     summary_result = groq_service.chat([{"role": "user", "content": summary_prompt}], max_tokens=150, temperature=0.1, model="llama-3.3-70b-versatile")
-                
+
                 hist.clear()
                 hist.add_message(SystemMessage(content=f"[Prior Conversation Summary: {summary_result.strip()}]"))
                 for m in kept:
@@ -266,8 +265,24 @@ class ConversationService:
             chat_log.info(f"History compression failed: {e}")
 
         # Ensure active provider is loaded from provider_manager (placing selected provider first)
-        from .provider_manager import provider_manager
+        from .provider_manager import ProviderConfig, provider_manager
         active_providers = provider_manager.get_active_providers(preferred_provider=provider)
+
+        # Gateway may pass MongoDB API keys so chat works even if local provider_manager isn't synced
+        if provider_config:
+            api_key = (provider_config.get("api_key") or provider_config.get("apiKey") or "").strip()
+            if api_key:
+                injected = ProviderConfig(
+                    provider=(provider_config.get("provider") or provider or "custom"),
+                    api_key=api_key,
+                    model=(provider_config.get("model") or model or ""),
+                    base_url=(provider_config.get("base_url") or provider_config.get("baseUrl") or ""),
+                )
+                rest = [
+                    p for p in active_providers
+                    if not (p.provider == injected.provider and p.api_key == injected.api_key)
+                ]
+                active_providers = [injected] + rest
 
         if not active_providers:
             chat_log.warn("No active AI provider configured in settings")
@@ -280,7 +295,17 @@ class ConversationService:
         last_error = None
         # Provider Failover Waterfall
         for p_cfg in active_providers:
-            llm_inst, p_name = create_llm_from_config(p_cfg)
+            cfg_to_use = p_cfg
+            if model and model.strip() and not (provider_config and (provider_config.get("model") or "").strip()):
+                cfg_to_use = ProviderConfig(
+                    provider=p_cfg.provider,
+                    api_key=p_cfg.api_key,
+                    model=model.strip(),
+                    base_url=p_cfg.base_url,
+                    label=getattr(p_cfg, "label", "") or "",
+                )
+
+            llm_inst, p_name = create_llm_from_config(cfg_to_use)
             if not llm_inst:
                 continue
 
@@ -290,7 +315,7 @@ class ConversationService:
             if not self._chain_with_history:
                 continue
 
-            m_name = getattr(p_cfg, "model", "") or "default"
+            m_name = getattr(cfg_to_use, "model", "") or "default"
             print(f"\n==================================================")
             print(f"  🤖 [CHAT EXECUTION]")
             print(f"  Active Provider: {p_name.upper()}")
@@ -310,7 +335,7 @@ class ConversationService:
                 duration = time.time() - t0
                 output_len = len(response.content)
                 chat_log.info(f"LangChain invoke done on {p_name}: {output_len} chars in {duration:.1f}s")
-                
+
                 content = response.content if hasattr(response, "content") else str(response)
                 import re
                 content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
@@ -322,7 +347,7 @@ class ConversationService:
             except Exception as e:
                 err_str = str(e)
                 last_error = err_str
-                _logger.warning(f"LLM call failed on provider '{p_cfg.provider}': {err_str}")
+                _logger.warning(f"LLM call failed on provider '{cfg_to_use.provider}': {err_str}")
                 is_limit_err = any(term in err_str.lower() for term in [
                     "429", "413", "rate limit", "rate_limit", "quota", "tpm",
                     "tokens per minute", "request too large", "too many requests", "resource_exhausted"
@@ -343,7 +368,7 @@ class ConversationService:
                 "provider": "system",
                 "model": "rate_limit_cooldown",
             }
-        
+
         return {
             "answer": f"⚠️ AI Service Call Failed: {last_error or 'No active provider available. Please check your API key in AI Settings.'}",
             "provider": "system",

@@ -1,6 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Any
 from enum import Enum
+
+
+class ProviderConfigPayload(BaseModel):
+    provider: str
+    api_key: str = Field(alias="apiKey")
+    model: Optional[str] = ""
+    base_url: Optional[str] = Field(default="", alias="baseUrl")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DocumentType(str, Enum):
@@ -187,6 +196,7 @@ class ChatRequest(BaseModel):
     selected_text: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
+    provider_config: Optional[ProviderConfigPayload] = None
 
 
 class ChatResponse(BaseModel):

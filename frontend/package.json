@@ -11,14 +11,17 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "framer-motion": "^12.34.4",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.575.0",
+    "mammoth": "^1.12.0",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
     "recharts": "^3.9.2",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -79,6 +79,7 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         selected_text=request.selected_text,
         provider=request.provider,
         model=request.model,
+        provider_config=request.provider_config.model_dump() if request.provider_config else None,
     )
 
     return ChatResponse(
@@ -118,6 +119,7 @@ async def chat_all_documents(request: ChatRequest = Body(...)):
         selected_text=request.selected_text,
         provider=request.provider,
         model=request.model,
+        provider_config=request.provider_config.model_dump() if request.provider_config else None,
     )
 
     return ChatResponse(

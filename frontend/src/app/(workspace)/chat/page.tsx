@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
-    Plus, Trash2, MessageSquare, MessageCircle,
+    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatScopePanel, {
@@ -43,6 +43,13 @@ type ChatSessionSummary = {
     document_ids?: string[];
     updated_at?: string;
     created_at?: string;
+};
+
+type ChatModelOption = {
+    provider: string;
+    label: string;
+    model: string;
+    baseUrl?: string | null;
 };
 
 const WELCOME_MSG: ChatMessage = {
@@ -130,8 +137,12 @@ function ChatContent() {
     const [docStatusFilter, setDocStatusFilter] = useState<DocStatusFilter>("");
     const [focusedExcerpt, setFocusedExcerpt] = useState("");
     const [selPopover, setSelPopover] = useState<{ text: string; x: number; y: number } | null>(null);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
+    const [selectedModelKey, setSelectedModelKey] = useState("");
     const bottomRef = useRef<HTMLDivElement>(null);
     const msgsContainerRef = useRef<HTMLDivElement>(null);
+    const abortRef = useRef<AbortController | null>(null);
 
     const pythonToNode = new Map(
         libraryDocs.filter((d) => d.pythonDocumentId).map((d) => [d.pythonDocumentId as string, d.documentId])
@@ -171,10 +182,29 @@ function ChatContent() {
         }
     }, []);
 
+    const loadModels = useCallback(async () => {
+        try {
+            const data = await apiRequest("/docs/chat/models");
+            const models = Array.isArray(data?.data?.models) ? data.data.models : [];
+            const primary = data?.data?.primary;
+            setModelOptions(models);
+            const primaryKey =
+                primary?.provider && primary?.model ? `${primary.provider}::${primary.model}` : "";
+            setSelectedModelKey((current) =>
+                current && models.some((m: ChatModelOption) => `${m.provider}::${m.model}` === current)
+                    ? current
+                    : primaryKey
+            );
+        } catch {
+            setModelOptions([]);
+        }
+    }, []);
+
     useEffect(() => {
         loadDocs();
         loadSessions();
-    }, [loadDocs, loadSessions]);
+        loadModels();
+    }, [loadDocs, loadSessions, loadModels]);
 
     useEffect(() => {
         const mq = window.matchMedia("(min-width: 1024px)");
@@ -197,8 +227,18 @@ function ChatContent() {
     }, [sidebarOpen, isLg]);
 
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        const el = msgsContainerRef.current;
+        if (!el) return;
+        const behavior = sending ? "auto" : "smooth";
+        const frame = window.requestAnimationFrame(() => {
+            el.scrollTo({ top: el.scrollHeight, behavior });
+        });
+        return () => window.cancelAnimationFrame(frame);
     }, [messages, sending]);
+
+    useEffect(() => {
+        return () => abortRef.current?.abort();
+    }, []);
 
     const isInsideAssistant = (node: Node | null): boolean => {
         while (node) {
@@ -372,6 +412,8 @@ function ChatContent() {
         setMessages((m) => [...m, userMsg]);
         setInput("");
         setSending(true);
+        const controller = new AbortController();
+        abortRef.current = controller;
 
         try {
             const activeProvider = localStorage.getItem("active_ai_provider") || undefined;
@@ -400,10 +442,18 @@ function ChatContent() {
                 if (types.size === 1) body.documentType = [...types][0];
             }
             if (focusedExcerpt) body.selected_text = focusedExcerpt;
+            const chosenModel = modelOptions.find(
+                (m) => `${m.provider}::${m.model}` === selectedModelKey
+            );
+            if (chosenModel) {
+                body.provider = chosenModel.provider;
+                body.model = chosenModel.model;
+            }
 
             const data = await apiRequest("/docs/chat", {
                 method: "POST",
                 body: JSON.stringify(body),
+                signal: controller.signal,
             });
             setFocusedExcerpt("");
             if (data?.data?.sessionId) {
@@ -423,6 +473,17 @@ function ChatContent() {
                 },
             ]);
         } catch (e: any) {
+            if (e?.name === "AbortError") {
+                setMessages((m) => [
+                    ...m,
+                    {
+                        id: `s_${Date.now()}`,
+                        role: "assistant",
+                        content: "Response stopped.",
+                    },
+                ]);
+                return;
+            }
             setMessages((m) => [
                 ...m,
                 {
@@ -432,7 +493,24 @@ function ChatContent() {
                 },
             ]);
         } finally {
+            abortRef.current = null;
             setSending(false);
+        }
+    };
+
+    const stopSending = () => {
+        abortRef.current?.abort();
+    };
+
+    const copyReply = async (msg: ChatMessage) => {
+        try {
+            await navigator.clipboard.writeText(msg.content || "");
+            setCopiedId(msg.id);
+            window.setTimeout(() => {
+                setCopiedId((current) => (current === msg.id ? null : current));
+            }, 1800);
+        } catch {
+            /* ignore */
         }
     };
 
@@ -457,7 +535,7 @@ function ChatContent() {
     }
 
     return (
-        <div className="h-full min-h-0 flex relative">
+        <div className="h-full min-h-0 flex relative overflow-hidden">
             <button
                 type="button"
                 className={`lg:hidden fixed inset-0 z-30 bg-black/50 backdrop-blur-sm transition-opacity ${
@@ -552,7 +630,7 @@ function ChatContent() {
                 </div>
             </aside>
 
-            <div className="flex-1 min-w-0 flex flex-col bg-gradient-to-br from-transparent via-teal-500/[0.02] to-cyan-500/[0.04]">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-gradient-to-br from-transparent via-teal-500/[0.02] to-cyan-500/[0.04]">
                 <div className="px-3 sm:px-6 lg:px-8 py-3 sm:py-4 border-b border-[var(--border)] shrink-0 flex flex-wrap items-center gap-2 sm:gap-3">
                     <button
                         type="button"
@@ -599,7 +677,7 @@ function ChatContent() {
                     ref={msgsContainerRef}
                     onMouseUp={handleSelection}
                 >
-                    <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-6 space-y-4 min-h-full flex flex-col">
+                    <div className={`max-w-3xl mx-auto w-full px-4 sm:px-6 py-6 space-y-4 min-h-full flex flex-col ${!isWelcomeOnly ? "justify-end" : ""}`}>
                         {isWelcomeOnly ? (
                             <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-12 animate-fade-in-up">
                                 <div className="h-14 w-14 rounded-2xl bg-[var(--accent-muted)] border border-[rgba(45,212,191,0.25)] flex items-center justify-center text-[var(--accent)] mb-4">
@@ -636,7 +714,67 @@ function ChatContent() {
                                     >
                                         {msg.role === "assistant" ? (
                                             <div className={`prose prose-sm max-w-none ${isDark ? "prose-invert" : "prose-slate"}`}>
-                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                                                <div className="mb-2 flex justify-end not-prose">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => copyReply(msg)}
+                                                        className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] transition-colors ${
+                                                            isDark
+                                                                ? "bg-white/5 text-slate-300 hover:bg-white/10"
+                                                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                                        }`}
+                                                        aria-label="Copy reply"
+                                                    >
+                                                        {copiedId === msg.id ? <Check size={12} /> : <Copy size={12} />}
+                                                        {copiedId === msg.id ? "Copied" : "Copy"}
+                                                    </button>
+                                                </div>
+                                                <ReactMarkdown
+                                                    remarkPlugins={[remarkGfm]}
+                                                    components={{
+                                                        table: ({ children }) => (
+                                                            <div className="my-4 overflow-x-auto rounded-xl border border-slate-200">
+                                                                <table className="min-w-full border-collapse text-sm">
+                                                                    {children}
+                                                                </table>
+                                                            </div>
+                                                        ),
+                                                        thead: ({ children }) => (
+                                                            <thead className={isDark ? "bg-white/10" : "bg-slate-100"}>{children}</thead>
+                                                        ),
+                                                        th: ({ children }) => (
+                                                            <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold">
+                                                                {children}
+                                                            </th>
+                                                        ),
+                                                        td: ({ children }) => (
+                                                            <td className="border-b border-slate-100 px-3 py-2 align-top">
+                                                                {children}
+                                                            </td>
+                                                        ),
+                                                        ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+                                                        ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+                                                        blockquote: ({ children }) => (
+                                                            <blockquote className="border-l-4 border-teal-400/60 pl-4 italic">
+                                                                {children}
+                                                            </blockquote>
+                                                        ),
+                                                        code: ({ children, className }) => (
+                                                            <code
+                                                                className={`rounded px-1.5 py-0.5 ${className ? className : isDark ? "bg-white/10" : "bg-slate-100"}`}
+                                                            >
+                                                                {children}
+                                                            </code>
+                                                        ),
+                                                        pre: ({ children }) => (
+                                                            <pre className={`overflow-x-auto rounded-xl p-3 ${isDark ? "bg-slate-950/40" : "bg-slate-100"}`}>
+                                                                {children}
+                                                            </pre>
+                                                        ),
+                                                    }}
+                                                >
+                                                    {msg.content}
+                                                </ReactMarkdown>
                                                 {msg.aiProvider && (
                                                     <div className="mt-2 text-[10px] flex items-center gap-1 font-mono text-[var(--accent)] opacity-80 not-prose">
                                                         <Sparkles size={10} /> Powered by {msg.aiProvider.toUpperCase()}{msg.aiModel ? ` (${msg.aiModel})` : ""}
@@ -768,18 +906,52 @@ function ChatContent() {
 
                 <div className="px-4 sm:px-6 lg:px-8 py-4 border-t border-[var(--border)] shrink-0 bg-gradient-to-t from-[var(--surface)] via-[var(--surface)]/90 to-transparent">
                     <div className="max-w-3xl mx-auto w-full space-y-2">
-                        <button
-                            type="button"
-                            onClick={() => setScopePanelOpen(true)}
-                            className={`text-[11px] ${colors.textMuted} hover:text-[var(--accent)] inline-flex items-center gap-1.5 transition-colors`}
-                        >
-                            <FileText size={11} />
-                            Searching: {scopeLabel}
-                        </button>
+                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+                            <button
+                                type="button"
+                                onClick={() => setScopePanelOpen(true)}
+                                className={`text-[11px] ${colors.textMuted} hover:text-[var(--accent)] inline-flex items-center gap-1.5 transition-colors`}
+                            >
+                                <FileText size={11} />
+                                Searching: {scopeLabel}
+                            </button>
+                            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                                <label className={`inline-flex items-center gap-1.5 text-[11px] ${colors.textMuted}`}>
+                                    <Sparkles size={11} className="text-[var(--accent)] shrink-0" />
+                                    <span className="hidden sm:inline">Model:</span>
+                                    <select
+                                        value={selectedModelKey}
+                                        onChange={(e) => setSelectedModelKey(e.target.value)}
+                                        className={`rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] outline-none max-w-[140px] sm:max-w-[200px] truncate ${colors.textPrimary}`}
+                                    >
+                                        {modelOptions.length === 0 ? (
+                                            <option value="">Default model</option>
+                                        ) : (
+                                            modelOptions.map((option) => (
+                                                <option
+                                                    key={`${option.provider}::${option.model}`}
+                                                    value={`${option.provider}::${option.model}`}
+                                                >
+                                                    {option.label} · {option.model}
+                                                </option>
+                                            ))
+                                        )}
+                                    </select>
+                                </label>
+                                <Link
+                                    href="/admin/settings"
+                                    className="inline-flex items-center gap-1 text-[11px] text-[var(--accent)] hover:underline transition-colors"
+                                >
+                                    <Plus size={11} />
+                                    Add model
+                                </Link>
+                            </div>
+                        </div>
                         <ChatComposer
                             value={input}
                             onChange={setInput}
                             onSend={send}
+                            onStop={stopSending}
                             sending={sending}
                             placeholder={
                                 chatScope === "selected" && !selectedDocIds.length

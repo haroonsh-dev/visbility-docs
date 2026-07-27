@@ -23,6 +23,7 @@ const PAGE_TITLES: Record<string, string> = {
     "/plans": "Plans",
     "/admin/documents": "All Documents",
     "/admin/settings": "AI Settings",
+    "/admin/integrations": "Integrations",
 };
 
 function resolvePageTitle(pathname: string | null): string {

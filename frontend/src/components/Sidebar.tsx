@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
     FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
     X, Building2, ChevronDown, Settings, LayoutDashboard, User, Search,
-    CreditCard,
+    CreditCard, Plug,
 } from "lucide-react";
 import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
@@ -28,6 +28,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     // Avoid reading localStorage during SSR/first paint (hydration mismatch)
     const [user, setUser] = React.useState<StoredUser | null>(null);
     const [mounted, setMounted] = React.useState(false);
+    const [hasActivePlan, setHasActivePlan] = React.useState(false);
 
     React.useEffect(() => {
         setMounted(true);
@@ -51,6 +52,26 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         return () => { cancelled = true; };
     }, [role, mounted, ready]);
 
+    useEffect(() => {
+        if (!mounted || !ready || role !== "admin") {
+            setHasActivePlan(false);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await apiRequest("/docs/plans/subscription");
+                const sub = res?.data?.entitlement?.subscription;
+                const active =
+                    !!sub && String(sub.status || "active").toLowerCase() === "active";
+                if (!cancelled) setHasActivePlan(active);
+            } catch {
+                if (!cancelled) setHasActivePlan(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [mounted, ready, role]);
+
     const isSuperAdmin = role === "superAdmin";
     const canSeeDepts = role === "admin" || isSuperAdmin || hasPermission("department.view") || hasPermission("department.manage");
 
@@ -66,6 +87,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         { href: "/chat", label: "AI Chat", icon: MessageSquare, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canChat() },
         { href: "/admin/departments", label: "Departments", icon: Building2, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" || hasPermission("department.manage") },
         { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
+        { href: "/admin/integrations", label: "Integrations", icon: Plug, roles: ["admin"], allow: () => role === "admin" && hasActivePlan },
     ];
 
     // Until client has hydrated auth, render a stable baseline nav (no permission gates)

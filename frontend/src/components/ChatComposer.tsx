@@ -8,6 +8,7 @@ type ChatComposerProps = {
     value: string;
     onChange: (value: string) => void;
     onSend: () => void;
+    onStop?: () => void;
     sending?: boolean;
     placeholder?: string;
     className?: string;
@@ -17,6 +18,7 @@ export default function ChatComposer({
     value,
     onChange,
     onSend,
+    onStop,
     sending = false,
     placeholder = "Ask about your documents…",
     className,
@@ -45,12 +47,23 @@ export default function ChatComposer({
             />
             <button
                 type="button"
-                onClick={onSend}
-                disabled={sending || !value.trim()}
-                className="btn-gradient rounded-full h-10 w-10 flex items-center justify-center shrink-0 disabled:opacity-50"
-                aria-label="Send message"
+                onClick={sending ? onStop : onSend}
+                disabled={sending ? false : !value.trim()}
+                className={`rounded-full h-10 px-3 min-w-10 flex items-center justify-center shrink-0 disabled:opacity-50 ${
+                    sending
+                        ? "bg-rose-500 text-white hover:bg-rose-600"
+                        : "btn-gradient w-10"
+                }`}
+                aria-label={sending ? "Stop response" : "Send message"}
             >
-                {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
+                {sending ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                        <Loader2 size={15} className="animate-spin" />
+                        Stop
+                    </span>
+                ) : (
+                    <Send size={17} />
+                )}
             </button>
         </div>
     );
