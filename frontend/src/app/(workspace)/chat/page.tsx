@@ -374,10 +374,15 @@ function ChatContent() {
         setSending(true);
 
         try {
+            const activeProvider = localStorage.getItem("active_ai_provider") || undefined;
+            const activeModel = localStorage.getItem("active_ai_model") || undefined;
+
             const body: Record<string, unknown> = {
                 message: text,
                 chatScope,
                 sessionId,
+                provider: activeProvider,
+                model: activeModel,
             };
             if (chatScope === "selected") {
                 body.documentIds = selectedDocIds;

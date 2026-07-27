@@ -515,7 +515,11 @@ class SupabaseDB:
         return None
 
     @staticmethod
-    def save_chat_message(session_id: str, role: str, content: str, sources: list = None) -> int:
+    def save_chat_message(session_id: str, role: str, content: Any, sources: list = None) -> int:
+        if isinstance(content, dict):
+            content = str(content.get("answer") or content)
+        elif not isinstance(content, str):
+            content = str(content) if content is not None else ""
         try:
             client = _get_supabase()
             if _use_supabase and client:
