@@ -69,7 +69,7 @@ class ChatService:
             return False
         return any(re.search(p, q, re.IGNORECASE) for p in _CHITCHAT_PATTERNS)
 
-    def _chitchat_reply(self, question: str, session_id: str, is_first: bool) -> str:
+    def _chitchat_reply(self, question: str, session_id: str, is_first: bool, provider: str = None) -> str:
         prompt = (
             "You are Visibility Docs AI, a friendly document assistant.\n"
             "The user sent a greeting or casual message — NOT a document question.\n"
@@ -85,6 +85,7 @@ class ChatService:
             session_id=session_id,
             is_followup=not is_first,
             system_prompt=prompt,
+            provider=provider,
         )
 
     # Keyword → agent intent map for query-type detection (used when no doc is selected)
@@ -508,7 +509,8 @@ class ChatService:
                            allowed_agents: list = None,
                            status: str = None, date_from: str = None, date_to: str = None,
                            chat_history: list[dict] = None, session_id: str = None,
-                           user_id: str = None, selected_text: str = None) -> dict:
+                           user_id: str = None, selected_text: str = None,
+                           provider: str = None, model: str = None) -> dict:
         chat_log = get_chat_logger()
         chat_log.chat_start(question, session_id=session_id or "", doc_count=len(document_ids or []))
         t_start = time.time()
@@ -530,7 +532,10 @@ class ChatService:
         # Greetings / small-talk → reply without searching documents
         if self._is_chitchat(question):
             chat_log.info("Chitchat detected — skipping document search")
-            answer = self._chitchat_reply(question, sid, is_first)
+            res_dict = self._chitchat_reply(question, sid, is_first, provider=provider)
+            answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+            res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+            res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
             self._save_exchange(sid, question, answer, [], is_first)
             total = time.time() - t_start
             chat_log.chat_end(total, 0)
@@ -540,6 +545,8 @@ class ChatService:
                 "document_id": "",
                 "history": conversation_service.get_history(sid),
                 "session_id": sid,
+                "provider": res_provider,
+                "model": res_model,
             }
 
         # Selected scope with empty list → no docs (do not search everything)
