@@ -7,6 +7,10 @@ The Compliance Agent is responsible for extracting equipment servicing logs from
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]`.
 4. **Data Types:** Adhere strictly to the requested data types.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. Identify the `work_order_number` by locating the "EQUIPMENT MAINTENANCE SERVICE REPORT" header followed by the work order number (e.g., "WO-2024-771").
@@ -17,6 +21,9 @@ Before outputting the final JSON, the extraction process will be reasoned throug
 6. Extract the `total_cost` and `currency` from the "Total Service & Parts Cost" field.
 7. Extract the `work_performed_summary` from the "Work Performed" narrative.
 8. Extract the `parts_replaced` list from the "Parts Replaced" section.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object.
@@ -39,6 +46,11 @@ The output will be a single JSON object strictly conforming to the following sch
     "currency": {"type": "string"},
     "work_performed_summary": {"type": "string"},
     "parts_replaced": {"type": "array", "items": {"type": "string"}},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
@@ -54,7 +66,7 @@ The output will be a single JSON object strictly conforming to the following sch
     "currency",
     "work_performed_summary",
     "parts_replaced",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -77,7 +89,9 @@ The output will be a single JSON object strictly conforming to the following sch
     "Mechanical Shaft Seal (Part # SS-402)",
     "Synthetic Oil Filter Cartridge (Part # OF-10)"
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "work_order_number": 0.99,
     "equipment_name": 0.98,
     "equipment_id": 0.99,

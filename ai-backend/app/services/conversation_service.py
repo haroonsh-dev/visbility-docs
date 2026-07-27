@@ -179,34 +179,19 @@ class ConversationService:
             except Exception:
                 pass
 
-        # History compression and dynamic token optimization
+        # Ensure we ONLY keep the very last question and answer (2 messages)
         hist = None
         try:
             hist = get_session_history(session_id or "default")
-            if hist is not None and len(hist.messages) > 6:
-                messages_to_compress = hist.messages[:-4]
-                kept = hist.messages[-4:]
-                
-                # Summarize old messages using a fast LLM
-                from .groq_service import GroqService
-                groq_srv = GroqService()
-                old_text = ""
-                for m in messages_to_compress:
-                    role = "User" if isinstance(m, HumanMessage) else "Assistant"
-                    old_text += f"{role}: {m.content}\n"
-                
-                summary_prompt = "Summarize the key points of the following chat history in 1-2 short sentences so an AI assistant can remember the context:\n\n" + old_text
-                summary_result = groq_srv.chat([{"role": "user", "content": summary_prompt}], max_tokens=150, temperature=0.1, model="llama-3.3-70b-versatile")
-                
-                # Reset history with the summary
+            if hist is not None and len(hist.messages) > 2:
+                # Keep exactly the last human message and AI response
+                kept = hist.messages[-2:]
                 hist.clear()
-                from langchain_core.messages import SystemMessage
-                hist.add_message(SystemMessage(content=f"[Prior Conversation Summary: {summary_result.strip()}]"))
                 for m in kept:
                     hist.add_message(m)
-                chat_log.info(f"Compressed {len(messages_to_compress)} old messages into a summary.")
+                chat_log.info("Trimmed history to strictly keep ONLY the last question and answer.")
         except Exception as e:
-            chat_log.info(f"History compression failed: {e}")
+            chat_log.info(f"History trim failed: {e}")
 
         # Ensure API key from AI Settings is active
         from .provider_manager import provider_manager

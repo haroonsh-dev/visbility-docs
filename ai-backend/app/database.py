@@ -261,8 +261,8 @@ class SupabaseDB:
             if _use_supabase and client:
                 client.table(table).insert(data).execute()
                 supabase_ok = True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SupabaseDB.insert ERROR] Failed to insert into {table}: {e}")
         local = _local_insert(table, data)
         return local if not supabase_ok else type("Result", (), {"data": [data]})()
 
@@ -321,7 +321,7 @@ class SupabaseDB:
                 if offset:
                     query = query.offset(offset)
                 result = query.execute()
-                if result.data is not None:
+                if getattr(result, "data", None) is not None and len(result.data) > 0:
                     return result
         except Exception:
             pass

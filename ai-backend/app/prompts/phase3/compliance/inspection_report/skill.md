@@ -7,11 +7,18 @@ The Compliance Agent is responsible for extracting field audit findings from Ins
 3. **Missing Values:** Output `null` for unmentioned fields, and include `_field_confidence` for all extracted fields.
 4. **Data Types:** Adhere strictly to the requested data types, including standardizing dates to `YYYY-MM-DD`.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. Identify the Inspection Report Number (`inspection_report_id`) from the document.
 2. Extract the Site or plant inspected (`site_facility_name`), Field Inspector name (`inspector_name`), and Date of inspection (`inspection_date`), standardizing the date to `YYYY-MM-DD`.
 3. Determine the Overall Rating (`overall_rating`) and the Number of safety / structural hazards flagged (`violations_found_count`).
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object.
@@ -41,6 +48,11 @@ The output will be a single JSON object strictly conforming to the following sch
         "required": ["area_item", "status", "remarks"]
       }
     },
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {
       "type": "object",
       "properties": {
@@ -67,7 +79,7 @@ The output will be a single JSON object strictly conforming to the following sch
       }
     }
   },
-  "required": ["inspection_report_id", "site_facility_name", "inspector_name", "inspection_date", "overall_rating", "violations_found_count", "inspected_items", "_field_confidence", "grounding"]
+  "required": ["inspection_report_id", "site_facility_name", "inspector_name", "inspection_date", "overall_rating", "violations_found_count", "inspected_items", "additional_information", "_field_confidence", "grounding"]
 }
 ```
 
@@ -92,7 +104,9 @@ The output will be a single JSON object strictly conforming to the following sch
       "remarks": "Pressure gauge normal, tagged till Dec 2024."
     }
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "inspection_report_id": 0.99,
     "site_facility_name": 0.98,
     "inspector_name": 0.98,

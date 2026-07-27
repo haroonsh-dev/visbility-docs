@@ -7,6 +7,10 @@ The Legal Agent is responsible for extracting service terms, SLAs, and deliverab
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]` as specified in the schema. Do not use "N/A" or "Unknown".
 4. **Data Types:** Adhere strictly to the requested data types, including standardizing dates to `YYYY-MM-DD`.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. Identify the service provider name and client organization name in the document.
@@ -15,6 +19,9 @@ Before outputting the final JSON, the extraction process will be reasoned throug
 4. Locate the SLA uptime commitment, fee structure, payment frequency, and currency.
 5. Identify any penalty terms related to SLA breaches.
 6. Calculate the confidence level for each extracted field.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object.
@@ -35,6 +42,11 @@ The output will be a single JSON object strictly conforming to the following sch
     "payment_frequency": {"type": "string"},
     "currency": {"type": "string"},
     "penalty_terms": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
@@ -48,7 +60,7 @@ The output will be a single JSON object strictly conforming to the following sch
     "payment_frequency",
     "currency",
     "penalty_terms",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -66,7 +78,9 @@ The output will be a single JSON object strictly conforming to the following sch
   "payment_frequency": "Monthly",
   "currency": "USD",
   "penalty_terms": "10% monthly fee credit for every 0.1% uptime drop below target",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "service_provider": 0.98,
     "client_name": 0.98,
     "effective_date": 0.97,

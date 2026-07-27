@@ -7,6 +7,10 @@ The Finance Agent is responsible for extracting structured tax data from various
 3. **Missing Values:** If a value is not found, the agent must output `null` for the corresponding field.
 4. **Data Types:** The agent must adhere strictly to the requested data types, including strings, floats, and dates in the `YYYY-MM-DD` format.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the agent must reason through the extraction process step-by-step:
 1. Identify the type of tax document (e.g., Tax Return, Withholding Tax Certificate, Sales Tax Statement, W-9) and extract the corresponding `tax_document_type`.
@@ -18,6 +22,9 @@ Before outputting the final JSON, the agent must reason through the extraction p
 7. Calculate the total tax paid or withheld and extract it as `total_tax_paid`.
 8. Determine the remaining tax liability and extract it as `tax_due`.
 9. Extract the filing date and store it as `filing_date` in the `YYYY-MM-DD` format.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the agent must provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object.
@@ -38,6 +45,11 @@ The agent must output a single JSON object strictly conforming to the following 
     "total_tax_paid": {"type": "number"},
     "tax_due": {"type": "number"},
     "filing_date": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
@@ -51,7 +63,7 @@ The agent must output a single JSON object strictly conforming to the following 
     "total_tax_paid",
     "tax_due",
     "filing_date",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -69,7 +81,9 @@ The agent must output a single JSON object strictly conforming to the following 
   "total_tax_paid": 300000.00,
   "tax_due": 0.00,
   "filing_date": "2023-10-15",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "tax_document_type": 0.96,
     "tax_year": 0.98,
     "taxpayer_name": 0.97,

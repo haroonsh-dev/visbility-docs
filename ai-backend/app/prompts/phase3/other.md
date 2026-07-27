@@ -37,6 +37,7 @@ Extract general structured information from any document type. This agent is use
 | department | string | Department name | "Engineering" or "All Departments" | if present | Relevant department or team |
 | priority | string | Enum | "medium" | if present | One of: high, medium, low, not_specified |
 | notes | string | Free text | "This document was generated automatically from the project management system." | if present | Any additional observations |
+| additional_information | object | Any extra data found | {} | no | Capture ALL information in the document not fitting other fields. Use key-value pairs. |
 
 ## Few-Shot Example
 
@@ -97,7 +98,9 @@ Department: All Departments
   "department": "All Departments",
   "priority": "high",
   "notes": null,
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.99,
     "document_type": 0.95,
     "document_date": 0.99,

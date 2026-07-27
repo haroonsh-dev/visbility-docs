@@ -7,12 +7,19 @@ The Legal Agent is responsible for extracting legal obligations, non-disclosure,
 3. **Missing Values:** If a value is not found, output `null` for the corresponding field.
 4. **Data Types:** Adhere strictly to the requested data types, including date standardization to `YYYY-MM-DD`.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process involves the following steps:
 1. Identify the key fields to extract, including `employee_name`, `employer_name`, `job_position`, `effective_date`, `contract_duration`, `confidentiality_clause`, `ip_ownership_clause`, `termination_notice`, and `governing_jurisdiction`.
 2. Locate the relevant information within the document, ensuring exact matching and zero hallucination.
 3. Standardize dates to `YYYY-MM-DD` format and assign `null` to unmentioned fields.
 4. Calculate the confidence level for each extracted field and include it in the `_field_confidence` object.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object.
@@ -33,6 +40,11 @@ The output must be a single JSON object strictly conforming to the following sch
     "ip_ownership_clause": {"type": "string"},
     "termination_notice": {"type": "string"},
     "governing_jurisdiction": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {
       "type": "object",
       "properties": {
@@ -83,7 +95,7 @@ The output must be a single JSON object strictly conforming to the following sch
     "ip_ownership_clause",
     "termination_notice",
     "governing_jurisdiction",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -101,7 +113,9 @@ The output must be a single JSON object strictly conforming to the following sch
   "ip_ownership_clause": "All software patents, algorithms, and AI models developed belong exclusively to Employer",
   "termination_notice": "3 Months written notice or salary in lieu",
   "governing_jurisdiction": "Governed under the Labor Laws of Punjab, Pakistan",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "employee_name": 0.99,
     "employer_name": 0.98,
     "job_position": 0.99,

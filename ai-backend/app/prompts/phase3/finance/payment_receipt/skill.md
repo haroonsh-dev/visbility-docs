@@ -7,12 +7,19 @@ The Finance Agent is responsible for extracting payment receipt details from var
 3. **Missing Values:** If a value is not found, output `null` for the specific field.
 4. **Data Types:** Adhere strictly to the requested data types, including strings, floats, and dates in the `YYYY-MM-DD` format.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process involves the following steps:
 1. Identify the receipt number, payment date, payer name, payee name, payment method, transaction reference, amount paid, currency, and payment purpose from the document text.
 2. Standardize the payment date to the `YYYY-MM-DD` format.
 3. Extract the transaction reference, such as a cheque number, UTR number, or transaction ID, and the payment method, including "Bank Transfer", "Credit Card", "Cash", or "Cheque".
 4. Determine the amount paid and currency, ensuring the amount is a float value and the currency is a string.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object.
@@ -33,6 +40,11 @@ The output must be a single JSON object strictly conforming to the following sch
     "amount_paid": {"type": "number"},
     "currency": {"type": "string"},
     "payment_for": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
@@ -46,7 +58,7 @@ The output must be a single JSON object strictly conforming to the following sch
     "amount_paid",
     "currency",
     "payment_for",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -64,7 +76,9 @@ The output must be a single JSON object strictly conforming to the following sch
   "amount_paid": 450000.00,
   "currency": "PKR",
   "payment_for": "Payment against Invoice # INV-2024-102",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "receipt_number": 0.98,
     "payment_date": 0.97,
     "payer_name": 0.96,

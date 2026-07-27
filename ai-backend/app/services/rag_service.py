@@ -1168,6 +1168,13 @@ class RAGService:
         if not chunks:
             print(f"[INDEX] No chunks generated")
             return
+
+        print(f"\n[INDEX-VERBOSE] === STEP BY STEP CHUNK EXTRACTION ===")
+        for i, chunk in enumerate(chunks):
+            preview = (chunk[:100] + "...") if len(chunk) > 100 else chunk
+            preview = preview.replace("\n", " ")
+            print(f"  -> Extracted Chunk {i+1}/{len(chunks)} (Size: {len(chunk)} chars): {preview}")
+        print(f"[INDEX-VERBOSE] =======================================\n")
         print(f"[INDEX] Generated {len(chunks)} chunks")
 
         # Build enriched chunk metadata for embedding + storage

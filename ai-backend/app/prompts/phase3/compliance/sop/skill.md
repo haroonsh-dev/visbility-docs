@@ -7,12 +7,19 @@ The Compliance Agent is responsible for extracting procedural steps and control 
 3. **Missing Values:** Output `null` for unmentioned fields and empty arrays `[]` as specified, avoiding "N/A" or "Unknown".
 4. **Data Types:** Adhere strictly to requested data types, including support for bilingual text (English and Urdu).
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, reason through the extraction process step-by-step:
 1. Identify the SOP document structure, including the SOP number, title, department, version number, effective date, review date, and author/approver.
 2. Extract procedure steps, including step number, title, and description, while maintaining exact matching and avoiding hallucination.
 3. Standardize dates to `YYYY-MM-DD` format and support bilingual text (English and Urdu) throughout the extraction process.
 4. Calculate `_field_confidence` for each extracted field, indicating the confidence level in the extracted value.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object, ensuring transparency and traceability of extracted information.
@@ -43,6 +50,11 @@ Output a single JSON object strictly conforming to the following schema:
         "required": ["step_number", "title", "description"]
       }
     },
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {
       "type": "object",
       "properties": {
@@ -70,7 +82,7 @@ Output a single JSON object strictly conforming to the following schema:
       }
     }
   },
-  "required": ["sop_number", "sop_title", "department", "version_number", "effective_date", "review_date", "author_approver", "procedure_steps", "_field_confidence", "grounding"]
+  "required": ["sop_number", "sop_title", "department", "version_number", "effective_date", "review_date", "author_approver", "procedure_steps", "additional_information", "_field_confidence", "grounding"]
 }
 ```
 
@@ -101,7 +113,9 @@ Output a single JSON object strictly conforming to the following schema:
       "description": "In case of spill, immediately apply absorbent neutralizing powder around perimeter."
     }
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "sop_number": 0.99,
     "sop_title": 0.98,
     "department": 0.97,

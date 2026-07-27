@@ -16,6 +16,9 @@ Before outputting the final JSON, you must reason through the extraction process
 6. **Overall Risk Evaluation:** Calculate a comprehensive risk score (1-10) by aggregating the severity and potential impact of all identified risks.
 7. **Summary Compilation:** Draft a concise summary highlighting the primary risk exposures and key areas of concern within the contract.
 
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
+
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` within the `grounding` object, ensuring all risks are traceable back to their source in the document.
 

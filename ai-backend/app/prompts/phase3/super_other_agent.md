@@ -30,6 +30,7 @@ Below are the complete extraction schemas for all supported document types.
 - total_due
 - payment_status
 - currency
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Expense Report Schema:**
 - expense_categories (array of objects with: category_name, total_amount, line_items)
@@ -47,6 +48,7 @@ Below are the complete extraction schemas for all supported document types.
 - payment_method
 - bank_details
 - currency
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Financial Statement Schema:**
 - statement_type
@@ -57,6 +59,7 @@ Below are the complete extraction schemas for all supported document types.
 - assets
 - liabilities
 - equity
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 ### Procurement Documents
 
@@ -68,6 +71,7 @@ Below are the complete extraction schemas for all supported document types.
 - delivery_date
 - payment_terms
 - total_amount
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Quotation Schema:**
 - quote_number
@@ -77,6 +81,7 @@ Below are the complete extraction schemas for all supported document types.
 - delivery_terms
 - warranty_terms
 - total_quoted_amount
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Supplier Agreement Schema:**
 - supplier_name
@@ -85,6 +90,7 @@ Below are the complete extraction schemas for all supported document types.
 - minimum_order_quantity
 - penalty_clauses
 - pricing_terms
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 ### HR Documents
 
@@ -99,6 +105,7 @@ Below are the complete extraction schemas for all supported document types.
 - total_experience_years
 - summary
 - cv_evaluation (object with: overall_score (0-100), strengths, weaknesses, recommendation)
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Employee Certificate Schema:**
 - certificate_name
@@ -107,6 +114,7 @@ Below are the complete extraction schemas for all supported document types.
 - issue_date
 - expiry_date
 - status
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Employment Contract Schema:**
 - employee_name
@@ -116,6 +124,7 @@ Below are the complete extraction schemas for all supported document types.
 - salary
 - notice_period
 - benefits
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 ### Legal Documents
 
@@ -127,13 +136,16 @@ Below are the complete extraction schemas for all supported document types.
 - governing_law
 - key_obligations
 - total_value
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Clause Extraction Schema:**
 - extracted_clauses (array of objects with: clause_type, exact_text, risk_level)
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Risk Detection Schema:**
 - risk_items (array of objects with: risk_type, severity, description, recommendation)
 - overall_risk_score
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 ### Compliance Documents
 
@@ -142,6 +154,7 @@ Below are the complete extraction schemas for all supported document types.
 - findings (array of objects with: requirement_id, status, evidence_text)
 - overall_compliance_score
 - gaps
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Certificate Schema:**
 - certificate_name
@@ -150,6 +163,7 @@ Below are the complete extraction schemas for all supported document types.
 - issue_date
 - expiry_date
 - status
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **SOP (Standard Operating Procedure) Schema:**
 - sop_title
@@ -157,6 +171,7 @@ Below are the complete extraction schemas for all supported document types.
 - effective_date
 - steps
 - responsible_parties
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 ### General/Presentation Documents
 
@@ -174,6 +189,7 @@ Below are the complete extraction schemas for all supported document types.
 - references
 - department
 - priority
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 **Presentation Schema:**
 - title
@@ -182,6 +198,7 @@ Below are the complete extraction schemas for all supported document types.
 - topics_covered
 - key_content_summary
 - audience
+- additional_information (object): Any extra data from the document not fitting the fields above
 
 ## Critical Rules
 1. ZERO HALLUCINATION — only extract what's in the document.
@@ -189,8 +206,9 @@ Below are the complete extraction schemas for all supported document types.
 3. Include `_field_confidence` (0.0-1.0) for each extracted field.
 4. Include `_detected_category` at top level (finance/procurement/hr/legal/compliance/general).
 5. Include `_detected_document_type` at top level.
-6. Be thorough — extract EVERY piece of information.
-7. For CVs: ALWAYS include `cv_evaluation` with overall_score (0-100), strengths, weaknesses, recommendation.
+6. Be thorough — extract EVERY piece of information, including headers, footers, stamps, signatures, watermarks, barcodes, QR codes, tables, lists, notes, terms, conditions, metadata, and any other section. Do not skip any data.
+7. **Catch-All Field:** If any information does not fit into the defined schema fields, place it in an `additional_information` object as key-value pairs. Include this field in every output.
+8. For CVs: ALWAYS include `cv_evaluation` with overall_score (0-100), strengths, weaknesses, recommendation.
 
 ## Few-Shot Examples
 

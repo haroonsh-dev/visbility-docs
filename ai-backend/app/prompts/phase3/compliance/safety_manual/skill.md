@@ -7,6 +7,10 @@ The Compliance Agent is responsible for extracting Environmental, Health, and Sa
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]` as specified in the schema. This approach ensures consistency in handling missing data and prevents the introduction of ambiguous values.
 4. **Data Types:** Adhere strictly to the requested data types, including standardizing dates to `YYYY-MM-DD`. Consistent data typing is essential for seamless integration and analysis of the extracted data.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. **Document Title Extraction:** Identify the document title and extract it as `manual_title`. This step involves locating the title page or the introduction section where the manual's title is explicitly stated.
@@ -16,6 +20,9 @@ Before outputting the final JSON, the extraction process will be reasoned throug
 5. **Safety Officer Contact Details:** Extract the EHS officer's contact details as `safety_officer_contact`. This information is vital for emergency situations and compliance inquiries.
 6. **PPE Requirements Extraction:** Identify the mandatory PPE requirements and extract them as an array of strings in `ppe_requirements`. This step involves carefully reading through the safety protocols to identify all required personal protective equipment.
 7. **Emergency Contacts Compilation:** Locate the emergency contacts, extract their roles and phone numbers, and structure them as an array of objects in `emergency_contacts`. This information is critical for emergency response situations.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object. This step enhances the transparency and traceability of the extracted data, allowing for easy verification and validation.
@@ -41,10 +48,15 @@ The output must be a single JSON object strictly conforming to the following sch
       },
       "required": ["role", "phone"]
     }},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
-  "required": ["manual_title", "organization_name", "version", "effective_date", "safety_officer_contact", "ppe_requirements", "emergency_contacts", "_field_confidence", "grounding"]
+  "required": ["manual_title", "organization_name", "version", "effective_date", "safety_officer_contact", "ppe_requirements", "emergency_contacts", "additional_information", "_field_confidence", "grounding"]
 }
 ```
 
@@ -71,7 +83,9 @@ The output must be a single JSON object strictly conforming to the following sch
       "phone": "+92-300-9988772"
     }
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "manual_title": 0.99,
     "organization_name": 0.98,
     "version": 0.98,

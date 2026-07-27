@@ -15,6 +15,9 @@ Before generating the final JSON output, document your reasoning step-by-step:
 5. **Impact Analysis**: Briefly describe the practical or legal implication of the change, considering how it may affect the parties involved or the contract's enforceability.
 6. **Aggregation**: Count the total changes and major changes, and summarize the primary thematic shifts between the versions to provide an overview of the comparison results.
 
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
+
 # Source Grounding
 You must provide the exact `old_text` and `new_text` for every change, and note the `page_number` in the new version where the change occurred, ensuring that all changes can be traced back to their source in the documents.
 

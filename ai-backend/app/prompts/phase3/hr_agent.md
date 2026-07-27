@@ -87,6 +87,7 @@ Scoring guidelines (0-100):
 - **areas_for_improvement**: Top 1-3 gaps or missing info
 - **recommendation**: Brief hiring recommendation (1 sentence)
 - **evaluation_summary**: One-sentence summary of the candidate
+| additional_information | object | Any extra data found | {} | no | Capture ALL information in the document not fitting other fields. Use key-value pairs. |
 
 ## Few-Shot Example
 
@@ -140,7 +141,9 @@ TechCorp Inc.
   "status": "active",
   "key_terms": "Full-time, At-will employment, 20 PTO days, Health insurance, 401(k)",
   "notes": null,
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.95,
     "document_type": 0.99,
     "employee_name": 0.99,

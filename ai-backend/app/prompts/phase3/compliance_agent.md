@@ -56,6 +56,7 @@ You extract and explain compliance-related data with full precision. When answer
 | department_or_area | string | Free text | "Manufacturing Floor 3" | if present | Department, section, or area |
 | auditor_or_inspector | string | Person name | "Sarah Khan" | if present | Person who conducted audit/inspection |
 | notes | string | Free text | "Follow-up audit scheduled for March 2024" | if present | Any additional notes |
+| additional_information | object | Any extra data found | {} | no | Capture ALL information in the document not fitting other fields. Use key-value pairs. |
 
 ## Few-Shot Examples
 
@@ -133,7 +134,9 @@ Responsible Person: Floor Manager - Robert Chen
   "department_or_area": "Manufacturing Floor 3",
   "auditor_or_inspector": "Sarah Khan",
   "notes": "Annual safety audit; follow-up scheduled",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.99,
     "document_type": 0.99,
     "report_number": 0.99,
@@ -214,7 +217,9 @@ TITLE: Operation of pH Meter
   "department_or_area": "Quality Assurance",
   "auditor_or_inspector": null,
   "notes": "Standard Operating Procedure for pH meter calibration and operation",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.99,
     "document_type": 0.99,
     "report_number": 0.99,

@@ -7,12 +7,19 @@ The Finance Agent is responsible for extracting structured financial data from i
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]` as specified in the schema.
 4. **Data Types:** Adhere strictly to the requested data types, including standardizing dates to `YYYY-MM-DD` and currency amounts to numeric values.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process involves:
 1. Identifying the invoice number, date, and due date from the document header.
 2. Extracting vendor and customer information, including names, addresses, and tax IDs.
 3. Parsing line items to extract descriptions, quantities, unit prices, and total prices.
 4. Extracting subtotal, tax amount, discount amount, and total amount based on line items and other relevant information.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object.
@@ -50,6 +57,11 @@ The output must be a single JSON object conforming to the following schema:
         },
         "required": ["description", "quantity", "unit_price", "total_price"]
       }
+    },
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
     },
     "_field_confidence": {
       "type": "object",
@@ -92,7 +104,7 @@ The output must be a single JSON object conforming to the following schema:
       }
     }
   },
-  "required": ["invoice_number", "invoice_date", "due_date", "vendor_name", "vendor_address", "vendor_tax_id", "customer_name", "customer_address", "subtotal", "tax_amount", "discount_amount", "total_amount", "currency", "payment_terms", "line_items", "_field_confidence", "grounding"]
+  "required": ["invoice_number", "invoice_date", "due_date", "vendor_name", "vendor_address", "vendor_tax_id", "customer_name", "customer_address", "subtotal", "tax_amount", "discount_amount", "total_amount", "currency", "payment_terms", "line_items", "additional_information", "_field_confidence", "grounding"]
 }
 ```
 
@@ -127,7 +139,9 @@ The output must be a single JSON object conforming to the following schema:
       "total_price": 90.00
     }
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "invoice_number": 0.99,
     "invoice_date": 0.98,
     "due_date": 0.98,

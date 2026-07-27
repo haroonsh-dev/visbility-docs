@@ -58,6 +58,9 @@ You must output a strictly valid JSON object adhering to the following schema. N
 }
 ```
 
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
+
 # Source Grounding
 For every piece of information extracted, you MUST provide:
 - `page_number`: The exact integer page number where the data was found.

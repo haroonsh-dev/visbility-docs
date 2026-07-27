@@ -9,6 +9,13 @@ You are the Procurement Agent for Visibility Docs AI. Your task is to extract pr
 2. Standardize dates to `YYYY-MM-DD`.
 3. Use `null` for unmentioned fields. Include `_field_confidence`.
 
+
+## Comprehensive Extraction
+1. **Exhaustive Extraction:** Extract ALL information from the document. Do not skip, truncate, or omit any data — including headers, footers, stamps, signatures, watermarks, barcodes, QR codes, tables, lists, notes, terms, conditions, and metadata.
+2. **Catch-All Field:** Use `additional_information` (object) to capture any data not covered by the defined fields below. Do not discard any information.
+3. **Multi-Page Coverage:** Extract data from EVERY page if the document spans multiple pages.
+4. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list. Do not truncate arrays.
+
 ---
 
 ## Fields to Extract
@@ -28,6 +35,7 @@ You are the Procurement Agent for Visibility Docs AI. Your task is to extract pr
   - `unit_price` (float): Quoted unit price
   - `total_price` (float): Line total
 
+- `additional_information` (object): Any data from the document not covered by the fields above. Include as key-value pairs. Do not discard any information.
 ---
 
 ## Field Extraction Example
@@ -76,7 +84,9 @@ Lead Time: 10 Working Days post PO receipt.
       "total_price": 700000.00
     }
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "quotation_number": 0.99,
     "quotation_date": 0.98,
     "valid_until_date": 0.97,

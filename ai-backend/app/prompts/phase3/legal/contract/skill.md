@@ -7,6 +7,10 @@ The Legal Agent is responsible for extracting key obligations and clauses from l
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]` as specified in the schema, to clearly indicate the absence of information.
 4. **Data Types:** Adhere strictly to the requested data types, including date standardization to `YYYY-MM-DD`, to ensure compatibility and ease of processing.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. Identify the contract title and type by examining the document's heading and content, using keywords and phrases to determine the contract's purpose and scope.
@@ -16,6 +20,9 @@ Before outputting the final JSON, the extraction process will be reasoned throug
 5. Extract the contract value and currency by locating the relevant financial information, using numerical values and currency symbols to determine the contract's monetary scope.
 6. Summarize the termination clause by examining the section that outlines termination rights, using keywords and phrases to determine the contract's termination conditions.
 7. Extract key clauses by identifying and summarizing the obligations outlined in the contract, using keywords and phrases to determine the contract's core requirements.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object, to establish a clear link between the extracted data and the original document.
@@ -44,6 +51,11 @@ The output will be a single JSON object strictly conforming to the following sch
       },
       "required": ["clause_title", "summary"]
     }, "description": "The key clauses of the contract"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object", "description": "The confidence levels of the extracted fields"},
     "grounding": {"type": "object", "description": "The source grounding information for the extracted values"}
   },
@@ -58,7 +70,7 @@ The output will be a single JSON object strictly conforming to the following sch
     "currency",
     "termination_clause_summary",
     "key_clauses",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -89,7 +101,9 @@ The output will be a single JSON object strictly conforming to the following sch
       "summary": "Strictly binding for 5 years post-termination."
     }
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "contract_title": 0.98,
     "contract_type": 0.95,
     "parties_involved": 0.98,

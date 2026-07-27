@@ -360,6 +360,8 @@ class CategoryExtractionAgent:
         log = get_logger()
         log.info(f"DocType: {document_type} | Text: {len(text)} chars")
         prompt_template, prompt_path = get_phase3_prompt_for_doc(document_type, agent)
+        if prompt_path:
+            log.info(f"LOADED PROMPT FILE: {prompt_path} for agent '{agent}'")
         if not prompt_template:
             log.warn(f"No prompt found for agent '{agent}' / type '{document_type}', returning empty")
             return {"extracted_data": {}, "confidence": 0.0}

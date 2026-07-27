@@ -47,6 +47,7 @@ Extract structured financial data from invoices, financial statements, receipts,
 | approval_status | string | Enum | "approved" | if present | One of: approved, pending, rejected, not_specified |
 | accounting_codes | object | Nested object | {"cost_center": "CC-42", "gl_code": "6500"} | if present | Accounting/cost allocation codes |
 | notes | string | Free text | "Payment via bank transfer" | if present | Any other notes or comments |
+| additional_information | object | Any extra data found | {} | no | Capture ALL information in the document not fitting other fields. Use key-value pairs. |
 
 ## Few-Shot Example
 
@@ -102,7 +103,9 @@ Bank: First National, Account: 123456789, IBAN: US123456789
   "approval_status": null,
   "accounting_codes": null,
   "notes": null,
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.99,
     "document_type": 0.99,
     "document_number": 0.99,

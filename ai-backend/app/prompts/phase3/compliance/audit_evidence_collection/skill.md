@@ -17,6 +17,9 @@ Before generating the final JSON output, follow these reasoning steps internally
 6. Identify gaps based on missing or insufficient evidence.
 7. Formulate actionable recommendations to address identified gaps.
 
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
+
 # Source Grounding
 You must anchor every extracted evidence item to its origin in the source document.
 - `page_number`: The specific page where the evidence resides. If unavailable, use `0`.

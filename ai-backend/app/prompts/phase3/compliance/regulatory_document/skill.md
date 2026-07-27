@@ -7,6 +7,10 @@ The Compliance Agent is responsible for extracting statutory mandates and licens
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]` as specified in the schema, avoiding the use of "N/A" or "Unknown".
 4. **Data Types:** Adhere strictly to the requested data types to maintain consistency and accuracy in the extracted data.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, reason through the extraction process step-by-step:
 1. Identify the `license_permit_number` by searching for keywords like "Permit No" or "License Number" in the document, ensuring exact matching.
@@ -15,6 +19,9 @@ Before outputting the final JSON, reason through the extraction process step-by-
 4. Find the `license_type` by searching for phrases like "Permit Type" or "License Type", adhering to the exact wording and formatting.
 5. Identify the `issue_date` and `expiration_date` by searching for "Issue Date" and "Expiration Date" respectively, and standardize them to `YYYY-MM-DD` format for consistency.
 6. Extract the `mandatory_conditions` by finding the "Mandatory Regulatory Conditions" section and listing each condition as a separate string, ensuring that all conditions are accurately captured.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object, ensuring transparency and traceability of the extracted data.
@@ -33,6 +40,11 @@ Output a single JSON object strictly conforming to the following schema:
     "issue_date": {"type": "string", "format": "date"},
     "expiration_date": {"type": "string", "format": "date"},
     "mandatory_conditions": {"type": "array", "items": {"type": "string"}},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
@@ -44,7 +56,7 @@ Output a single JSON object strictly conforming to the following schema:
     "issue_date",
     "expiration_date",
     "mandatory_conditions",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -63,7 +75,9 @@ Output a single JSON object strictly conforming to the following schema:
     "Maintain operational Effluent Treatment Plant (ETP) 24/7.",
     "Submit quarterly BOD/COD water test reports to EPA inspector."
   ],
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "license_permit_number": 0.99,
     "regulatory_agency": 0.98,
     "entity_name": 0.98,

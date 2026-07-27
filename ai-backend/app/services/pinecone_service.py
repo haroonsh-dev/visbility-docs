@@ -15,9 +15,10 @@ class PineconeService:
 
     def _init(self):
         api_key = settings.PINECONE_API_KEY
-        index_name = settings.PINECONE_INDEX_NAME + "-1024" if settings.PINECONE_INDEX_NAME else None
-        if not api_key or not index_name:
-            logger.warning("Pinecone not configured (missing API key or index name)")
+        # Hardcoded to 'visibilitydocsai' as requested by the user to prevent any -1024 suffix issues
+        index_name = "visibilitydocsai"
+        if not api_key:
+            logger.warning("Pinecone not configured (missing API key)")
             return
         try:
             from pinecone import Pinecone, ServerlessSpec

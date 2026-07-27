@@ -7,6 +7,10 @@ The Legal Agent is responsible for extracting confidentiality terms from Non-Dis
 3. **Missing Values:** If a value is not found, output `null` as specified in the schema. Do not use "N/A" or "Unknown" to indicate missing values, as this can lead to confusion.
 4. **Data Types:** Adhere strictly to the requested data types, including standardizing dates to `YYYY-MM-DD` format. This ensures consistency and facilitates further processing of the extracted data.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process involves the following steps:
 1. **Identify NDA Type:** Determine if the NDA is "Mutual" or "One-Way / Unilateral" based on the agreement's description. This step is crucial in understanding the nature of the agreement.
@@ -16,6 +20,9 @@ Before outputting the final JSON, the extraction process involves the following 
 5. **Permitted Disclosures:** Identify any exceptions to confidentiality, such as disclosures required by law. Understanding these exceptions is vital for compliance.
 6. **Governing Law:** Determine the jurisdiction governing the agreement. This information is necessary for resolving disputes and ensuring compliance with relevant laws.
 7. **Calculate Field Confidence:** Assess the confidence level for each extracted field based on the clarity and specificity of the information provided in the document. This step helps in evaluating the reliability of the extracted data.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object to ensure transparency and traceability of the extraction process. This allows for easy verification of the extracted information against the original document.
@@ -36,6 +43,11 @@ The output must be a single JSON object conforming to the following schema:
     "definition_of_confidential_info": {"type": "string"},
     "permitted_disclosures": {"type": ["string", "null"]},
     "governing_law": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {
       "type": "object",
       "properties": {
@@ -97,7 +109,7 @@ The output must be a single JSON object conforming to the following schema:
     "definition_of_confidential_info",
     "permitted_disclosures",
     "governing_law",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -115,7 +127,9 @@ The output must be a single JSON object conforming to the following schema:
   "definition_of_confidential_info": "Confidential technical specs, source code, and customer data shared during M&A evaluation",
   "permitted_disclosures": null,
   "governing_law": "State of New York, USA",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "nda_type": 0.98,
     "disclosing_party": 0.97,
     "receiving_party": 0.97,

@@ -73,6 +73,7 @@ Procurement documents are frequently in Urdu or bilingual. Recognize Urdu labels
 | requested_by | string | Person name | "John Smith" / "احمد علی" | if present | Person who raised the request |
 | approved_by | string | Person name | "Jane Doe" | if present | Person who approved the order |
 | notes | string | Free text | "Delivery to Warehouse 3" | if present | Any additional notes |
+| additional_information | object | Any extra data found | {} | no | Capture ALL information in the document not fitting other fields. Use key-value pairs. |
 
 ## Few-Shot Example (English)
 
@@ -122,7 +123,9 @@ Approved By: Jane Doe
   "requested_by": "John Smith",
   "approved_by": "Jane Doe",
   "notes": null,
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.99,
     "document_type": 0.99,
     "po_number": 0.99,
@@ -191,7 +194,9 @@ Approved By: Jane Doe
   "requested_by": null,
   "approved_by": "محمد یوسف",
   "notes": null,
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.99,
     "document_type": 0.99,
     "po_number": 0.99,

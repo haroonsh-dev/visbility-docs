@@ -7,6 +7,10 @@ The Finance Agent is responsible for extracting structured metrics and summaries
 3. **Missing Values:** If a value is not found, output `null` or an empty array `[]` as specified in the schema.
 4. **Data Types:** Adhere strictly to the requested data types, including strings, floats, and integers.
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. Identify the company name and statement type from the document header or introduction.
@@ -14,6 +18,9 @@ Before outputting the final JSON, the extraction process will be reasoned throug
 3. Identify the reporting currency and extract numeric figures, converting scale multipliers to full numerical values.
 4. Extract the required financial metrics, including revenue, gross profit, operating expenses, operating income, net income, total assets, total liabilities, and total equity.
 5. Extract the auditor name, if mentioned.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, the exact `source_text` from the document and the corresponding `page_number` will be provided inside the `grounding` object.
@@ -39,6 +46,11 @@ The output must be a single JSON object strictly conforming to the following sch
     "total_liabilities": {"type": "number"},
     "total_equity": {"type": "number"},
     "auditor_name": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {"type": "object"},
     "grounding": {"type": "object"}
   },
@@ -57,7 +69,7 @@ The output must be a single JSON object strictly conforming to the following sch
     "total_liabilities",
     "total_equity",
     "auditor_name",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -80,7 +92,9 @@ The output must be a single JSON object strictly conforming to the following sch
   "total_liabilities": 90000000.0,
   "total_equity": 120000000.0,
   "auditor_name": "Deloitte Pakistan",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "company_name": 0.98,
     "statement_type": 0.95,
     "period_start": 0.90,

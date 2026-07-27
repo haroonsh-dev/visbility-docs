@@ -819,7 +819,7 @@ class ChatService:
         for i, s in enumerate(sources[:5]):
             p3a = s.get("phase3_agent", "")
             agent_tag = f" [{p3a}]" if p3a else ""
-            chat_log.source_item(i, s["document_title"], s.get("document_type", "") + agent_tag, s["score"])
+            chat_log.source_item(i, s["document_title"], (s.get("document_type") or "") + agent_tag, s["score"])
 
         # ── Determine dominant agent and document_type from selected documents ──
         doc_agent_counts = {}

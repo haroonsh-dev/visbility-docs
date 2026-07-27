@@ -7,6 +7,10 @@ The HR Agent is responsible for extracting personnel information from Employee R
 3. **Missing Values:** If a value is not found in the document, the corresponding field should be output as `null`. This rule applies to all fields, including but not limited to `gender`, `date_of_birth`, `cnic_passport`, `designation`, `department`, `date_of_joining`, `employment_status`, `email`, `phone`, and `emergency_contact`.
 4. **Data Types:** Adhere strictly to the requested data types. Dates should be standardized to the `YYYY-MM-DD` format. For example, if a date is mentioned as "14/08/1992", it should be extracted and reported as "1992-08-14".
 
+5. **Comprehensive Extraction:** Extract ALL information present in the document. Do not skip, truncate, or omit any field, value, piece of text, metadata, header, footer, stamp, signature, watermark, barcode, QR code, table, list, or handwritten note. Every visible element must be captured.
+6. **Catch-All Field:** Any information that does not fit into the defined schema fields MUST be placed in the `additional_information` object as key-value pairs. Do not discard any data.
+7. **Multi-Page Coverage:** If the document spans multiple pages, extract data from EVERY page. Do not stop after page 1.
+8. **Table & List Exhaustiveness:** Extract ALL rows from EVERY table and ALL items from EVERY list or bulleted section. Do not truncate or summarize arrays.
 # Chain-of-Thought
 Before outputting the final JSON, the extraction process will be reasoned through step-by-step:
 1. **Identify Employee ID:** Locate the unique Employee ID or Code in the document to extract the `employee_id`.
@@ -21,6 +25,9 @@ Before outputting the final JSON, the extraction process will be reasoned throug
 10. **Find Email Address:** Extract the work or personal email address mentioned in the document for the `email` field.
 11. **Extract Phone Number:** Find the phone number mentioned in the document for the `phone` field.
 12. **Identify Emergency Contact:** Locate the contact name and relationship mentioned in the document for the `emergency_contact` field.
+
+
+5. **[High-Level] Comprehensive Sweep:** After extracting all defined fields, perform a final comprehensive sweep of the entire document — including headers, footers, margins, stamps, signatures, barcodes, QR codes, watermarks, tables, lists, notes, terms, conditions, disclaimers, and any other section. Capture any remaining data into `additional_information` as key-value pairs.
 
 # Source Grounding
 For every extracted value, provide the exact `source_text` from the document and the corresponding `page_number` inside the `grounding` object. This ensures transparency and allows for the verification of extracted data against the original document.
@@ -44,6 +51,11 @@ The output must be a single JSON object strictly conforming to the following sch
     "email": {"type": "string", "format": "email"},
     "phone": {"type": "string"},
     "emergency_contact": {"type": "string"},
+    "additional_information": {
+      "type": "object",
+      "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",
+      "additionalProperties": true
+    },
     "_field_confidence": {
       "type": "object",
       "properties": {
@@ -120,7 +132,7 @@ The output must be a single JSON object strictly conforming to the following sch
     "email",
     "phone",
     "emergency_contact",
-    "_field_confidence",
+    "additional_information", "_field_confidence",
     "grounding"
   ]
 }
@@ -141,7 +153,9 @@ The output must be a single JSON object strictly conforming to the following sch
   "email": "john.doe@example.com",
   "phone": "+1-123-456-7890",
   "emergency_contact": "Jane Doe (Mother) - +1-987-654-3210",
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "employee_id": 0.99,
     "employee_name": 0.98,
     "gender": 0.0,

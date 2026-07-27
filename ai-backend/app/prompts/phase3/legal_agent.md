@@ -222,7 +222,9 @@ Include source_grounding for at minimum: party_a, party_b, effective_date, expir
 
 ```json
 {
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "party_a": 0.99,
     "governing_law": 0.60,
     "clauses": 0.85
@@ -408,7 +410,9 @@ Employee                          Date: Jan 1, 2024
       "source_text": "COMPENSATION: $150,000 per annum, paid bi-weekly"
     }
   },
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.95,
     "document_type": 0.99,
     "contract_number": 0.99,
@@ -646,7 +650,9 @@ Date: March 1, 2024           Date: March 1, 2024
       "source_text": "All disputes shall be resolved through arbitration in Lahore"
     }
   },
+  "additional_information": {},
   "_field_confidence": {
+    "additional_information": 0.0,
     "document_title": 0.95,
     "document_type": 0.99,
     "contract_number": 0.99,
