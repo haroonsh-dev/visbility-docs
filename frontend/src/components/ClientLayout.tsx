@@ -8,6 +8,7 @@ import { ToastProvider } from "./Toast";
 import { ColorProvider } from "@/context/ColorContext";
 import { PermissionsProvider, usePermissions } from "@/context/PermissionsContext";
 import { GroqLimitProvider } from "./GroqLimitModal";
+import DriveSyncInbox from "./DriveSyncInbox";
 import { clearAuthState, hasValidAccessToken, canRefreshSession, getAuthValue } from "@/lib/authSession";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -129,6 +130,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
                 <PermissionsProvider>
                     <GroqLimitProvider>
                         <Shell>{children}</Shell>
+                        <DriveSyncInbox />
                     </GroqLimitProvider>
                 </PermissionsProvider>
             </ToastProvider>

@@ -1,26 +1,20 @@
 /** Allowed integration provider IDs — keep in sync with frontend integrationCatalog.ts */
 export const INTEGRATION_PROVIDER_IDS = [
-    'shared_folder_sftp',
+    // File & Cloud
+    'google_drive',
     'sharepoint',
     'onedrive',
-    'google_drive',
-    'box',
+    'shared_folder_sftp',
     'email_inbox',
-    'sap',
-    'netsuite',
+    // ERP
     'dynamics365',
+    'sap',
     'odoo',
-    'erpnext',
-    'quickbooks',
+    // MES / Quality / Maintenance
     'ignition',
-    'siemens_opcenter',
-    'factorytalk',
-    'aveva',
-    'tulip',
     'mastercontrol',
-    'etq_reliance',
-    'ibm_maximo',
     'fiix_upkeep',
+    // Generic
     'custom_webhook',
     'sql_csv_drop',
 ] as const;

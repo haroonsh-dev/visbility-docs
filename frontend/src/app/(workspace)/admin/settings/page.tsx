@@ -45,7 +45,7 @@ const PROVIDER_CONFIG: Record<Provider, { icon: React.ReactNode; color: string; 
         color: "text-blue-300",
         bgColor: "bg-blue-500/15",
         borderColor: "border-blue-500/30",
-        description: "Google Gemini 1.5 Pro & Flash. Great for long context.",
+        description: "Google Gemini Flash (free-tier friendly). Avoid 2.5-pro on free keys.",
     },
     anthropic: {
         icon: <Shield size={20} />,

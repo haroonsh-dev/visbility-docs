@@ -1,5 +1,5 @@
 export const ALLOWED_EXTENSIONS = [
-    '.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.docx', '.xlsx', '.pptx',
+    '.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.docx', '.xlsx', '.pptx', '.txt',
 ];
 
 export function isAllowedFile(file: File): boolean {
@@ -27,6 +27,7 @@ export const FILE_TYPE_OPTIONS = [
     { value: 'docx', label: 'Word (DOCX)' },
     { value: 'xlsx', label: 'Excel (XLSX)' },
     { value: 'pptx', label: 'PowerPoint (PPTX)' },
+    { value: 'txt', label: 'Text (TXT)' },
 ] as const;
 
 export const FILE_TYPE_MIME: Record<string, string> = {
@@ -35,6 +36,7 @@ export const FILE_TYPE_MIME: Record<string, string> = {
     docx: 'wordprocessingml',
     xlsx: 'spreadsheetml',
     pptx: 'presentationml',
+    txt: 'text/plain',
 };
 
 export function getFileTypeLabel(mimeType?: string, filename?: string): string {
@@ -43,6 +45,7 @@ export function getFileTypeLabel(mimeType?: string, filename?: string): string {
     if (mimeType?.includes('wordprocessingml') || filename?.toLowerCase().endsWith('.docx')) return 'DOCX';
     if (mimeType?.includes('spreadsheetml') || filename?.toLowerCase().endsWith('.xlsx')) return 'XLSX';
     if (mimeType?.includes('presentationml') || filename?.toLowerCase().endsWith('.pptx')) return 'PPTX';
+    if (mimeType === 'text/plain' || filename?.toLowerCase().endsWith('.txt')) return 'TXT';
     if (filename) {
         const ext = filename.slice(filename.lastIndexOf('.')).toUpperCase();
         if (ext.length > 1) return ext.slice(1);

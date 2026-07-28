@@ -10,6 +10,14 @@ import {
     deleteIntegration,
     rotateIngestKey,
     ingestViaIntegration,
+    listIntegrationFiles,
+    syncIntegrationFiles,
+    listSyncInbox,
+    confirmSyncPrompt,
+    dismissSyncPrompt,
+    ackSyncAlert,
+    sendViaIntegration,
+    uploadFileViaIntegration,
 } from '../controllers/integrationsController';
 
 const tmpDir = path.join(process.cwd(), 'uploads', '_tmp');
@@ -27,8 +35,16 @@ router.post('/ingest', upload.single('file'), ingestViaIntegration);
 
 router.use(authenticate);
 router.get('/', listIntegrations);
+router.get('/sync-inbox', listSyncInbox);
 router.post('/', saveIntegration);
 router.post('/:id/test', testIntegration);
+router.get('/:id/files', listIntegrationFiles);
+router.post('/:id/sync', syncIntegrationFiles);
+router.post('/:id/send', sendViaIntegration);
+router.post('/:id/upload', upload.single('file'), uploadFileViaIntegration);
+router.post('/:id/sync-prompt/confirm', confirmSyncPrompt);
+router.post('/:id/sync-prompt/dismiss', dismissSyncPrompt);
+router.post('/:id/sync-alert/ack', ackSyncAlert);
 router.post('/:id/rotate-key', rotateIngestKey);
 router.delete('/:id', deleteIntegration);
 

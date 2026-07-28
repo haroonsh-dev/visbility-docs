@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
     FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
     X, Building2, ChevronDown, Settings, LayoutDashboard, User, Search,
-    CreditCard, Plug,
+    CreditCard, Plug, Mail,
 } from "lucide-react";
 import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
@@ -87,6 +87,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         { href: "/chat", label: "AI Chat", icon: MessageSquare, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canChat() },
         { href: "/admin/departments", label: "Departments", icon: Building2, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" || hasPermission("department.manage") },
         { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
+        { href: "/admin/email-reports", label: "Email reports", icon: Mail, roles: ["admin"], allow: () => role === "admin" },
         { href: "/admin/integrations", label: "Integrations", icon: Plug, roles: ["admin"], allow: () => role === "admin" && hasActivePlan },
     ];
 

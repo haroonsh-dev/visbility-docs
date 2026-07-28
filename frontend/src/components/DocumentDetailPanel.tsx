@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Download, Loader2, RefreshCw, Star, Trash2 } from "lucide-react";
+import { Download, Loader2, RefreshCw, Send, Star, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/apiClient";
 import { inferDocTypeFromFilename } from "@/lib/documentAgents";
 import { appendAuthToken, getDocumentAiImageUrl } from "@/lib/documents";
+import SendToIntegrationModal from "@/components/SendToIntegrationModal";
 
 type DocRecord = {
     documentId: string;
@@ -175,6 +176,8 @@ export default function DocumentDetailPanel({
     const [similar, setSimilar] = useState<SimilarHit[]>([]);
     const [reclassifying, setReclassifying] = useState(false);
     const [reprocessMsg, setReprocessMsg] = useState<string | null>(null);
+    const [sendOpen, setSendOpen] = useState(false);
+    const [sendMsg, setSendMsg] = useState<string | null>(null);
 
     const inferredType = inferDocTypeFromFilename(doc.originalFilename);
     const docType = String(ai?.document_type || doc.classification || inferredType || "unknown");
@@ -306,8 +309,16 @@ export default function DocumentDetailPanel({
                 ))}
             </div>
 
-            {canReprocess && (
-                <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+                <button
+                    type="button"
+                    onClick={() => setSendOpen(true)}
+                    className="btn-gradient rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
+                >
+                    <Send size={14} />
+                    Send to integration
+                </button>
+                {canReprocess && (
                     <button
                         type="button"
                         onClick={reclassify}
@@ -317,13 +328,30 @@ export default function DocumentDetailPanel({
                         {reclassifying ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                         {reclassifying ? "Reclassifying…" : "Reclassify with AI"}
                     </button>
-                    {reprocessMsg && (
-                        <span className={`text-xs ${reprocessMsg.includes("fail") ? "text-rose-400" : "text-teal-400"}`}>
-                            {reprocessMsg}
-                        </span>
-                    )}
-                </div>
-            )}
+                )}
+                {(reprocessMsg || sendMsg) && (
+                    <span
+                        className={`text-xs ${
+                            (reprocessMsg || sendMsg || "").toLowerCase().includes("fail")
+                                ? "text-rose-400"
+                                : "text-teal-400"
+                        }`}
+                    >
+                        {sendMsg || reprocessMsg}
+                    </span>
+                )}
+            </div>
+
+            <SendToIntegrationModal
+                open={sendOpen}
+                onClose={() => setSendOpen(false)}
+                documentIds={[doc.documentId]}
+                filename={doc.originalFilename}
+                onSent={(msg) => {
+                    setSendMsg(msg);
+                    setSendOpen(false);
+                }}
+            />
 
             {finished && !hasModelData(ai) && (
                 <div className="surface-card px-4 py-3 text-sm text-[var(--foreground-secondary)] border border-[var(--border)]">

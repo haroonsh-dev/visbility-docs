@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
-    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check,
+    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatScopePanel, {
@@ -19,6 +19,7 @@ import { apiRequest } from "@/lib/apiClient";
 import { usePermissions } from "@/context/PermissionsContext";
 import { resolveDocAgent } from "@/lib/documentAgents";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
+import { useToast } from "@/components/Toast";
 
 type ChatMessage = {
     id: string;
@@ -96,6 +97,19 @@ function citationMeta(c: { pageNumber?: number; score?: number }) {
     return null;
 }
 
+function stampForFilename(d = new Date()) {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+function formatChatThreadAsText(msgs: ChatMessage[]): string {
+    return msgs
+        .filter((m) => m.id !== "welcome")
+        .map((m) => `[${m.role}]\n${(m.content || "").trim()}`)
+        .filter((block) => block.length > 0)
+        .join("\n\n");
+}
+
 function mapSessionMessages(raw: any[], pythonToNode: Map<string, string>): ChatMessage[] {
     return raw.map((m, i) => ({
         id: `m_${m.id || i}`,
@@ -120,6 +134,7 @@ function ChatContent() {
     const isDark = theme.name === "dark";
     const { canChat } = usePermissions();
     const { isAgentAllowed } = usePlanAgents();
+    const { showToast } = useToast();
 
     const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MSG]);
     const [input, setInput] = useState("");
@@ -138,6 +153,7 @@ function ChatContent() {
     const [focusedExcerpt, setFocusedExcerpt] = useState("");
     const [selPopover, setSelPopover] = useState<{ text: string; x: number; y: number } | null>(null);
     const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [uploadingTxtId, setUploadingTxtId] = useState<string | null>(null);
     const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
     const [selectedModelKey, setSelectedModelKey] = useState("");
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -514,12 +530,79 @@ function ChatContent() {
         }
     };
 
+    const uploadTxtToIntegration = async (text: string, filename: string, trackId: string) => {
+        const body = text.trim();
+        if (!body) {
+            showToast("Nothing to send", "error");
+            return;
+        }
+        setUploadingTxtId(trackId);
+        try {
+            const connRes = await apiRequest("/docs/integrations");
+            const connections = (connRes?.data?.connections || []).filter(
+                (c: any) => c.isActive
+            );
+            const drive =
+                connections.find((c: any) => c.providerId === "google_drive" && c.supportsFolderSend) ||
+                connections.find((c: any) => c.providerId === "google_drive") ||
+                connections.find((c: any) => c.hasOutboundWebhook) ||
+                connections[0];
+            if (!drive?.connectionId) {
+                showToast(
+                    "No active integration. Connect Google Drive under Integrations first.",
+                    "error"
+                );
+                return;
+            }
+
+            const file = new File([body], filename, { type: "text/plain" });
+            const form = new FormData();
+            form.append("file", file);
+            if (drive.supportsFolderSend || drive.providerId === "google_drive") {
+                form.append("folder", "true");
+            }
+            if (drive.hasOutboundWebhook) {
+                form.append("webhook", "true");
+            }
+
+            const data = await apiRequest(`/docs/integrations/${drive.connectionId}/upload`, {
+                method: "POST",
+                body: form,
+            });
+            showToast(
+                data?.message || `Sent ${filename} to ${drive.label || "integration"}`,
+                "success"
+            );
+        } catch (e: any) {
+            showToast(e?.message || "Send to integration failed", "error");
+        } finally {
+            setUploadingTxtId(null);
+        }
+    };
+
+    const uploadReplyAsFile = (msg: ChatMessage) => {
+        const stamp = stampForFilename();
+        void uploadTxtToIntegration(msg.content || "", `chat-reply-${stamp}.txt`, msg.id);
+    };
+
+    const uploadFullChatAsFile = () => {
+        const text = formatChatThreadAsText(messages);
+        if (!text.trim()) {
+            showToast("No chat messages to send yet", "error");
+            return;
+        }
+        const stamp = stampForFilename();
+        void uploadTxtToIntegration(text, `chat-full-${stamp}.txt`, "full-chat");
+    };
+
     const scopeLabel =
         chatScope === "all"
             ? `All documents (${libraryDocs.length})`
             : `Selected (${selectedDocIds.length} of ${selectableDocs.length})`;
 
     const isWelcomeOnly = messages.length === 1 && messages[0].id === "welcome";
+    const canUploadChat = !isWelcomeOnly && messages.some((m) => m.id !== "welcome");
+    const uploadingBusy = uploadingTxtId !== null;
 
     if (!canChat()) {
         return (
@@ -665,6 +748,20 @@ function ChatContent() {
                     </button>
                     <button
                         type="button"
+                        onClick={uploadFullChatAsFile}
+                        disabled={!canUploadChat || uploadingBusy}
+                        className="inline-flex btn-secondary rounded-xl px-3 py-2 text-xs sm:text-sm items-center gap-1.5 shrink-0 disabled:opacity-50"
+                        title="Send this chat as a .txt to the connected integration (Drive)"
+                    >
+                        {uploadingTxtId === "full-chat" ? (
+                            <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                            <Upload size={14} />
+                        )}
+                        <span className="hidden sm:inline">Send chat</span>
+                    </button>
+                    <button
+                        type="button"
                         onClick={startNewChat}
                         className="hidden sm:inline-flex btn-secondary rounded-xl px-3 py-2 text-xs sm:text-sm items-center gap-1.5 shrink-0"
                     >
@@ -714,7 +811,26 @@ function ChatContent() {
                                     >
                                         {msg.role === "assistant" ? (
                                             <div className={`prose prose-sm max-w-none ${isDark ? "prose-invert" : "prose-slate"}`}>
-                                                <div className="mb-2 flex justify-end not-prose">
+                                                <div className="mb-2 flex justify-end gap-1.5 not-prose">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => uploadReplyAsFile(msg)}
+                                                        disabled={uploadingBusy || !(msg.content || "").trim()}
+                                                        className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] transition-colors disabled:opacity-50 ${
+                                                            isDark
+                                                                ? "bg-white/5 text-slate-300 hover:bg-white/10"
+                                                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                                        }`}
+                                                        aria-label="Send reply to integration"
+                                                        title="Send this reply as a .txt to the connected integration (Drive)"
+                                                    >
+                                                        {uploadingTxtId === msg.id ? (
+                                                            <Loader2 size={12} className="animate-spin" />
+                                                        ) : (
+                                                            <Upload size={12} />
+                                                        )}
+                                                        {uploadingTxtId === msg.id ? "Sending…" : "Send"}
+                                                    </button>
                                                     <button
                                                         type="button"
                                                         onClick={() => copyReply(msg)}

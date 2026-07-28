@@ -39,8 +39,63 @@ def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
     return _store[session_id]
 
 
+# Free-tier friendly Gemini models (gemini-2.5-pro often has limit:0 on free tier)
+GEMINI_QUOTA_FALLBACK_MODELS = (
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-flash-latest",
+)
+
+
+def _is_rate_limit_error(err_str: str) -> bool:
+    s = (err_str or "").lower()
+    return any(
+        term in s
+        for term in (
+            "429",
+            "413",
+            "rate limit",
+            "rate_limit",
+            "quota",
+            "tpm",
+            "tokens per minute",
+            "request too large",
+            "too many requests",
+            "resource_exhausted",
+        )
+    )
+
+
+def _normalize_provider_config(provider_cfg):
+    """Fix common mistakes (OpenRouter key saved under OpenAI, etc.)."""
+    if not provider_cfg:
+        return provider_cfg
+    from .provider_manager import ProviderConfig
+
+    p_name = (provider_cfg.provider or "").lower().strip()
+    key = (provider_cfg.api_key or "").strip()
+    base_url = (provider_cfg.base_url or "").strip()
+    model_name = (provider_cfg.model or "").strip()
+
+    if key.startswith("sk-or-v1") and p_name in ("openai", "custom", ""):
+        return ProviderConfig(
+            provider="custom",
+            api_key=key,
+            model=model_name or "openai/gpt-4o-mini",
+            base_url=base_url or "https://openrouter.ai/api/v1",
+            label=getattr(provider_cfg, "label", "") or "OpenRouter",
+        )
+    return provider_cfg
+
+
 def create_llm_from_config(provider_cfg):
-    """Factory to create dynamic LangChain LLM instance for Groq, OpenAI, Anthropic, Gemini, or Custom endpoints."""
+    """Factory to create dynamic LangChain LLM instance for Groq, OpenAI, Anthropic, Gemini, or Custom endpoints.
+
+    Returns (llm, provider_name) or (None, None). On failure, logs the reason.
+    """
+    provider_cfg = _normalize_provider_config(provider_cfg)
     if not provider_cfg or not provider_cfg.api_key:
         return None, None
 
@@ -79,7 +134,8 @@ def create_llm_from_config(provider_cfg):
             ), "anthropic"
         elif p_name == "gemini":
             from langchain_google_genai import ChatGoogleGenerativeAI
-            g_model = model_name or "gemini-1.5-flash"
+            # Flash is the free-tier-friendly default (Pro often has no free quota)
+            g_model = model_name or "gemini-2.0-flash"
             return ChatGoogleGenerativeAI(
                 google_api_key=key,
                 model=g_model,
@@ -96,11 +152,18 @@ def create_llm_from_config(provider_cfg):
                 temperature=0.0,
                 max_tokens=4096,
             ), "custom"
+        else:
+            _logger.warning(f"Unknown LLM provider: {p_name}")
+            return None, None
+    except ImportError as e:
+        _logger.error(
+            f"Missing package for provider '{p_name}': {e}. "
+            f"Install with: pip install langchain-openai langchain-google-genai langchain-anthropic"
+        )
+        return None, None
     except Exception as e:
         _logger.warning(f"Failed to create LLM for provider {p_name}: {e}")
         return None, None
-
-    return None, None
 
 
 class ConversationService:
@@ -293,20 +356,45 @@ class ConversationService:
             }
 
         last_error = None
-        # Provider Failover Waterfall
+        preferred = (provider or "").lower().strip()
+        preferred_create_failed = False
+        fallback_from = None  # e.g. "gemini/gemini-2.5-pro" when we had to switch
+
+        # Expand Gemini configs: on quota, try Flash models before leaving Gemini
+        expanded: list = []
         for p_cfg in active_providers:
+            expanded.append(p_cfg)
+            if (p_cfg.provider or "").lower().strip() == "gemini":
+                current = (p_cfg.model or model or "").strip()
+                for alt in GEMINI_QUOTA_FALLBACK_MODELS:
+                    if alt == current:
+                        continue
+                    expanded.append(
+                        ProviderConfig(
+                            provider="gemini",
+                            api_key=p_cfg.api_key,
+                            model=alt,
+                            base_url=p_cfg.base_url,
+                            label=getattr(p_cfg, "label", "") or "",
+                        )
+                    )
+
+        # Provider Failover Waterfall
+        for p_cfg in expanded:
             cfg_to_use = p_cfg
-            if model and model.strip() and not (provider_config and (provider_config.get("model") or "").strip()):
-                cfg_to_use = ProviderConfig(
-                    provider=p_cfg.provider,
-                    api_key=p_cfg.api_key,
-                    model=model.strip(),
-                    base_url=p_cfg.base_url,
-                    label=getattr(p_cfg, "label", "") or "",
-                )
 
             llm_inst, p_name = create_llm_from_config(cfg_to_use)
             if not llm_inst:
+                if preferred and (cfg_to_use.provider or "").lower().strip() == preferred:
+                    if (cfg_to_use.provider or "").lower().strip() == "gemini":
+                        continue
+                    preferred_create_failed = True
+                    last_error = (
+                        f"Could not start provider '{preferred}'. "
+                        "Missing Python package or invalid API key. "
+                        "Run in ai-backend venv: pip install langchain-openai langchain-google-genai langchain-anthropic"
+                    )
+                    break
                 continue
 
             self.llm = llm_inst
@@ -339,34 +427,52 @@ class ConversationService:
                 content = response.content if hasattr(response, "content") else str(response)
                 import re
                 content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                return {
+                result = {
                     "answer": content,
                     "provider": p_name,
                     "model": m_name,
                 }
+                if fallback_from and fallback_from != f"{p_name}/{m_name}":
+                    result["fallback_from"] = fallback_from
+                    result["answer"] = (
+                        f"_(Used {p_name}/{m_name} — {fallback_from} hit quota)_\n\n" + content
+                    )
+                return result
             except Exception as e:
                 err_str = str(e)
                 last_error = err_str
                 _logger.warning(f"LLM call failed on provider '{cfg_to_use.provider}': {err_str}")
-                is_limit_err = any(term in err_str.lower() for term in [
-                    "429", "413", "rate limit", "rate_limit", "quota", "tpm",
-                    "tokens per minute", "request too large", "too many requests", "resource_exhausted"
-                ])
-                if is_limit_err:
-                    chat_log.info(f"Rate/Token limit hit on {p_name} — attempting automatic fallback to next available provider...")
+                if _is_rate_limit_error(err_str):
+                    fallback_from = f"{p_name}/{m_name}"
+                    chat_log.info(
+                        f"Rate/Token limit hit on {p_name}/{m_name} — trying next model/provider..."
+                    )
                     continue
-                else:
-                    continue
+                if preferred and p_name == preferred:
+                    if p_name == "gemini":
+                        fallback_from = f"{p_name}/{m_name}"
+                        continue
+                    break
+                continue
 
-        is_final_limit = last_error and any(term in last_error.lower() for term in [
-            "429", "413", "rate limit", "rate_limit", "quota", "tpm",
-            "tokens per minute", "request too large", "too many requests", "resource_exhausted"
-        ])
-        if is_final_limit:
+        if preferred_create_failed:
             return {
-                "answer": "⚠️ All configured AI providers have reached their rate/quota limits. Please switch providers in AI Settings or wait a few minutes for token replenishment.",
+                "answer": f"⚠️ {last_error}",
+                "provider": "system",
+                "model": "provider_unavailable",
+            }
+
+        if _is_rate_limit_error(last_error or ""):
+            return {
+                "answer": (
+                    "⚠️ Gemini/OpenAI quota limit hit"
+                    + (f" ({fallback_from})" if fallback_from else "")
+                    + ". Free tier often blocks gemini-2.5-pro — switch model to "
+                    "**gemini-2.0-flash** in AI Settings, wait ~1 minute, or use Groq."
+                ),
                 "provider": "system",
                 "model": "rate_limit_cooldown",
+                "fallback_from": fallback_from,
             }
 
         return {

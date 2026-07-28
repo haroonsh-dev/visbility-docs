@@ -17,6 +17,7 @@ import departmentRoutes from './routes/departments';
 import settingsRoutes from './routes/settings';
 import plansRoutes from './routes/plans';
 import integrationsRoutes from './routes/integrations';
+import emailReportsRoutes from './routes/emailReports';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { authenticate } from './middleware/auth';
 import { listAllDocumentIntelligence, reprocessDocument } from './controllers/documentsController';
@@ -67,6 +68,7 @@ app.use('/api/docs/departments', departmentRoutes);
 app.use('/api/docs/settings', settingsRoutes);
 app.use('/api/docs/plans', plansRoutes);
 app.use('/api/docs/integrations', integrationsRoutes);
+app.use('/api/docs/email-reports', emailReportsRoutes);
 app.use('/api/docs/super-admin', superAdminRoutes);
 
 app.use(notFound);

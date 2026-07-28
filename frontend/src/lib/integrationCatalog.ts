@@ -36,11 +36,10 @@ export const INTEGRATION_CATEGORIES: Array<{ id: IntegrationCategory | "all"; la
     { id: "all", label: "All" },
     { id: "file_cloud", label: "File & Cloud" },
     { id: "erp", label: "ERP" },
-    // HIDDEN FOR NOW — uncomment when more integrations are shown again:
-    // { id: "mes", label: "MES / Shop Floor" },
-    // { id: "quality", label: "Quality / QMS" },
-    // { id: "maintenance", label: "Maintenance" },
-    // { id: "generic", label: "Generic" },
+    { id: "mes", label: "MES / Shop Floor" },
+    { id: "quality", label: "Quality / QMS" },
+    { id: "maintenance", label: "Maintenance" },
+    { id: "generic", label: "Generic" },
 ];
 
 const SCHEDULE_FIELD: IntegrationField = {
@@ -72,7 +71,7 @@ const OUTBOUND_FIELD: IntegrationField = {
     label: "Outbound results webhook URL",
     type: "url",
     placeholder: "https://factory.example.com/hooks/visibility-results",
-    help: "Optional. Visibility Docs can POST AI summaries / status JSON here after processing.",
+    help: "Optional. Manual Send can POST file / summary / extracted JSON here. Not auto — only when you click Send.",
 };
 
 const COMMON_TAIL: IntegrationField[] = [SCHEDULE_FIELD, AGENT_FIELD, OUTBOUND_FIELD];
@@ -93,83 +92,90 @@ function guide(software: string, whereKeys: string, mapHint: string, verifyHint:
 const outboundNote = (system: string) =>
     `Bidirectional: inbound pulls documents into Visibility Docs; outbound can POST JSON summaries (documentId, filename, status, extracted fields, AI summary) to your webhook so ${system} or middleware can update tickets, quality records, or dashboards.`;
 
-/** Currently visible integrations. Uncomment items below to show more on the page. */
+/**
+ * Curated catalog — only high-value factory / enterprise connectors.
+ * Live today: google_drive (sync), custom_webhook (ingest). Others are setup + guides for rollout.
+ */
 export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
+    // —— File & Cloud ——
     {
         id: "google_drive",
         name: "Google Drive",
         category: "file_cloud",
-        description: "Pull files from a shared Google Drive folder.",
+        description: "Pull files from a shared Google Drive folder — manual check or auto sync on interval/daily.",
         directions: "both",
         fields: [
             { key: "serviceAccountEmail", label: "Service account email", type: "text", required: true },
-            { key: "privateKey", label: "Service account private key (JSON or PEM)", type: "password", required: true, secret: true },
-            { key: "folderId", label: "Folder ID", type: "text", required: true },
-            ...COMMON_TAIL,
+            {
+                key: "privateKey",
+                label: "Service account private key (JSON or PEM)",
+                type: "password",
+                required: true,
+                secret: true,
+            },
+            {
+                key: "folderId",
+                label: "Folder ID or Drive URL",
+                type: "text",
+                required: true,
+                placeholder: "1AbC… or https://drive.google.com/drive/folders/…",
+                help: "Paste the folder ID or the full sharing link. Share that folder with the service-account email as Editor (needed for Send uploads).",
+            },
+            {
+                key: "syncMode",
+                label: "Sync mode",
+                type: "select",
+                required: true,
+                options: [
+                    { value: "interval", label: "Every N minutes — ask before upload (or enable auto)" },
+                    { value: "daily", label: "Once daily — auto upload in background" },
+                    { value: "manual", label: "Manual only — click to sync" },
+                ],
+                help: "Daily uploads in the backend even if you are offline. Interval finds files then asks you (unless auto-upload is on).",
+            },
+            {
+                key: "intervalMinutes",
+                label: "Interval (minutes)",
+                type: "number",
+                placeholder: "15",
+                help: "Used when sync mode is “every N minutes”. Min 5, max 1440.",
+            },
+            {
+                key: "dailyAt",
+                label: "Daily time (HH:MM)",
+                type: "text",
+                placeholder: "09:00",
+                help: "Used when sync mode is “once daily”. Server local time. Failures show as a notification when you log in.",
+            },
+            {
+                key: "intervalAutoUpload",
+                label: "Interval auto-upload (skip confirm)",
+                type: "select",
+                options: [
+                    { value: "false", label: "No — show confirm dialog each interval" },
+                    { value: "true", label: "Yes — upload automatically each interval" },
+                ],
+                help: "Only for interval mode. You can also turn this on from the confirm dialog.",
+            },
+            {
+                key: "autoSyncEnabled",
+                label: "Auto sync enabled",
+                type: "select",
+                options: [
+                    { value: "true", label: "Yes — run on schedule" },
+                    { value: "false", label: "No — pause auto sync" },
+                ],
+            },
+            AGENT_FIELD,
+            OUTBOUND_FIELD,
         ],
-        guideSteps: guide(
-            "Google Drive",
-            "In Google Cloud Console create a service account, enable Drive API, download the JSON key, and share the Drive folder with the service account email.",
-            "Paste folderId from the Drive URL and pick the default AI agent.",
-            "Add a test file to the shared folder and confirm ingest in Documents."
-        ),
+        guideSteps: [
+            "In Google Cloud Console create a service account, enable Drive API, download the JSON key, and share the Drive folder with the service account email as Editor (required for Send uploads).",
+            "Paste folderId from the Drive URL, choose sync mode (interval / daily / manual), and pick the default AI agent.",
+            "Optionally set Outbound webhook URL — Send is always manual (document details or Status → Send from library).",
+            "After connect: Status → Check Drive files to import. Use Send to push original / AI summary / extracted JSON into the same linked Drive folder and/or your webhook.",
+        ],
         setupNotes: outboundNote("Apps Script / Cloud Function"),
-    },
-    {
-        id: "dynamics365",
-        name: "Microsoft Dynamics 365",
-        category: "erp",
-        description: "Finance & Supply Chain or Business Central document sync via Dataverse / BC APIs.",
-        directions: "both",
-        fields: [
-            { key: "tenantId", label: "Azure Tenant ID", type: "text", required: true },
-            { key: "clientId", label: "App (client) ID", type: "text", required: true },
-            { key: "clientSecret", label: "Client secret", type: "password", required: true, secret: true },
-            { key: "environmentUrl", label: "Environment URL", type: "url", required: true },
-            { key: "entityPath", label: "Entity / company path", type: "text", placeholder: "companies(...)/purchaseInvoices" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "Dynamics 365",
-            "Register an Azure AD app, grant Dynamics/Business Central API permissions, and create a client secret.",
-            "Enter environmentUrl and the entity path for attachments or document exports.",
-            "Export one purchase invoice PDF and verify ingest."
-        ),
-        setupNotes: outboundNote("Dataverse / Power Automate"),
-    },
-
-    // =====================================================================
-    // HIDDEN FOR NOW — uncomment any block below (and add a comma after
-    // Dynamics 365 if needed) when you want that integration to show again.
-    // =====================================================================
-
-    /*
-    {
-        id: "shared_folder_sftp",
-        name: "Shared Folder / SFTP",
-        category: "file_cloud",
-        description: "Watch a network share or SFTP folder for PDFs, Excel, images, and drop them into Documents.",
-        directions: "both",
-        fields: [
-            { key: "host", label: "Host / server", type: "text", required: true, placeholder: "files.factory.local" },
-            { key: "port", label: "Port", type: "number", placeholder: "22" },
-            { key: "username", label: "Username", type: "text", required: true },
-            { key: "password", label: "Password / private key passphrase", type: "password", required: true, secret: true },
-            { key: "remotePath", label: "Remote folder path", type: "text", required: true, placeholder: "/QC/Reports" },
-            { key: "protocol", label: "Protocol", type: "select", required: true, options: [
-                { value: "sftp", label: "SFTP" },
-                { value: "smb", label: "SMB / Windows share" },
-                { value: "ftp", label: "FTP" },
-            ]},
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "Shared Folder / SFTP",
-            "Ask IT for SFTP or SMB access to the folder where factory software exports reports (e.g. \\\\server\\QC\\Reports or /exports/daily).",
-            "Map the folder to a default AI agent (Compliance for QC, Finance for invoices).",
-            "Drop a sample PDF into the folder (or wait for the next export), then confirm it appears under Documents with source Shared Folder."
-        ),
-        setupNotes: outboundNote("your factory middleware"),
     },
     {
         id: "sharepoint",
@@ -181,8 +187,20 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             { key: "tenantId", label: "Azure Tenant ID", type: "text", required: true },
             { key: "clientId", label: "App (client) ID", type: "text", required: true },
             { key: "clientSecret", label: "Client secret", type: "password", required: true, secret: true },
-            { key: "siteUrl", label: "Site URL", type: "url", required: true, placeholder: "https://contoso.sharepoint.com/sites/Quality" },
-            { key: "libraryPath", label: "Document library / folder", type: "text", required: true, placeholder: "Shared Documents/Incoming" },
+            {
+                key: "siteUrl",
+                label: "Site URL",
+                type: "url",
+                required: true,
+                placeholder: "https://contoso.sharepoint.com/sites/Quality",
+            },
+            {
+                key: "libraryPath",
+                label: "Document library / folder",
+                type: "text",
+                required: true,
+                placeholder: "Shared Documents/Incoming",
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
@@ -203,7 +221,13 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             { key: "tenantId", label: "Azure Tenant ID", type: "text", required: true },
             { key: "clientId", label: "App (client) ID", type: "text", required: true },
             { key: "clientSecret", label: "Client secret", type: "password", required: true, secret: true },
-            { key: "drivePath", label: "Folder path", type: "text", required: true, placeholder: "/Visibility/Inbox" },
+            {
+                key: "drivePath",
+                label: "Folder path",
+                type: "text",
+                required: true,
+                placeholder: "/Visibility/Inbox",
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
@@ -215,25 +239,49 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         setupNotes: outboundNote("OneDrive / Power Automate"),
     },
     {
-        id: "box",
-        name: "Box",
+        id: "shared_folder_sftp",
+        name: "Shared Folder / SFTP",
         category: "file_cloud",
-        description: "Enterprise Box folders for controlled document exchange.",
+        description: "Watch a network share or SFTP folder for PDFs, Excel, images, and drop them into Documents.",
         directions: "both",
         fields: [
-            { key: "clientId", label: "Box Client ID", type: "text", required: true },
-            { key: "clientSecret", label: "Box Client Secret", type: "password", required: true, secret: true },
-            { key: "enterpriseId", label: "Enterprise ID", type: "text", required: true },
-            { key: "folderId", label: "Folder ID", type: "text", required: true },
+            { key: "host", label: "Host / server", type: "text", required: true, placeholder: "files.factory.local" },
+            { key: "port", label: "Port", type: "number", placeholder: "22" },
+            { key: "username", label: "Username", type: "text", required: true },
+            {
+                key: "password",
+                label: "Password / private key passphrase",
+                type: "password",
+                required: true,
+                secret: true,
+            },
+            {
+                key: "remotePath",
+                label: "Remote folder path",
+                type: "text",
+                required: true,
+                placeholder: "/QC/Reports",
+            },
+            {
+                key: "protocol",
+                label: "Protocol",
+                type: "select",
+                required: true,
+                options: [
+                    { value: "sftp", label: "SFTP" },
+                    { value: "smb", label: "SMB / Windows share" },
+                    { value: "ftp", label: "FTP" },
+                ],
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
-            "Box",
-            "Create a Box Custom App (JWT or OAuth), approve it in Admin Console, and note Client ID/Secret and Enterprise ID.",
-            "Grant the app access to the inbox folder; set folderId and agent mapping.",
-            "Upload a sample file to Box and verify Documents."
+            "Shared Folder / SFTP",
+            "Ask IT for SFTP or SMB access to the folder where factory software exports reports (e.g. \\\\server\\QC\\Reports or /exports/daily).",
+            "Map the folder to a default AI agent (Compliance for QC, Finance for invoices).",
+            "Drop a sample PDF into the folder (or wait for the next export), then confirm it appears under Documents with source Shared Folder."
         ),
-        setupNotes: outboundNote("Box Skills / webhook"),
+        setupNotes: outboundNote("your factory middleware"),
     },
     {
         id: "email_inbox",
@@ -242,10 +290,22 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         description: "Ingest email attachments (invoices, QC reports) from a dedicated mailbox.",
         directions: "both",
         fields: [
-            { key: "imapHost", label: "IMAP host", type: "text", required: true, placeholder: "outlook.office365.com" },
+            {
+                key: "imapHost",
+                label: "IMAP host",
+                type: "text",
+                required: true,
+                placeholder: "outlook.office365.com",
+            },
             { key: "imapPort", label: "IMAP port", type: "number", placeholder: "993" },
             { key: "username", label: "Mailbox address", type: "text", required: true },
-            { key: "password", label: "App password / IMAP password", type: "password", required: true, secret: true },
+            {
+                key: "password",
+                label: "App password / IMAP password",
+                type: "password",
+                required: true,
+                secret: true,
+            },
             { key: "folder", label: "Folder", type: "text", placeholder: "INBOX" },
             ...COMMON_TAIL,
         ],
@@ -256,6 +316,35 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             "Send yourself a test email with a PDF attachment and confirm it appears in Documents."
         ),
         setupNotes: outboundNote("reply email or SMTP notification"),
+    },
+
+    // —— ERP ——
+    {
+        id: "dynamics365",
+        name: "Microsoft Dynamics 365",
+        category: "erp",
+        description: "Finance & Supply Chain or Business Central document sync via Dataverse / BC APIs.",
+        directions: "both",
+        fields: [
+            { key: "tenantId", label: "Azure Tenant ID", type: "text", required: true },
+            { key: "clientId", label: "App (client) ID", type: "text", required: true },
+            { key: "clientSecret", label: "Client secret", type: "password", required: true, secret: true },
+            { key: "environmentUrl", label: "Environment URL", type: "url", required: true },
+            {
+                key: "entityPath",
+                label: "Entity / company path",
+                type: "text",
+                placeholder: "companies(...)/purchaseInvoices",
+            },
+            ...COMMON_TAIL,
+        ],
+        guideSteps: guide(
+            "Dynamics 365",
+            "Register an Azure AD app, grant Dynamics/Business Central API permissions, and create a client secret.",
+            "Enter environmentUrl and the entity path for attachments or document exports.",
+            "Export one purchase invoice PDF and verify ingest."
+        ),
+        setupNotes: outboundNote("Dataverse / Power Automate"),
     },
     {
         id: "sap",
@@ -268,7 +357,12 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             { key: "companyDb", label: "Company DB / Client", type: "text", required: true },
             { key: "username", label: "Username", type: "text", required: true },
             { key: "password", label: "Password", type: "password", required: true, secret: true },
-            { key: "exportPath", label: "Export path or OData entity", type: "text", placeholder: "Attachments2 or /export/pdf" },
+            {
+                key: "exportPath",
+                label: "Export path or OData entity",
+                type: "text",
+                placeholder: "Attachments2 or /export/pdf",
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
@@ -278,29 +372,6 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             "Trigger a sample invoice/PO attachment export and verify the file in Documents with Finance or Procurement agent."
         ),
         setupNotes: outboundNote("SAP (via middleware / CPI / RFC wrapper)"),
-    },
-    {
-        id: "netsuite",
-        name: "Oracle NetSuite",
-        category: "erp",
-        description: "Token-based NetSuite integration for transaction PDFs and saved searches.",
-        directions: "both",
-        fields: [
-            { key: "accountId", label: "Account ID", type: "text", required: true },
-            { key: "consumerKey", label: "Consumer Key", type: "text", required: true },
-            { key: "consumerSecret", label: "Consumer Secret", type: "password", required: true, secret: true },
-            { key: "tokenId", label: "Token ID", type: "text", required: true },
-            { key: "tokenSecret", label: "Token Secret", type: "password", required: true, secret: true },
-            { key: "savedSearchId", label: "Saved search / folder ID", type: "text" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "Oracle NetSuite",
-            "Enable Token-Based Authentication, create an Integration record and Access Token for a role that can read File Cabinet / transactions.",
-            "Paste TBA credentials and optional savedSearchId for the documents you want synced.",
-            "Run a test fetch (or export one PDF) and confirm Documents."
-        ),
-        setupNotes: outboundNote("NetSuite RESTlet / SuiteScript"),
     },
     {
         id: "odoo",
@@ -323,47 +394,8 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         ),
         setupNotes: outboundNote("Odoo webhook / automated action"),
     },
-    {
-        id: "erpnext",
-        name: "ERPNext",
-        category: "erp",
-        description: "Frappe/ERPNext REST API for file attachments and print formats.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "ERPNext site URL", type: "url", required: true },
-            { key: "apiKey", label: "API Key", type: "text", required: true },
-            { key: "apiSecret", label: "API Secret", type: "password", required: true, secret: true },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "ERPNext",
-            "User → API Access → Generate Keys for a system user with File / Print Format permissions.",
-            "Paste site URL, API Key, and API Secret.",
-            "Generate a sample PDF (Sales Invoice / Delivery Note) and verify Documents."
-        ),
-        setupNotes: outboundNote("ERPNext webhook"),
-    },
-    {
-        id: "quickbooks",
-        name: "QuickBooks",
-        category: "erp",
-        description: "QuickBooks Online invoices and attachments for finance document AI.",
-        directions: "both",
-        fields: [
-            { key: "clientId", label: "Client ID", type: "text", required: true },
-            { key: "clientSecret", label: "Client Secret", type: "password", required: true, secret: true },
-            { key: "realmId", label: "Company (Realm) ID", type: "text", required: true },
-            { key: "refreshToken", label: "Refresh token", type: "password", required: true, secret: true },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "QuickBooks",
-            "Create an Intuit developer app, complete OAuth, and copy Client ID/Secret, Realm ID, and refresh token.",
-            "Set Finance as the default AI agent.",
-            "Create a test invoice PDF/attachment and confirm Documents."
-        ),
-        setupNotes: outboundNote("Intuit webhooks"),
-    },
+
+    // —— MES ——
     {
         id: "ignition",
         name: "Ignition (Inductive Automation)",
@@ -374,7 +406,12 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             { key: "baseUrl", label: "Ignition Gateway URL", type: "url", required: true },
             { key: "username", label: "API username", type: "text", required: true },
             { key: "password", label: "Password", type: "password", required: true, secret: true },
-            { key: "reportPath", label: "Report / tag path", type: "text", placeholder: "Reports/ShiftSummary" },
+            {
+                key: "reportPath",
+                label: "Report / tag path",
+                type: "text",
+                placeholder: "Reports/ShiftSummary",
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
@@ -385,88 +422,8 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         ),
         setupNotes: outboundNote("Ignition WebDev / MQTT bridge"),
     },
-    {
-        id: "siemens_opcenter",
-        name: "Siemens Opcenter",
-        category: "mes",
-        description: "MES quality and production documents from Siemens Opcenter / SIMATIC IT.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "Opcenter API base URL", type: "url", required: true },
-            { key: "clientId", label: "Client ID", type: "text", required: true },
-            { key: "clientSecret", label: "Client Secret", type: "password", required: true, secret: true },
-            { key: "plantCode", label: "Plant / site code", type: "text" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "Siemens Opcenter",
-            "Obtain API credentials from your Siemens MES admin (OAuth client for Opcenter APIs).",
-            "Configure plantCode and preferred export documents (batch records, COA).",
-            "Export one batch record PDF and verify Documents."
-        ),
-        setupNotes: outboundNote("Opcenter event API / middleware"),
-    },
-    {
-        id: "factorytalk",
-        name: "Rockwell FactoryTalk",
-        category: "mes",
-        description: "FactoryTalk ProductionCentre / View SE report and recipe document sync.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "FactoryTalk services URL", type: "url", required: true },
-            { key: "username", label: "Username", type: "text", required: true },
-            { key: "password", label: "Password", type: "password", required: true, secret: true },
-            { key: "areaPath", label: "Area / line path", type: "text" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "Rockwell FactoryTalk",
-            "Ask Rockwell admins for service account access to reporting endpoints or scheduled PDF drops.",
-            "If only file export is available, pair this card with Shared Folder / SFTP using the same schedule.",
-            "Produce a sample production report and verify Documents."
-        ),
-        setupNotes: outboundNote("FactoryTalk Transaction Manager / middleware"),
-    },
-    {
-        id: "aveva",
-        name: "AVEVA / Wonderware",
-        category: "mes",
-        description: "Historian and operations reports from AVEVA System Platform / Wonderware.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "AVEVA API / Insight URL", type: "url", required: true },
-            { key: "apiKey", label: "API key / token", type: "password", required: true, secret: true },
-            { key: "namespace", label: "Namespace / galaxy", type: "text" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "AVEVA / Wonderware",
-            "Enable Insight or REST connectors; create an API token with read access to report artifacts.",
-            "Set namespace and sync interval aligned with shift reports.",
-            "Export one operations PDF and verify Documents."
-        ),
-        setupNotes: outboundNote("AVEVA Insight webhook / Azure Function"),
-    },
-    {
-        id: "tulip",
-        name: "Tulip",
-        category: "mes",
-        description: "No-code MES tables and file connectors from Tulip apps.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "Tulip instance URL", type: "url", required: true },
-            { key: "apiKey", label: "API key", type: "password", required: true, secret: true },
-            { key: "tableId", label: "Table / connector ID", type: "text" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "Tulip",
-            "Account Settings → API Tokens; create a token with table/file read permissions.",
-            "Map the table that stores document URLs or binary attachments.",
-            "Complete a Tulip app step that attaches a file and verify Documents."
-        ),
-        setupNotes: outboundNote("Tulip Connector Function (HTTP)"),
-    },
+
+    // —— Quality ——
     {
         id: "mastercontrol",
         name: "MasterControl",
@@ -476,7 +433,13 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         fields: [
             { key: "baseUrl", label: "MasterControl URL", type: "url", required: true },
             { key: "username", label: "Username", type: "text", required: true },
-            { key: "password", label: "Password / API token", type: "password", required: true, secret: true },
+            {
+                key: "password",
+                label: "Password / API token",
+                type: "password",
+                required: true,
+                secret: true,
+            },
             { key: "vaultPath", label: "Vault / collection", type: "text" },
             ...COMMON_TAIL,
         ],
@@ -488,46 +451,8 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         ),
         setupNotes: outboundNote("MasterControl workflow hooks"),
     },
-    {
-        id: "etq_reliance",
-        name: "ETQ Reliance",
-        category: "quality",
-        description: "Quality events, audits, and document control from ETQ Reliance.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "ETQ base URL", type: "url", required: true },
-            { key: "apiKey", label: "API key", type: "password", required: true, secret: true },
-            { key: "module", label: "Module / form", type: "text", placeholder: "DocumentControl" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "ETQ Reliance",
-            "Generate an API key in ETQ admin for Document Control / Audit modules.",
-            "Set module name and Compliance agent.",
-            "Release one document revision and verify Documents."
-        ),
-        setupNotes: outboundNote("ETQ REST callbacks"),
-    },
-    {
-        id: "ibm_maximo",
-        name: "IBM Maximo",
-        category: "maintenance",
-        description: "Work order attachments, manuals, and inspection docs from Maximo.",
-        directions: "both",
-        fields: [
-            { key: "baseUrl", label: "Maximo / MAS URL", type: "url", required: true },
-            { key: "apiKey", label: "API key / API key token", type: "password", required: true, secret: true },
-            { key: "orgId", label: "Maximo org / site", type: "text" },
-            ...COMMON_TAIL,
-        ],
-        guideSteps: guide(
-            "IBM Maximo",
-            "Create an API key in Maximo Application Suite with read access to DocLinks / attached documents.",
-            "Map to Compliance or Other agent for maintenance manuals.",
-            "Attach a PDF to a work order and verify Documents."
-        ),
-        setupNotes: outboundNote("Maximo automation scripts / webhooks"),
-    },
+
+    // —— Maintenance ——
     {
         id: "fiix_upkeep",
         name: "Fiix / UpKeep",
@@ -537,10 +462,16 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         fields: [
             { key: "baseUrl", label: "API base URL", type: "url", required: true },
             { key: "apiKey", label: "API key", type: "password", required: true, secret: true },
-            { key: "provider", label: "CMMS product", type: "select", required: true, options: [
-                { value: "fiix", label: "Fiix" },
-                { value: "upkeep", label: "UpKeep" },
-            ]},
+            {
+                key: "provider",
+                label: "CMMS product",
+                type: "select",
+                required: true,
+                options: [
+                    { value: "fiix", label: "Fiix" },
+                    { value: "upkeep", label: "UpKeep" },
+                ],
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
@@ -551,6 +482,8 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         ),
         setupNotes: outboundNote("CMMS webhook / Zapier"),
     },
+
+    // —— Generic (always useful) ——
     {
         id: "custom_webhook",
         name: "Custom Webhook / REST API",
@@ -558,7 +491,13 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         description: "Universal inbound HTTP endpoint — any factory system can POST files now. Best starting point.",
         directions: "both",
         fields: [
-            { key: "label", label: "Connection label", type: "text", required: true, placeholder: "Plant A line 2" },
+            {
+                key: "label",
+                label: "Connection label",
+                type: "text",
+                required: true,
+                placeholder: "Plant A line 2",
+            },
             AGENT_FIELD,
             OUTBOUND_FIELD,
         ],
@@ -567,10 +506,10 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             "Copy the Ingest URL and Integration API Key shown after connect.",
             "From your factory software or middleware, POST multipart/form-data with field name file to the Ingest URL.",
             "Include header X-Integration-Key: <your key>. Optional form fields: phase3Agent, filename.",
-            "Example (curl): curl -X POST \"$INGEST_URL\" -H \"X-Integration-Key: $KEY\" -F \"file=@report.pdf\" -F \"phase3Agent=compliance_agent\"",
+            'Example (curl): curl -X POST "$INGEST_URL" -H "X-Integration-Key: $KEY" -F "file=@report.pdf" -F "phase3Agent=compliance_agent"',
             "Optional outbound: set Outbound results webhook URL to receive AI summaries after processing.",
             "Confirm the uploaded file appears under Documents with metadata.source = custom_webhook.",
-            "Rotate the key anytime by Disconnect → Connect again.",
+            "Rotate the key anytime from Status / rotate key.",
         ],
         setupNotes:
             "This connector is live today for inbound file ingest. Use it as a bridge while SAP/MES-specific pollers are rolled out. Outbound webhook receives JSON after AI processing when enabled in a later worker.",
@@ -582,10 +521,30 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         description: "Scheduled DB export or CSV/Excel drop from legacy factory databases.",
         directions: "both",
         fields: [
-            { key: "connectionString", label: "Read-only DB connection string (optional)", type: "password", secret: true },
-            { key: "queryOrView", label: "SQL view / query name", type: "text", placeholder: "dbo.v_daily_qc_export" },
-            { key: "dropFolder", label: "CSV/Excel drop folder path", type: "text", placeholder: "\\\\server\\exports\\csv" },
-            { key: "filePattern", label: "File name pattern", type: "text", placeholder: "qc_*.csv" },
+            {
+                key: "connectionString",
+                label: "Read-only DB connection string (optional)",
+                type: "password",
+                secret: true,
+            },
+            {
+                key: "queryOrView",
+                label: "SQL view / query name",
+                type: "text",
+                placeholder: "dbo.v_daily_qc_export",
+            },
+            {
+                key: "dropFolder",
+                label: "CSV/Excel drop folder path",
+                type: "text",
+                placeholder: "\\\\server\\exports\\csv",
+            },
+            {
+                key: "filePattern",
+                label: "File name pattern",
+                type: "text",
+                placeholder: "qc_*.csv",
+            },
             ...COMMON_TAIL,
         ],
         guideSteps: guide(
@@ -596,7 +555,6 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         ),
         setupNotes: outboundNote("your ETL / SSIS package"),
     },
-    */
 ];
 
 export function getIntegrationById(id: string): IntegrationCatalogItem | undefined {

@@ -8,7 +8,7 @@ import { recordActivityFromReq } from '../services/activityLog';
 const PROVIDER_DEFAULTS: Record<AIProvider, { label: string; model: string; baseUrl?: string }> = {
     groq: { label: 'Groq', model: 'llama-3.3-70b-versatile', baseUrl: 'https://api.groq.com/openai/v1' },
     openai: { label: 'OpenAI', model: 'gpt-4o', baseUrl: 'https://api.openai.com/v1' },
-    gemini: { label: 'Google Gemini', model: 'gemini-1.5-pro', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
+    gemini: { label: 'Google Gemini', model: 'gemini-2.0-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
     anthropic: { label: 'Anthropic Claude', model: 'claude-3-5-sonnet-20241022', baseUrl: 'https://api.anthropic.com/v1' },
     custom: { label: 'Custom Provider', model: '', baseUrl: '' },
 };
