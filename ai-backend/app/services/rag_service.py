@@ -1706,11 +1706,8 @@ class RAGService:
         # Neighbor chunks for context
         results = self._fetch_neighbor_chunks(results[:limit * 2], organization_id)
 
-        # Diversity cap: avoid one document dominating the context. Keep at most
-        # MAX_PER_DOC chunks per document so multiple relevant docs are represented.
-        # In aggregate mode we relax the cap so EVERY document that mentions the
-        # requested field contributes its relevant chunks (cross-document scan).
-        MAX_PER_DOC = 10 if aggregate else 2
+        # Diversity cap: avoid one document dominating the context while ensuring multiple relevant docs are represented.
+        MAX_PER_DOC = 10 if aggregate else 6
         if document_ids is None:
             capped = []
             per_doc = {}
@@ -1905,7 +1902,7 @@ class RAGService:
         chat_log.info(f"Aggregate search targeting {len(target_ids)} docs")
 
         # Phase 1 – single broad search
-        broad_limit = min(len(target_ids) * 2, 200)  # cap at 200 for speed
+        broad_limit = min(len(target_ids) * 6, 300)  # cap at 300 for speed
         broad_results = self.hybrid_search(
             query=query,
             organization_id=organization_id,
@@ -1914,13 +1911,13 @@ class RAGService:
             aggregate=True,
         )
 
-        # Phase 2 – per-doc guarantee: keep best chunks per doc (up to 3)
+        # Phase 2 – per-doc guarantee: keep best chunks per doc (up to 8)
         best_per_doc = {}
         for r in broad_results:
             did = r["document_id"]
             if did not in best_per_doc:
                 best_per_doc[did] = []
-            if len(best_per_doc[did]) < 3:
+            if len(best_per_doc[did]) < 8:
                 best_per_doc[did].append(r)
 
         # Phase 3 – omitted (no lazy fallback of empty chunks)

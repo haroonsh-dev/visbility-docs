@@ -147,10 +147,29 @@ def _dedup_merge(all_tables: list[dict]) -> list[dict]:
 
 def extract_tables(pdf_path: str) -> list[dict]:
     tables = []
-    tables.extend(_extract_pdfplumber(pdf_path))
-    tables.extend(_extract_camelot(pdf_path))
+    try:
+        tables.extend(_extract_pdfplumber(pdf_path))
+    except Exception as e:
+        logger.warning(f"pdfplumber table extraction failed: {e}")
+
+    # Fast path: if pdfplumber already extracted tables, return immediately to avoid slow Camelot hangs
+    if tables:
+        return _dedup_merge(tables)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            fut = pool.submit(_extract_camelot, pdf_path)
+            tables.extend(fut.result(timeout=10))
+        except Exception:
+            logger.warning("Camelot table extraction timed out or failed")
+
     if not tables:
-        tables.extend(_extract_opencv(pdf_path))
+        try:
+            tables.extend(_extract_opencv(pdf_path))
+        except Exception:
+            pass
+
     return _dedup_merge(tables)
 
 

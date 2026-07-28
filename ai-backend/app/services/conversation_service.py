@@ -59,7 +59,7 @@ def create_llm_from_config(provider_cfg):
                 api_key=key,
                 model=model_name or "llama-3.3-70b-versatile",
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=4096,
             ), "groq"
         elif p_name == "openai":
             from langchain_openai import ChatOpenAI
@@ -67,7 +67,7 @@ def create_llm_from_config(provider_cfg):
                 api_key=key,
                 model=model_name or "gpt-4o",
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=4096,
             ), "openai"
         elif p_name == "anthropic":
             from langchain_anthropic import ChatAnthropic
@@ -75,7 +75,7 @@ def create_llm_from_config(provider_cfg):
                 api_key=key,
                 model=model_name or "claude-3-5-sonnet-20241022",
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=4096,
             ), "anthropic"
         elif p_name == "gemini":
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -84,7 +84,7 @@ def create_llm_from_config(provider_cfg):
                 google_api_key=key,
                 model=g_model,
                 temperature=0.0,
-                max_output_tokens=2048,
+                max_output_tokens=4096,
                 max_retries=1,
             ), "gemini"
         elif p_name == "custom":
@@ -94,7 +94,7 @@ def create_llm_from_config(provider_cfg):
                 base_url=base_url or "https://api.mistral.ai/v1",
                 model=model_name or "ministral-3b-latest",
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=4096,
             ), "custom"
     except Exception as e:
         _logger.warning(f"Failed to create LLM for provider {p_name}: {e}")
@@ -142,13 +142,13 @@ class ConversationService:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", sp),
                 MessagesPlaceholder(variable_name="history"),
-                ("human", "{agent_instructions}Document Context:\n{context}\n\nQuestion: {question}"),
+                ("human", "{agent_instructions}Document Context:\n{context}\n\nCRITICAL INSTRUCTION: If the context contains a table or list, carefully scan the ENTIRE table from top to bottom. Extract ALL matching rows or data points. DO NOT skip any rows or hallucinate missing data.\n\nQuestion: {question}"),
             ])
         else:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", AGENT_SYSTEM_PROMPT),
                 MessagesPlaceholder(variable_name="history"),
-                ("human", "{agent_instructions}Document Context:\n{context}\n\nQuestion: {question}"),
+                ("human", "{agent_instructions}Document Context:\n{context}\n\nCRITICAL INSTRUCTION: If the context contains a table or list, carefully scan the ENTIRE table from top to bottom. Extract ALL matching rows or data points. DO NOT skip any rows or hallucinate missing data.\n\nQuestion: {question}"),
             ])
 
         self._chain = prompt | self.llm

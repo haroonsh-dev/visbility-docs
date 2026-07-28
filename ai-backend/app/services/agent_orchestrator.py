@@ -26,7 +26,7 @@ def _load_phase3_prompt(filename: str) -> str:
 
 
 def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str, str]:
-    """Resolve per-type prompt under phase3/{agent}/{doc_type}.md, then agent fallback."""
+    """Resolve per-type prompt under phase3/{agent}/{doc_type}/skill.md, then agent fallback."""
     agent = agent_type or DOCUMENT_TO_PHASE3_AGENT.get(doc_type, "other_agent")
     folder_name = agent.replace("_agent", "")
 
@@ -34,15 +34,26 @@ def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str,
         subfolder_path = os.path.join("phase3", folder_name, doc_type, "skill.md")
         content = _load_prompt(subfolder_path)
         if content:
+            print("\n" + "★"*65)
+            print(f"[SKILL.MD LOADED] Subfolder Skill File Used: app/prompts/{subfolder_path}")
+            print(f"[SKILL.MD LOADED] Category: '{folder_name}' | DocType: '{doc_type}' | Agent: '{agent}'")
+            print("★"*65 + "\n")
             return content, subfolder_path
 
     if agent and agent != "other_agent":
         agent_path = os.path.join("phase3", f"{agent}.md")
         content = _load_prompt(agent_path)
         if content:
+            print("\n" + "★"*65)
+            print(f"[PARENT AGENT PROMPT LOADED] Main Agent File Used: app/prompts/{agent_path}")
+            print(f"[PARENT AGENT PROMPT LOADED] Agent: '{agent}'")
+            print("★"*65 + "\n")
             return content, agent_path
 
     fallback_path = os.path.join("phase3", "other.md")
+    print("\n" + "★"*65)
+    print(f"[FALLBACK PROMPT LOADED] Generic File Used: app/prompts/{fallback_path}")
+    print("★"*65 + "\n")
     return _load_prompt(fallback_path), fallback_path
 
 
@@ -358,7 +369,19 @@ class CategoryExtractionAgent:
 
         agent = agent_type or DOCUMENT_TO_PHASE3_AGENT.get(document_type, "other_agent")
         log = get_logger()
-        log.info(f"DocType: {document_type} | Text: {len(text)} chars")
+        log.info(f"DocType: {document_type} | Text: {len(text if text else '')} chars")
+
+        clean_text = (text or "").strip()
+        if not clean_text or clean_text == "[OCR failed]" or len(clean_text) < 15:
+            log.warn(f"Empty or failed OCR text ({len(clean_text)} chars) — skipping extraction LLM call to prevent field leakage")
+            return {
+                "extracted_data": {},
+                "scratchpad": "Document text is empty or OCR failed.",
+                "confidence": 0.0,
+                "field_confidence": {},
+                "agent_type": agent,
+            }
+
         prompt_template, prompt_path = get_phase3_prompt_for_doc(document_type, agent)
         if prompt_path:
             log.info(f"LOADED PROMPT FILE: {prompt_path} for agent '{agent}'")
@@ -370,8 +393,8 @@ class CategoryExtractionAgent:
         
         prompt += "\n\nCRITICAL INSTRUCTION: You MUST extract EVERY SINGLE line item, row, and record present in the text. DO NOT truncate, summarize, or stop early to save space. If there are 50 rows, you MUST output 50 objects in the array. Omitting rows will cause catastrophic failure!"
         prompt += "\nCRITICAL INSTRUCTION: You MUST format your response exactly as follows. First, write out your reasoning inside a `<scratchpad>` XML block. Then, output the final JSON block. DO NOT include any other text outside these blocks."
-        prompt += "\nCRITICAL INSTRUCTION [ANTI-HALLUCINATION]: You MUST NOT invent, guess, or hallucinate ANY data. If a specific field is NOT explicitly written in the document text, you MUST output `null` or an empty string `\"\"`. NEVER generate fake numbers, dates, or guess missing fields!"
-        prompt += f"\n\n<document>\n{text[:64000] if text else ''}\n</document>"
+        prompt += "\nCRITICAL INSTRUCTION [ANTI-HALLUCINATION]: You MUST NOT invent, guess, or hallucinate ANY data. DO NOT copy placeholder text or field names from the prompt template. If a specific field is NOT explicitly written in the document text, you MUST output `null` or an empty string `\"\"`. NEVER generate fake numbers, dates, or guess missing fields!"
+        prompt += f"\n\n<document>\n{clean_text[:64000]}\n</document>"
         
         log.info(f"Prompt loaded ({C.DIM}{prompt_path}, {len(prompt_template)} chars{C.RESET})")
         log.info(f"Prompt preview: {C.DIM}{prompt[:200].replace(chr(10), ' ')}...{C.RESET}")
