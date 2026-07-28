@@ -249,9 +249,7 @@ Rules:
 
 def _vision_ocr(image_b64s: list[str]) -> str:
     from .groq_service import groq_service
-    if not groq_service.available or not groq_service.vision_available:
-        logger.warning("Groq vision not available")
-        return ""
+    from .vision_provider import vision_provider
 
     texts = []
     batch_size = 5
@@ -260,21 +258,32 @@ def _vision_ocr(image_b64s: list[str]) -> str:
         content = [{"type": "text", "text": VISION_PROMPT}]
         for b64 in batch:
             content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-        try:
-            result = groq_service.chat_vision(
-                [{"role": "user", "content": content}],
-                temperature=0.0,
-                max_tokens=8192,
-            )
-            if result and not result.startswith("[Groq"):
-                texts.append(result)
-            else:
-                texts.append("")
-        except Exception as e:
-            logger.warning(f"Vision batch {i//batch_size + 1} failed: {e}")
-            texts.append("")
+        
+        batch_text = ""
+        # Attempt 1: Groq Vision
+        if groq_service.available and groq_service.vision_available:
+            try:
+                result = groq_service.chat_vision(
+                    [{"role": "user", "content": content}],
+                    temperature=0.0,
+                    max_tokens=8192,
+                )
+                if result and not result.startswith("[Groq") and not result.startswith("⚠️"):
+                    batch_text = result
+            except Exception as e:
+                logger.warning(f"Groq vision batch failed: {e}")
 
-    return "\n\n".join(texts)
+        # Attempt 2: Multi-provider Vision Fallback
+        if not batch_text.strip():
+            for b64 in batch:
+                res = vision_provider.analyze(b64)
+                ocr_out = res.get("ocr_text", "") or res.get("markdown", "")
+                if ocr_out and not ocr_out.startswith("["):
+                    batch_text += "\n" + ocr_out
+
+        texts.append(batch_text.strip())
+
+    return "\n\n".join(t for t in texts if t)
 
 
 def _tesseract_ocr(images: list[Image.Image]) -> str:

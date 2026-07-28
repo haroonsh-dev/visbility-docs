@@ -178,7 +178,7 @@ class OrchestratorService:
                 log.result("Confidence", f"{classification['confidence']:.2f}")
                 log.result("Duration", f"{class_duration}ms", C.DIM)
 
-                ocr_thread.join(timeout=300)
+                ocr_thread.join(timeout=60)
                 raw_text = ocr_result.get("text", "") or direct_text
                 page_count = ocr_result.get("page_count", 0)
 
@@ -325,7 +325,7 @@ class OrchestratorService:
                                    classification.get("confidence", 0), class_duration)
 
             # Wait for OCR
-            ocr_thread.join(timeout=300)
+            ocr_thread.join(timeout=60)
             if ocr_exc[0]:
                 raise ocr_exc[0]
 

@@ -602,7 +602,7 @@ class ChatService:
             date_from=date_from,
             date_to=date_to,
             document_ids=resolved_ids,  # None = all; list = selected only
-            limit=60 if cross_doc else 15,
+            limit=120 if cross_doc else 60,
             aggregate=cross_doc,
         )
         if cross_doc:
@@ -757,7 +757,7 @@ class ChatService:
                 "page_number": r["page_number"],
                 "score": r["score"],
             })
-        sources = self._dedupe_sources(sources, limit=3)
+        sources = self._dedupe_sources(sources, limit=25)
 
         context = "\n\n".join(context_parts)
         
@@ -818,17 +818,18 @@ class ChatService:
         is_aggregate_query = any(
             __import__("re").search(kw, q_lower) for kw in _AGGREGATE_KEYWORDS
         )
-        if (is_aggregate_query or is_finance_query) and resolved_ids:
-            extraction_summary = self._fetch_extraction_summary(resolved_ids, organization_id)
+        # Target document IDs: selected docs if specified, otherwise top unique docs from search results
+        target_doc_ids = resolved_ids if resolved_ids else list(dict.fromkeys(r["document_id"] for r in search_results))[:10]
+        if target_doc_ids:
+            extraction_summary = self._fetch_extraction_summary(target_doc_ids, organization_id)
             if extraction_summary:
                 context = extraction_summary + "\n\n" + context if context else extraction_summary
-                chat_log.info(f"Injected structured extraction summary for {len(resolved_ids)} documents")
-            # Also inject raw source text for table/finance data — critical for Excel docs
-            # where chunks may be truncated or IDs mismatch between local/remote DBs.
-            raw_text_block = self._fetch_raw_text(resolved_ids, organization_id)
+                chat_log.info(f"Injected structured extraction summary for {len(target_doc_ids)} documents")
+            # Also inject raw source text for complete accuracy across All Documents
+            raw_text_block = self._fetch_raw_text(target_doc_ids, organization_id)
             if raw_text_block:
                 context = context + "\n\n" + raw_text_block if context else raw_text_block
-                chat_log.info(f"Injected raw text: {len(raw_text_block)} chars")
+                chat_log.info(f"Injected raw text: {len(raw_text_block)} chars for {len(target_doc_ids)} documents")
 
         chat_log.search_strategy("Context Building", f"{len(search_results)} chunks → {context_len} chars")
         doc_types_seen = {}
@@ -1034,6 +1035,11 @@ class ChatService:
         answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
         res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
         res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+
+        # Append bold tip message for All Documents scope
+        if not resolved_ids and answer and not answer.startswith("⚠️"):
+            tip_msg = "\n\n💡 **Note:** *For more detailed and complete information, please select specific file(s) from the document list.*"
+            answer = answer.rstrip() + tip_msg
 
         chat_log.llm_response(time.time() - llm_t0, len(answer))
 
