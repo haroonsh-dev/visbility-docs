@@ -7,10 +7,20 @@ import Document from '../models/Document';
 import DocumentShare from '../models/DocumentShare';
 import User from '../models/User';
 import { PERMISSIONS, ORG_ROLE_EDITABLE_PERMISSIONS } from '../types/permissions';
-import { hasPermission, loadUserDeptContext, canAccessDocument } from '../services/accessScope';
+import { hasPermission, loadUserDeptContext, canAccessDocument, canSuperviseUser, listSupervisableUserIds } from '../services/accessScope';
 import { KNOWN_DOCUMENT_TYPES, normalizeDocumentType } from '../services/documentStorage';
 import { recordActivityFromReq } from '../services/activityLog';
 import { ensureDefaultOrgRoles } from '../services/orgRoleSeed';
+import { buildFlatPermissionsDocument, normalizeTeamPermissions, permissionsToPlain } from '../utils/permissionsUtil';
+import ActivityLog from '../models/ActivityLog';
+
+function orgRoleForResponse(role: any) {
+    const plain = typeof role?.toObject === 'function' ? role.toObject() : role;
+    return {
+        ...plain,
+        permissions: permissionsToPlain(plain?.permissions),
+    };
+}
 
 function slugify(name: string): string {
     return name
@@ -284,12 +294,25 @@ export const getDepartmentOverview = async (req: Request, res: Response, next: N
                 ...m,
                 user: userMap[m.userId] || null,
                 role: role
-                    ? { roleId: role.roleId, name: role.name, isLeader: role.isLeader }
+                    ? {
+                          roleId: role.roleId,
+                          name: role.name,
+                          isLeader: role.isLeader,
+                          rank: typeof role.rank === 'number' ? role.rank : 1,
+                      }
                     : null,
             };
         });
 
         const leaders = memberRows.filter((m) => m.role?.isLeader);
+        const supervision = await listSupervisableUserIds(req.user, dept.departmentId);
+        const supervisableSet = new Set(supervision.userIds);
+        const supervisableMembers = memberRows
+            .filter((m) => supervisableSet.has(m.userId) && m.userId !== req.user.userId)
+            .map((m) => ({
+                ...m,
+                canOversee: true,
+            }));
 
         res.json({
             success: true,
@@ -299,6 +322,12 @@ export const getDepartmentOverview = async (req: Request, res: Response, next: N
                 leaders,
                 documents,
                 typeCounts,
+                supervision: {
+                    viewerRank: supervision.viewerRank,
+                    isAdmin: supervision.isAdmin,
+                    supervisableUserIds: supervision.userIds.filter((id) => id !== req.user.userId),
+                    supervisableMembers,
+                },
             },
         });
     } catch (error) {
@@ -344,13 +373,14 @@ export const addDepartmentMember = async (req: Request, res: Response, next: Nex
         user.orgRoleId = orgRoleId;
         // Merge role permissions onto user (keep account-level admin overrides)
         if (user.role === 'team') {
-            const perms = { ...(user.permissions || {}) } as Record<string, boolean>;
+            const perms = permissionsToPlain(user.permissions);
+            const rolePerms = permissionsToPlain(role.permissions);
             for (const key of ORG_ROLE_EDITABLE_PERMISSIONS) {
-                if (typeof (role.permissions as any)?.[key] === 'boolean') {
-                    perms[key] = (role.permissions as any)[key];
+                if (typeof rolePerms[key] === 'boolean') {
+                    perms[key] = rolePerms[key];
                 }
             }
-            user.permissions = perms as any;
+            user.permissions = buildFlatPermissionsDocument(normalizeTeamPermissions(perms)) as any;
         }
         await user.save();
 
@@ -399,6 +429,261 @@ export const removeDepartmentMember = async (req: Request, res: Response, next: 
     }
 };
 
+// ── Supervisor oversight ─────────────────────────────────────
+
+export const listDepartmentSubordinates = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!canViewDepartments(req)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        const dept = await Department.findOne({ departmentId: req.params.id }).lean();
+        if (!dept) return res.status(404).json({ success: false, message: 'Department not found' });
+
+        if (req.user.role === 'team' && !canManageDepartments(req)) {
+            const ctx = await loadUserDeptContext(req.user);
+            if (ctx.departmentId !== dept.departmentId) {
+                return res.status(403).json({ success: false, message: 'Forbidden' });
+            }
+        } else if (
+            req.user.role === 'admin' &&
+            req.user.organizationId &&
+            dept.organizationId !== req.user.organizationId
+        ) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+
+        const supervision = await listSupervisableUserIds(req.user, dept.departmentId);
+        const userIds = supervision.userIds.filter((id) => id !== req.user.userId);
+        if (!userIds.length) {
+            return res.json({
+                success: true,
+                data: {
+                    department: {
+                        departmentId: dept.departmentId,
+                        name: dept.name,
+                    },
+                    viewerRank: supervision.viewerRank,
+                    isAdmin: supervision.isAdmin,
+                    members: [],
+                },
+            });
+        }
+
+        const memberships = await DepartmentMember.find({
+            departmentId: dept.departmentId,
+            userId: { $in: userIds },
+        }).lean();
+        const roleIds = [...new Set(memberships.map((m) => m.orgRoleId))];
+        const [users, roles, docAgg, activityAgg] = await Promise.all([
+            User.find({ userId: { $in: userIds } })
+                .select('userId fullName email status lastLogin createdAt permissions orgRoleId primaryDepartmentId')
+                .lean(),
+            OrgRole.find({ roleId: { $in: roleIds } }).lean(),
+            Document.aggregate([
+                { $match: { uploadedBy: { $in: userIds } } },
+                {
+                    $group: {
+                        _id: '$uploadedBy',
+                        total: { $sum: 1 },
+                        ready: {
+                            $sum: {
+                                $cond: [{ $in: ['$status', ['ready', 'processed', 'completed']] }, 1, 0],
+                            },
+                        },
+                        processing: {
+                            $sum: {
+                                $cond: [{ $in: ['$status', ['processing', 'uploaded', 'queued']] }, 1, 0],
+                            },
+                        },
+                        failed: {
+                            $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] },
+                        },
+                    },
+                },
+            ]),
+            ActivityLog.aggregate([
+                { $match: { actorUserId: { $in: userIds } } },
+                { $group: { _id: '$actorUserId', total: { $sum: 1 } } },
+            ]),
+        ]);
+
+        const userMap = Object.fromEntries(users.map((u) => [u.userId, u]));
+        const roleMap = Object.fromEntries(roles.map((r) => [r.roleId, r]));
+        const docMap = Object.fromEntries(docAgg.map((d) => [d._id, d]));
+        const activityMap = Object.fromEntries(activityAgg.map((a) => [a._id, a.total]));
+
+        const members = memberships
+            .map((m) => {
+                const user = userMap[m.userId];
+                const role = roleMap[m.orgRoleId];
+                const docs = docMap[m.userId] || { total: 0, ready: 0, processing: 0, failed: 0 };
+                return {
+                    userId: m.userId,
+                    joinedAt: m.joinedAt,
+                    fullName: user?.fullName || m.userId,
+                    email: user?.email || '',
+                    status: user?.status || 'active',
+                    lastLogin: user?.lastLogin || null,
+                    createdAt: user?.createdAt || null,
+                    role: role
+                        ? {
+                              roleId: role.roleId,
+                              name: role.name,
+                              isLeader: !!role.isLeader,
+                              rank: typeof role.rank === 'number' ? role.rank : 1,
+                          }
+                        : null,
+                    documentCounts: {
+                        total: docs.total || 0,
+                        ready: docs.ready || 0,
+                        processing: docs.processing || 0,
+                        failed: docs.failed || 0,
+                    },
+                    activityCount: activityMap[m.userId] || 0,
+                };
+            })
+            .sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+        res.json({
+            success: true,
+            data: {
+                department: {
+                    departmentId: dept.departmentId,
+                    name: dept.name,
+                },
+                viewerRank: supervision.viewerRank,
+                isAdmin: supervision.isAdmin,
+                members,
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const getDepartmentMemberDetail = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!canViewDepartments(req)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        const departmentId = String(req.params.id || '');
+        const targetUserId = String(req.params.userId || '');
+        const dept = await Department.findOne({ departmentId }).lean();
+        if (!dept) return res.status(404).json({ success: false, message: 'Department not found' });
+
+        if (req.user.role === 'team' && !canManageDepartments(req)) {
+            const ctx = await loadUserDeptContext(req.user);
+            if (ctx.departmentId !== dept.departmentId) {
+                return res.status(403).json({ success: false, message: 'Forbidden' });
+            }
+        } else if (
+            req.user.role === 'admin' &&
+            req.user.organizationId &&
+            dept.organizationId !== req.user.organizationId
+        ) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+
+        const check = await canSuperviseUser(req.user, targetUserId, { departmentId });
+        if (!check.allowed || check.targetDepartmentId !== departmentId) {
+            return res.status(403).json({
+                success: false,
+                message: check.reason || 'Forbidden',
+            });
+        }
+
+        const membership = await DepartmentMember.findOne({ departmentId, userId: targetUserId }).lean();
+        if (!membership) {
+            return res.status(404).json({ success: false, message: 'Member not found in department' });
+        }
+
+        const [user, role, recentActivity, docCounts] = await Promise.all([
+            User.findOne({ userId: targetUserId })
+                .select('-passwordHash -openRemoteSecret')
+                .lean(),
+            OrgRole.findOne({ roleId: membership.orgRoleId }).lean(),
+            ActivityLog.find({ actorUserId: targetUserId })
+                .sort({ createdAt: -1 })
+                .limit(8)
+                .lean(),
+            Document.aggregate([
+                { $match: { uploadedBy: targetUserId } },
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: 1 },
+                        ready: {
+                            $sum: {
+                                $cond: [{ $in: ['$status', ['ready', 'processed', 'completed']] }, 1, 0],
+                            },
+                        },
+                        processing: {
+                            $sum: {
+                                $cond: [{ $in: ['$status', ['processing', 'uploaded', 'queued']] }, 1, 0],
+                            },
+                        },
+                        failed: {
+                            $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] },
+                        },
+                    },
+                },
+            ]),
+        ]);
+
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+        const counts = docCounts[0] || { total: 0, ready: 0, processing: 0, failed: 0 };
+        const activityTotal = await ActivityLog.countDocuments({ actorUserId: targetUserId });
+
+        res.json({
+            success: true,
+            data: {
+                department: {
+                    departmentId: dept.departmentId,
+                    name: dept.name,
+                    description: dept.description || '',
+                },
+                member: {
+                    userId: user.userId,
+                    fullName: user.fullName,
+                    email: user.email,
+                    status: user.status,
+                    lastLogin: user.lastLogin || null,
+                    createdAt: user.createdAt,
+                    joinedAt: membership.joinedAt,
+                    permissions: permissionsToPlain(user.permissions),
+                    role: role
+                        ? {
+                              roleId: role.roleId,
+                              name: role.name,
+                              description: role.description || '',
+                              isLeader: !!role.isLeader,
+                              rank: typeof role.rank === 'number' ? role.rank : 1,
+                              permissions: permissionsToPlain(role.permissions),
+                          }
+                        : null,
+                },
+                aggregates: {
+                    documents: {
+                        total: counts.total || 0,
+                        ready: counts.ready || 0,
+                        processing: counts.processing || 0,
+                        failed: counts.failed || 0,
+                    },
+                    activityTotal,
+                },
+                recentActivity,
+                supervision: {
+                    viewerRank: check.viewerRank,
+                    targetRank: check.targetRank,
+                },
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // ── Org Roles ────────────────────────────────────────────────
 
 export const listOrgRoles = async (req: Request, res: Response, next: NextFunction) => {
@@ -414,7 +699,10 @@ export const listOrgRoles = async (req: Request, res: Response, next: NextFuncti
         const roles = await OrgRole.find({ organizationId: orgId }).sort({ name: 1 }).lean();
         res.json({
             success: true,
-            data: { roles, editablePermissions: ORG_ROLE_EDITABLE_PERMISSIONS },
+            data: {
+                roles: roles.map(orgRoleForResponse),
+                editablePermissions: ORG_ROLE_EDITABLE_PERMISSIONS,
+            },
         });
     } catch (error) {
         next(error);
@@ -430,7 +718,7 @@ export const createOrgRole = async (req: Request, res: Response, next: NextFunct
         if (!orgId) {
             return res.status(400).json({ success: false, message: 'organizationId required' });
         }
-        const { name, description, permissions, isLeader } = req.body || {};
+        const { name, description, permissions, isLeader, rank } = req.body || {};
         if (!name || !String(name).trim()) {
             return res.status(400).json({ success: false, message: 'name is required' });
         }
@@ -448,11 +736,12 @@ export const createOrgRole = async (req: Request, res: Response, next: NextFunct
             name: String(name).trim(),
             description: description ? String(description) : '',
             permissions: perms,
+            rank: Math.max(1, Math.min(99, Number(rank) || 1)),
             isLeader: !!isLeader,
             isSystem: false,
         });
 
-        res.status(201).json({ success: true, data: { role } });
+        res.status(201).json({ success: true, data: { role: orgRoleForResponse(role) } });
     } catch (error) {
         next(error);
     }
@@ -470,12 +759,15 @@ export const updateOrgRole = async (req: Request, res: Response, next: NextFunct
             return res.status(403).json({ success: false, message: 'Forbidden' });
         }
 
-        const { name, description, permissions, isLeader } = req.body || {};
+        const { name, description, permissions, isLeader, rank } = req.body || {};
         if (name) role.name = String(name).trim();
         if (description !== undefined) role.description = String(description);
         if (typeof isLeader === 'boolean') role.isLeader = isLeader;
+        if (rank !== undefined) {
+            role.rank = Math.max(1, Math.min(99, Number(rank) || 1));
+        }
         if (permissions && typeof permissions === 'object') {
-            const perms = { ...(role.permissions as any) };
+            const perms = permissionsToPlain(role.permissions);
             for (const key of ORG_ROLE_EDITABLE_PERMISSIONS) {
                 if (typeof permissions[key] === 'boolean') perms[key] = permissions[key];
             }
@@ -487,22 +779,22 @@ export const updateOrgRole = async (req: Request, res: Response, next: NextFunct
         // Sync role permissions onto assigned team users
         if (permissions && typeof permissions === 'object') {
             const members = await DepartmentMember.find({ orgRoleId: role.roleId }).lean();
+            const rolePerms = permissionsToPlain(role.permissions);
             for (const m of members) {
                 const user = await User.findOne({ userId: m.userId, role: 'team' });
                 if (!user) continue;
-                const perms = { ...(user.permissions as any) };
+                const perms = permissionsToPlain(user.permissions);
                 for (const key of ORG_ROLE_EDITABLE_PERMISSIONS) {
-                    if (typeof (role.permissions as any)?.[key] === 'boolean') {
-                        perms[key] = (role.permissions as any)[key];
+                    if (typeof rolePerms[key] === 'boolean') {
+                        perms[key] = rolePerms[key];
                     }
                 }
-                perms[PERMISSIONS.DOCUMENT_PREVIEW] = perms[PERMISSIONS.DOCUMENT_VIEW] === true;
-                user.permissions = perms;
+                user.permissions = buildFlatPermissionsDocument(normalizeTeamPermissions(perms)) as any;
                 await user.save();
             }
         }
 
-        res.json({ success: true, data: { role } });
+        res.json({ success: true, data: { role: orgRoleForResponse(role) } });
     } catch (error) {
         next(error);
     }

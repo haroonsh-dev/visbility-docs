@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import ActivityLog from '../models/ActivityLog';
 import User from '../models/User';
+import { canSuperviseUser, listSupervisableUserIds, loadUserDeptContext } from '../services/accessScope';
 
 /**
  * Visibility:
- * - team: own activity only
+ * - team (no subordinates): own activity only
+ * - team supervisor (higher rank): own + same-dept lower-rank subordinates
  * - admin: own org (self + team members)
  * - superAdmin: own + all admins + all team members (platform)
  */
@@ -12,6 +14,12 @@ async function buildActorFilter(user: any): Promise<Record<string, unknown>> {
     if (!user) return { actorUserId: '__none__' };
 
     if (user.role === 'team') {
+        const ctx = await loadUserDeptContext(user);
+        if (ctx.departmentId && ctx.rank > 1) {
+            const supervision = await listSupervisableUserIds(user, ctx.departmentId);
+            const ids = [...new Set([user.userId, ...supervision.userIds])];
+            return { actorUserId: { $in: ids } };
+        }
         return { actorUserId: user.userId };
     }
 
@@ -23,7 +31,6 @@ async function buildActorFilter(user: any): Promise<Record<string, unknown>> {
     }
 
     if (user.role === 'superAdmin') {
-        // Platform: all admin + team activity, plus this superAdmin's own
         return {
             $or: [
                 { actorUserId: user.userId },
@@ -50,7 +57,6 @@ export const listActivity = async (req: Request, res: Response, next: NextFuncti
         const scope = await buildActorFilter(req.user);
         const filter: Record<string, unknown> = { ...scope };
 
-        // Nested $and if scope already has $or
         const andParts: Record<string, unknown>[] = [];
         if ((scope as any).$or) {
             andParts.push({ $or: (scope as any).$or });
@@ -60,9 +66,11 @@ export const listActivity = async (req: Request, res: Response, next: NextFuncti
         if (category) andParts.push({ category });
         if (action) andParts.push({ action });
         if (actorUserId) {
-            // Team cannot query other users
             if (req.user.role === 'team' && actorUserId !== req.user.userId) {
-                return res.status(403).json({ success: false, message: 'Forbidden' });
+                const check = await canSuperviseUser(req.user, actorUserId);
+                if (!check.allowed) {
+                    return res.status(403).json({ success: false, message: check.reason || 'Forbidden' });
+                }
             }
             andParts.push({ actorUserId });
         }
@@ -96,7 +104,6 @@ export const listActivity = async (req: Request, res: Response, next: NextFuncti
             ActivityLog.countDocuments(finalFilter),
         ]);
 
-        // Optional actor enrichment for display names if missing
         const missingIds = [
             ...new Set(
                 logs
@@ -138,16 +145,36 @@ export const listActivityActors = async (req: Request, res: Response, next: Next
         const role = req.user.role;
 
         if (role === 'team') {
+            const ctx = await loadUserDeptContext(req.user);
+            const self = {
+                userId: req.user.userId,
+                fullName: req.user.username || req.user.email,
+                email: req.user.email,
+                role: 'team',
+            };
+            if (!ctx.departmentId || ctx.rank <= 1) {
+                return res.json({ success: true, data: { actors: [self] } });
+            }
+            const supervision = await listSupervisableUserIds(req.user, ctx.departmentId);
+            const subordinateIds = supervision.userIds.filter((id) => id !== req.user.userId);
+            if (!subordinateIds.length) {
+                return res.json({ success: true, data: { actors: [self] } });
+            }
+            const users = await User.find({ userId: { $in: subordinateIds } })
+                .select('userId fullName email role')
+                .sort({ fullName: 1 })
+                .lean();
             return res.json({
                 success: true,
                 data: {
                     actors: [
-                        {
-                            userId: req.user.userId,
-                            fullName: req.user.username || req.user.email,
-                            email: req.user.email,
-                            role: 'team',
-                        },
+                        self,
+                        ...users.map((u) => ({
+                            userId: u.userId,
+                            fullName: u.fullName,
+                            email: u.email,
+                            role: u.role,
+                        })),
                     ],
                 },
             });
@@ -167,7 +194,6 @@ export const listActivityActors = async (req: Request, res: Response, next: Next
             return res.json({ success: true, data: { actors: users } });
         }
 
-        // superAdmin
         const users = await User.find({
             role: { $in: ['admin', 'team', 'superAdmin'] },
         })

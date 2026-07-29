@@ -421,6 +421,7 @@ export const me = async (req: Request, res: Response) => {
                     roleId: role.roleId,
                     name: role.name,
                     isLeader: role.isLeader,
+                    rank: typeof role.rank === 'number' ? role.rank : 1,
                 };
             }
         }

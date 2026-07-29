@@ -41,8 +41,8 @@ export function normalizeTeamPermissions(perms: unknown): Record<PermissionKey, 
         }
     }
     out[PERMISSIONS.DOCUMENT_PREVIEW] = out[PERMISSIONS.DOCUMENT_VIEW];
+    // Team accounts never get full org team admin; Managers use department.manage instead
     out[PERMISSIONS.TEAM_MANAGE] = false;
-    out[PERMISSIONS.ORG_DOCUMENTS_VIEW] = false;
     return out;
 }
 

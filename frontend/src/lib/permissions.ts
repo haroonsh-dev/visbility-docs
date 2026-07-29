@@ -9,7 +9,28 @@ export const PERMS = {
     CHAT: "chat.use",
     DEPT_VIEW: "department.view",
     DEPT_MANAGE: "department.manage",
+    ORG_DOCS_VIEW: "org.documents.view",
+    PAGE_DASHBOARD: "page.dashboard",
+    PAGE_DOCUMENTS: "page.documents",
+    PAGE_CHAT: "page.chat",
+    PAGE_ACTIVITY: "page.activity",
+    PAGE_DEPARTMENTS: "page.departments",
 } as const;
+
+export type PageAccessKey =
+    | "dashboard"
+    | "documents"
+    | "chat"
+    | "activity"
+    | "departments";
+
+export const PAGE_PERM_BY_KEY: Record<PageAccessKey, string> = {
+    dashboard: PERMS.PAGE_DASHBOARD,
+    documents: PERMS.PAGE_DOCUMENTS,
+    chat: PERMS.PAGE_CHAT,
+    activity: PERMS.PAGE_ACTIVITY,
+    departments: PERMS.PAGE_DEPARTMENTS,
+};
 
 /** Permissions editable for team members (shown in Team UI). */
 export const TEAM_PERM_LABELS: { key: string; label: string; hint?: string }[] = [
@@ -29,6 +50,12 @@ export const DEFAULT_TEAM_PERMS: Record<string, boolean> = {
     [PERMS.CHAT]: true,
     [PERMS.DEPT_VIEW]: true,
     [PERMS.DEPT_MANAGE]: false,
+    [PERMS.ORG_DOCS_VIEW]: false,
+    [PERMS.PAGE_DASHBOARD]: true,
+    [PERMS.PAGE_DOCUMENTS]: true,
+    [PERMS.PAGE_CHAT]: true,
+    [PERMS.PAGE_ACTIVITY]: false,
+    [PERMS.PAGE_DEPARTMENTS]: false,
 };
 
 export function getUserPermissions(): Record<string, boolean> {
@@ -57,7 +84,24 @@ export function hasAppPermission(permission: string): boolean {
     if (permission === PERMS.PREVIEW) {
         return perms[PERMS.PREVIEW] === true || perms[PERMS.VIEW] === true;
     }
+    // Legacy users without page.* keys: allow core pages so they are not locked out
+    if (
+        permission === PERMS.PAGE_DASHBOARD ||
+        permission === PERMS.PAGE_DOCUMENTS ||
+        permission === PERMS.PAGE_CHAT
+    ) {
+        if (permission in perms) return perms[permission] === true;
+        return true;
+    }
+    if (permission === PERMS.PAGE_ACTIVITY || permission === PERMS.PAGE_DEPARTMENTS) {
+        if (permission in perms) return perms[permission] === true;
+        return false;
+    }
     return perms[permission] === true;
+}
+
+export function canAccessPage(page: PageAccessKey): boolean {
+    return hasAppPermission(PAGE_PERM_BY_KEY[page]);
 }
 
 export function canUpload() {
@@ -80,4 +124,23 @@ export function canViewDepartments() {
 }
 export function canManageDepartments() {
     return hasAppPermission(PERMS.DEPT_MANAGE);
+}
+
+/** First allowed app path for a team user (fallback profile). */
+export function firstAllowedPath(perms?: Record<string, boolean>, role?: string): string {
+    const r = role || getUserRole();
+    if (r === "superAdmin" || r === "admin") return "/dashboard";
+    const p = perms || getUserPermissions();
+    const check = (key: string, legacyDefault = false) => {
+        if (r === "superAdmin" || r === "admin") return true;
+        if (key in p) return p[key] === true;
+        return legacyDefault;
+    };
+    if (check(PERMS.PAGE_DASHBOARD, true)) return "/dashboard";
+    if (check(PERMS.PAGE_DOCUMENTS, true) && (p[PERMS.VIEW] !== false || p[PERMS.UPLOAD] !== false)) {
+        return "/documents";
+    }
+    if (check(PERMS.PAGE_CHAT, true) && p[PERMS.CHAT] !== false) return "/chat";
+    if (check(PERMS.PAGE_ACTIVITY, false)) return "/activity";
+    return "/profile";
 }

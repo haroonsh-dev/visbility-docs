@@ -6,7 +6,9 @@ import {
     createOrgRole,
     deleteDepartment,
     deleteOrgRole,
+    getDepartmentMemberDetail,
     getDepartmentOverview,
+    listDepartmentSubordinates,
     listDepartments,
     listOrgRoles,
     removeDepartmentMember,
@@ -26,6 +28,8 @@ router.delete('/roles/:id', deleteOrgRole);
 router.get('/', listDepartments);
 router.post('/', createDepartment);
 router.get('/:id/overview', getDepartmentOverview);
+router.get('/:id/subordinates', listDepartmentSubordinates);
+router.get('/:id/members/:userId', getDepartmentMemberDetail);
 router.patch('/:id', updateDepartment);
 router.delete('/:id', deleteDepartment);
 router.post('/:id/members', addDepartmentMember);

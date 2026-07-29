@@ -25,6 +25,7 @@ export type UserDeptContext = {
     departmentId: string | null;
     orgRoleId: string | null;
     isLeader: boolean;
+    rank: number;
     /** Documents shared directly with this user (scope='user') */
     sharedDocumentIds: string[];
     /** Department-scoped shares with all_members visibility (visible to all dept members) */
@@ -51,6 +52,7 @@ export async function loadUserDeptContext(user: AuthUser): Promise<UserDeptConte
         departmentId: null,
         orgRoleId: null,
         isLeader: false,
+        rank: 1,
         sharedDocumentIds: [],
         departmentSharedDocumentIds: [],
         leaderOnlyDocumentIds: [],
@@ -64,9 +66,11 @@ export async function loadUserDeptContext(user: AuthUser): Promise<UserDeptConte
     const orgRoleId = membership?.orgRoleId || user.orgRoleId || null;
 
     let isLeader = false;
+    let rank = 1;
     if (orgRoleId) {
         const role = await OrgRole.findOne({ roleId: orgRoleId }).lean();
         isLeader = !!role?.isLeader;
+        if (typeof role?.rank === 'number' && role.rank >= 1) rank = role.rank;
     }
 
     const shareFilter: Record<string, unknown> = {
@@ -103,7 +107,220 @@ export async function loadUserDeptContext(user: AuthUser): Promise<UserDeptConte
         }
     }
 
-    return { departmentId, orgRoleId, isLeader, sharedDocumentIds, departmentSharedDocumentIds, leaderOnlyDocumentIds, allOrgDocumentIds };
+    return {
+        departmentId,
+        orgRoleId,
+        isLeader,
+        rank,
+        sharedDocumentIds,
+        departmentSharedDocumentIds,
+        leaderOnlyDocumentIds,
+        allOrgDocumentIds,
+    };
+}
+
+export type SupervisionCheck = {
+    allowed: boolean;
+    reason?: string;
+    viewerDepartmentId: string | null;
+    viewerRank: number;
+    targetDepartmentId: string | null;
+    targetRank: number;
+    targetUserId: string;
+};
+
+function isOrgAdmin(user: AuthUser): boolean {
+    return user.role === 'superAdmin' || user.role === 'admin';
+}
+
+/** Resolve membership + role rank for any userId. */
+export async function loadMembershipRank(userId: string): Promise<{
+    departmentId: string | null;
+    orgRoleId: string | null;
+    isLeader: boolean;
+    rank: number;
+    organizationId: string | null;
+}> {
+    const membership = await DepartmentMember.findOne({ userId }).lean();
+    const departmentId = membership?.departmentId || null;
+    const orgRoleId = membership?.orgRoleId || null;
+    let isLeader = false;
+    let rank = 1;
+    if (orgRoleId) {
+        const role = await OrgRole.findOne({ roleId: orgRoleId }).lean();
+        isLeader = !!role?.isLeader;
+        if (typeof role?.rank === 'number' && role.rank >= 1) rank = role.rank;
+    }
+    return {
+        departmentId,
+        orgRoleId,
+        isLeader,
+        rank,
+        organizationId: membership?.organizationId || null,
+    };
+}
+
+/**
+ * Same-department lower-rank supervision:
+ * - admin/superAdmin: org-wide (admin limited to own org)
+ * - team: same department AND viewer.rank > target.rank
+ */
+export async function canSuperviseUser(
+    viewer: AuthUser,
+    targetUserId: string,
+    options?: { departmentId?: string }
+): Promise<SupervisionCheck> {
+    const targetUserIdNorm = String(targetUserId || '').trim();
+    const empty: SupervisionCheck = {
+        allowed: false,
+        reason: 'Forbidden',
+        viewerDepartmentId: null,
+        viewerRank: 1,
+        targetDepartmentId: null,
+        targetRank: 1,
+        targetUserId: targetUserIdNorm,
+    };
+    if (!viewer?.userId || !targetUserIdNorm) return empty;
+
+    if (viewer.userId === targetUserIdNorm) {
+        const self = await loadMembershipRank(viewer.userId);
+        return {
+            allowed: true,
+            viewerDepartmentId: self.departmentId,
+            viewerRank: self.rank,
+            targetDepartmentId: self.departmentId,
+            targetRank: self.rank,
+            targetUserId: targetUserIdNorm,
+        };
+    }
+
+    const target = await loadMembershipRank(targetUserIdNorm);
+    if (options?.departmentId && target.departmentId && target.departmentId !== options.departmentId) {
+        return {
+            ...empty,
+            targetDepartmentId: target.departmentId,
+            targetRank: target.rank,
+            reason: 'User is not in this department',
+        };
+    }
+
+    if (isOrgAdmin(viewer)) {
+        if (viewer.role === 'admin' && viewer.organizationId) {
+            const User = (await import('../models/User')).default;
+            const targetUser = await User.findOne({ userId: targetUserIdNorm })
+                .select('organizationId')
+                .lean();
+            if (!targetUser || targetUser.organizationId !== viewer.organizationId) {
+                return {
+                    ...empty,
+                    targetDepartmentId: target.departmentId,
+                    targetRank: target.rank,
+                    reason: 'Forbidden',
+                };
+            }
+        }
+        return {
+            allowed: true,
+            viewerDepartmentId: options?.departmentId || target.departmentId,
+            viewerRank: 99,
+            targetDepartmentId: target.departmentId,
+            targetRank: target.rank,
+            targetUserId: targetUserIdNorm,
+        };
+    }
+
+    const viewerCtx = await loadUserDeptContext(viewer);
+    if (!viewerCtx.departmentId || !target.departmentId) {
+        return {
+            ...empty,
+            viewerDepartmentId: viewerCtx.departmentId,
+            viewerRank: viewerCtx.rank,
+            targetDepartmentId: target.departmentId,
+            targetRank: target.rank,
+            reason: 'No department membership',
+        };
+    }
+    if (viewerCtx.departmentId !== target.departmentId) {
+        return {
+            ...empty,
+            viewerDepartmentId: viewerCtx.departmentId,
+            viewerRank: viewerCtx.rank,
+            targetDepartmentId: target.departmentId,
+            targetRank: target.rank,
+            reason: 'Cross-department access denied',
+        };
+    }
+    if (viewerCtx.rank <= target.rank) {
+        return {
+            allowed: false,
+            reason: 'Insufficient rank',
+            viewerDepartmentId: viewerCtx.departmentId,
+            viewerRank: viewerCtx.rank,
+            targetDepartmentId: target.departmentId,
+            targetRank: target.rank,
+            targetUserId: targetUserIdNorm,
+        };
+    }
+
+    return {
+        allowed: true,
+        viewerDepartmentId: viewerCtx.departmentId,
+        viewerRank: viewerCtx.rank,
+        targetDepartmentId: target.departmentId,
+        targetRank: target.rank,
+        targetUserId: targetUserIdNorm,
+    };
+}
+
+/** UserIds a supervisor may inspect in a department (lower rank only). Admins get all members. */
+export async function listSupervisableUserIds(
+    viewer: AuthUser,
+    departmentId: string
+): Promise<{ departmentId: string; userIds: string[]; viewerRank: number; isAdmin: boolean }> {
+    const members = await DepartmentMember.find({ departmentId }).lean();
+    if (!members.length) {
+        return { departmentId, userIds: [], viewerRank: 1, isAdmin: isOrgAdmin(viewer) };
+    }
+
+    if (isOrgAdmin(viewer)) {
+        if (viewer.role === 'admin' && viewer.organizationId) {
+            const orgMembers = members.filter((m) => m.organizationId === viewer.organizationId);
+            return {
+                departmentId,
+                userIds: orgMembers.map((m) => m.userId),
+                viewerRank: 99,
+                isAdmin: true,
+            };
+        }
+        return {
+            departmentId,
+            userIds: members.map((m) => m.userId),
+            viewerRank: 99,
+            isAdmin: true,
+        };
+    }
+
+    const viewerCtx = await loadUserDeptContext(viewer);
+    if (!viewerCtx.departmentId || viewerCtx.departmentId !== departmentId) {
+        return { departmentId, userIds: [], viewerRank: viewerCtx.rank, isAdmin: false };
+    }
+
+    const roleIds = [...new Set(members.map((m) => m.orgRoleId).filter(Boolean))];
+    const roles = await OrgRole.find({ roleId: { $in: roleIds } }).lean();
+    const rankMap = Object.fromEntries(
+        roles.map((r) => [r.roleId, typeof r.rank === 'number' && r.rank >= 1 ? r.rank : 1])
+    );
+
+    const userIds = members
+        .filter((m) => (rankMap[m.orgRoleId] ?? 1) < viewerCtx.rank)
+        .map((m) => m.userId);
+
+    return {
+        departmentId,
+        userIds,
+        viewerRank: viewerCtx.rank,
+        isAdmin: false,
+    };
 }
 
 /**

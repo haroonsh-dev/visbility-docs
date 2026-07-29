@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
     Building2,
     Check,
+    Eye,
     Loader2,
     Pencil,
     Plus,
@@ -37,6 +38,7 @@ type OrgRole = {
     name: string;
     description?: string;
     isLeader: boolean;
+    rank?: number;
     isSystem?: boolean;
     permissions: Record<string, boolean>;
 };
@@ -50,16 +52,42 @@ type Member = {
     status?: string;
 };
 
-const ROLE_PERM_LABELS: { key: string; label: string; hint: string }[] = [
+const ROLE_PAGE_LABELS: { key: string; label: string; hint: string }[] = [
+    { key: "page.dashboard", label: "Dashboard", hint: "Home overview page" },
+    { key: "page.documents", label: "Documents", hint: "Document library page" },
+    { key: "page.chat", label: "AI Chat", hint: "Chat page (also needs Chat permission)" },
+    { key: "page.activity", label: "Activity", hint: "Activity log page" },
+    { key: "page.departments", label: "Department pages", hint: "Department overview under Documents" },
+];
+
+const ROLE_FEATURE_LABELS: { key: string; label: string; hint: string }[] = [
     { key: "document.upload", label: "Upload documents", hint: "Add files to the library" },
     { key: "document.view", label: "View documents", hint: "Browse and open files" },
     { key: "document.preview", label: "Preview documents", hint: "Open file previews" },
     { key: "document.delete", label: "Delete documents", hint: "Remove files" },
     { key: "document.share", label: "Share documents", hint: "Allow others to see private leader files" },
-    { key: "chat.use", label: "AI Chat", hint: "Ask questions about documents" },
-    { key: "department.view", label: "View department", hint: "Open department overview" },
+    { key: "chat.use", label: "Use AI Chat", hint: "Ask questions about documents" },
+    { key: "department.view", label: "View department", hint: "See department info when page is allowed" },
+    { key: "department.manage", label: "Manage department", hint: "Add/edit members and department settings" },
     { key: "org.documents.view", label: "View all org documents", hint: "See every document in the organization" },
 ];
+
+const ROLE_PERM_LABELS = [...ROLE_PAGE_LABELS, ...ROLE_FEATURE_LABELS];
+
+const RANK_OPTIONS = [
+    { value: 1, label: "1 — Employee" },
+    { value: 2, label: "2 — Leader" },
+    { value: 3, label: "3 — Manager" },
+    { value: 4, label: "4 — Custom" },
+];
+
+function rankBadgeLabel(rank?: number, isLeader?: boolean) {
+    if (rank === 3) return "Manager";
+    if (rank === 2 || isLeader) return "Leader";
+    if (rank === 1) return "Employee";
+    if (rank && rank > 3) return `Rank ${rank}`;
+    return null;
+}
 
 const DOC_TYPE_LABELS: Record<string, string> = {
     resume: "Resume / CV",
@@ -84,9 +112,14 @@ function typeLabel(t: string) {
 }
 
 function defaultPerms(): Record<string, boolean> {
-    return Object.fromEntries(
-        ROLE_PERM_LABELS.map((p) => [p.key, !["document.share", "org.documents.view"].includes(p.key)])
-    );
+    const off = new Set([
+        "document.share",
+        "org.documents.view",
+        "department.manage",
+        "page.activity",
+        "page.departments",
+    ]);
+    return Object.fromEntries(ROLE_PERM_LABELS.map((p) => [p.key, !off.has(p.key)]));
 }
 
 function permsFromRole(r: OrgRole): Record<string, boolean> {
@@ -143,15 +176,17 @@ function DocTypePicker({
 }
 
 function PermPicker({
+    labels,
     permissions,
     onChange,
 }: {
+    labels: { key: string; label: string; hint: string }[];
     permissions: Record<string, boolean>;
     onChange: (next: Record<string, boolean>) => void;
 }) {
     return (
         <div className="grid sm:grid-cols-2 gap-2">
-            {ROLE_PERM_LABELS.map((p) => (
+            {labels.map((p) => (
                 <label
                     key={p.key}
                     className={cn(
@@ -202,6 +237,7 @@ function DepartmentsAdminContent() {
         name: "",
         description: "",
         isLeader: false,
+        rank: 1,
         permissions: defaultPerms(),
     });
     const [memberForm, setMemberForm] = useState({
@@ -250,7 +286,7 @@ function DepartmentsAdminContent() {
     };
     const resetRoleForm = () => {
         setEditingRoleId(null);
-        setRoleForm({ name: "", description: "", isLeader: false, permissions: defaultPerms() });
+        setRoleForm({ name: "", description: "", isLeader: false, rank: 1, permissions: defaultPerms() });
     };
     const resetMemberForm = () => {
         setEditingMemberId(null);
@@ -274,6 +310,7 @@ function DepartmentsAdminContent() {
             name: r.name,
             description: r.description || "",
             isLeader: !!r.isLeader,
+            rank: typeof r.rank === "number" && r.rank >= 1 ? r.rank : r.isLeader ? 2 : 1,
             permissions: permsFromRole(r),
         });
         setTab("roles");
@@ -350,6 +387,7 @@ function DepartmentsAdminContent() {
                 name: roleForm.name,
                 description: roleForm.description,
                 isLeader: roleForm.isLeader,
+                rank: roleForm.rank,
                 permissions,
             };
             if (editingRoleId) {
@@ -737,6 +775,33 @@ function DepartmentsAdminContent() {
                                     />
                                 </div>
 
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">
+                                        Hierarchy rank
+                                    </label>
+                                    <select
+                                        value={roleForm.rank}
+                                        onChange={(e) => {
+                                            const rank = Number(e.target.value) || 1;
+                                            setRoleForm({
+                                                ...roleForm,
+                                                rank,
+                                                isLeader: rank === 2 ? true : rank === 1 ? false : roleForm.isLeader,
+                                            });
+                                        }}
+                                        className={fieldClass()}
+                                    >
+                                        {RANK_OPTIONS.map((o) => (
+                                            <option key={o.value} value={o.value}>
+                                                {o.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">
+                                        Employee (1) → Leader (2) → Manager (3). Higher ranks can get broader page access.
+                                    </p>
+                                </div>
+
                                 <label className="flex items-start gap-3 p-3.5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-2)] cursor-pointer">
                                     <input
                                         type="checkbox"
@@ -753,8 +818,22 @@ function DepartmentsAdminContent() {
                                 </label>
 
                                 <div>
-                                    <p className="text-xs font-medium text-[var(--foreground-secondary)] mb-3">Permissions</p>
+                                    <p className="text-xs font-medium text-[var(--foreground-secondary)] mb-3">
+                                        Pages this role can open
+                                    </p>
                                     <PermPicker
+                                        labels={ROLE_PAGE_LABELS}
+                                        permissions={roleForm.permissions}
+                                        onChange={(permissions) => setRoleForm({ ...roleForm, permissions })}
+                                    />
+                                </div>
+
+                                <div>
+                                    <p className="text-xs font-medium text-[var(--foreground-secondary)] mb-3">
+                                        Feature permissions
+                                    </p>
+                                    <PermPicker
+                                        labels={ROLE_FEATURE_LABELS}
                                         permissions={roleForm.permissions}
                                         onChange={(permissions) => setRoleForm({ ...roleForm, permissions })}
                                     />
@@ -785,7 +864,14 @@ function DepartmentsAdminContent() {
                                             <div>
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <span className="font-semibold text-[var(--foreground)]">{r.name}</span>
-                                                    {r.isLeader && <Badge variant="accent">Leader</Badge>}
+                                                    {rankBadgeLabel(r.rank, r.isLeader) && (
+                                                        <Badge variant="accent">
+                                                            {rankBadgeLabel(r.rank, r.isLeader)}
+                                                        </Badge>
+                                                    )}
+                                                    {r.isLeader && r.rank !== 2 && (
+                                                        <Badge variant="warning">Leader flag</Badge>
+                                                    )}
                                                     {r.isSystem && <Badge variant="muted">Default</Badge>}
                                                     {editingRoleId === r.roleId && <Badge variant="warning">Editing</Badge>}
                                                 </div>
@@ -1005,6 +1091,15 @@ function DepartmentsAdminContent() {
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-0.5 shrink-0">
+                                                    {m.primaryDepartmentId && (
+                                                        <Link
+                                                            href={`/departments/${m.primaryDepartmentId}/members/${m.userId}`}
+                                                            className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-muted)]"
+                                                            title="View employee details"
+                                                        >
+                                                            <Eye className="h-4 w-4" />
+                                                        </Link>
+                                                    )}
                                                     <button
                                                         type="button"
                                                         onClick={() => startEditMember(m)}

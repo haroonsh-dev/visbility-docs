@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { FileText, Loader2, RefreshCw, Search, Filter, X, Info, Eye, Trash2, Share2, Users, Crown, FolderOpen } from "lucide-react";
+import { FileText, Loader2, RefreshCw, Search, Filter, X, Info, Eye, Trash2, Share2, Users, Crown, FolderOpen, ChevronRight, Activity } from "lucide-react";
 import FilterSelect from "@/components/FilterSelect";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
@@ -17,8 +17,23 @@ import { getFileTypeLabel } from "@/lib/fileValidation";
 
 type Overview = {
     department: { departmentId: string; name: string; description?: string; allowedDocumentTypes?: string[] };
-    members: Array<{ userId: string; user?: { fullName?: string; email?: string } | null; role?: { name: string; isLeader: boolean } | null }>;
+    members: Array<{
+        userId: string;
+        user?: { fullName?: string; email?: string; status?: string } | null;
+        role?: { name: string; isLeader: boolean; rank?: number } | null;
+    }>;
     leaders: Array<{ user?: { fullName?: string } | null; role?: { name: string } | null }>;
+    supervision?: {
+        viewerRank: number;
+        isAdmin: boolean;
+        supervisableUserIds: string[];
+        supervisableMembers: Array<{
+            userId: string;
+            user?: { fullName?: string; email?: string; status?: string; lastLogin?: string } | null;
+            role?: { name: string; isLeader: boolean; rank?: number } | null;
+            joinedAt?: string;
+        }>;
+    };
 };
 
 type DocItem = {
@@ -184,6 +199,75 @@ function DepartmentContent() {
                 <DeptStatCard icon={FolderOpen} label="Documents" value={pagination.total} accent="teal" delay={0.12} />
                 <DeptStatCard icon={Crown} label="Leaders" value={leaderNames.length ? leaderNames.join(", ") : "None"} accent="amber" delay={0.16} />
             </div>
+
+            {!!overview.supervision?.supervisableMembers?.length && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }} className="surface-card overflow-hidden">
+                    <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
+                                <Activity size={16} className="text-white" />
+                            </div>
+                            <div>
+                                <h2 className="text-sm font-bold text-slate-800">Team oversight</h2>
+                                <p className="text-[11px] text-slate-400">
+                                    Lower-rank employees you can review — activity, uploads, and access
+                                </p>
+                            </div>
+                        </div>
+                        <span className="text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1">
+                            {overview.supervision.supervisableMembers.length} people
+                        </span>
+                    </div>
+                    <ul className="divide-y divide-slate-100">
+                        {overview.supervision.supervisableMembers.map((m) => {
+                            const name = m.user?.fullName || m.userId;
+                            const initials = name
+                                .trim()
+                                .split(/\s+/)
+                                .slice(0, 2)
+                                .map((p) => p[0]?.toUpperCase() || "")
+                                .join("") || "?";
+                            return (
+                                <li key={m.userId}>
+                                    <Link
+                                        href={`/departments/${departmentId}/members/${m.userId}`}
+                                        className="px-4 sm:px-5 py-4 flex items-center gap-3 hover:bg-slate-50/70 transition-colors"
+                                    >
+                                        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-teal-500/15 to-cyan-500/15 text-teal-700 flex items-center justify-center text-sm font-bold shrink-0 border border-teal-100">
+                                            {initials}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <p className="text-sm font-semibold text-slate-800 truncate">{name}</p>
+                                                {m.user?.status === "blocked" && (
+                                                    <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                                        Blocked
+                                                    </span>
+                                                )}
+                                                {m.role?.name && (
+                                                    <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+                                                        {m.role.name}
+                                                        {typeof m.role.rank === "number" ? ` · R${m.role.rank}` : ""}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-500 truncate mt-0.5">
+                                                {m.user?.email || "No email"}
+                                                {m.user?.lastLogin
+                                                    ? ` · Last login ${new Date(m.user.lastLogin).toLocaleString()}`
+                                                    : ""}
+                                            </p>
+                                        </div>
+                                        <span className="text-xs font-medium text-teal-700 inline-flex items-center gap-1 shrink-0">
+                                            View details <ChevronRight size={14} />
+                                        </span>
+                                    </Link>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </motion.div>
+            )}
 
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="surface-card">
                 <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Send, X, HardDrive, Link2 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { CheckCircle2, FileUp, HardDrive, Link2, Loader2, Send, X } from "lucide-react";
 import { apiRequest } from "@/lib/apiClient";
 import { useToast } from "@/components/Toast";
 
@@ -121,6 +122,20 @@ export default function SendToIntegrationModal({
         }
     }, [activeConn?.connectionId]);
 
+    useEffect(() => {
+        if (!open) return;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape" && !sending) onClose();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener("keydown", onKeyDown);
+        };
+    }, [open, sending, onClose]);
+
     const filteredLibrary = useMemo(() => {
         const q = docSearch.trim().toLowerCase();
         if (!q) return library;
@@ -221,220 +236,308 @@ export default function SendToIntegrationModal({
         }
     };
 
-    if (!open) return null;
+    if (!open || typeof document === "undefined") return null;
 
-    return (
+    const fileSummary = filename
+        ? filename
+        : fixedDocs.length
+          ? `${fixedDocs.length} selected file${fixedDocs.length === 1 ? "" : "s"}`
+          : `${selectedDocs.length} selected file${selectedDocs.length === 1 ? "" : "s"}`;
+
+    return createPortal(
         <div
-            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/55 backdrop-blur-sm p-4"
-            onClick={() => !sending && onClose()}
+            className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-3 sm:p-6"
+            onMouseDown={() => !sending && onClose()}
         >
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="send-integration-title"
-                className="w-full max-w-lg surface-card border border-[var(--border)] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
-                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-[580px] max-h-[calc(100vh-1.5rem)] sm:max-h-[88vh] overflow-hidden rounded-2xl border border-[var(--border-strong)] text-[var(--foreground)] shadow-[0_28px_90px_rgba(2,6,23,0.45)] flex flex-col"
+                style={{ backgroundColor: "var(--surface)" }}
+                onMouseDown={(event) => event.stopPropagation()}
             >
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)]">
-                    <div className="h-9 w-9 rounded-lg bg-[var(--accent-muted)] text-[var(--accent)] flex items-center justify-center shrink-0">
-                        <Send size={16} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                        <h2 id="send-integration-title" className="text-sm font-bold">
-                            Send to integration
-                        </h2>
-                        <p className="text-xs text-[var(--foreground-muted)] truncate">
-                            {filename
-                                ? `Upload file: ${filename}`
-                                : fixedDocs.length
-                                  ? `Upload ${fixedDocs.length} file(s)`
-                                  : "Choose documents and destination"}
-                        </p>
+                <header className="relative px-5 sm:px-6 py-5 border-b border-[var(--border)] bg-gradient-to-r from-[var(--accent-muted)] via-[var(--surface)] to-[var(--surface)]">
+                    <div className="flex items-start gap-3.5 pr-10">
+                        <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
+                            <Send size={18} />
+                        </div>
+                        <div className="min-w-0 pt-0.5">
+                            <h2
+                                id="send-integration-title"
+                                className="text-base font-bold text-[var(--foreground)]"
+                            >
+                                Send to integration
+                            </h2>
+                            <p className="text-xs text-[var(--foreground-secondary)] truncate mt-1">
+                                {fileSummary}
+                            </p>
+                        </div>
                     </div>
                     <button
                         type="button"
                         onClick={() => !sending && onClose()}
-                        className="btn-ghost rounded-lg p-2"
+                        disabled={sending}
+                        className="absolute right-4 top-4 h-9 w-9 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:bg-[var(--surface-2)] flex items-center justify-center transition-colors disabled:opacity-50"
                         aria-label="Close"
                     >
                         <X size={16} />
                     </button>
-                </div>
+                </header>
 
-                <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
+                <div className="px-5 sm:px-6 py-5 space-y-5 overflow-y-auto flex-1">
                     {loading ? (
-                        <div className="py-10 flex justify-center">
-                            <Loader2 className="animate-spin text-[var(--accent)]" size={22} />
+                        <div className="py-16 flex flex-col items-center gap-3">
+                            <Loader2 className="animate-spin text-[var(--accent)]" size={26} />
+                            <p className="text-sm text-[var(--foreground-secondary)]">
+                                Loading connections…
+                            </p>
                         </div>
                     ) : connections.length === 0 ? (
-                        <p className="text-sm text-[var(--foreground-muted)]">
-                            No active integrations. Connect Google Drive (or another system) under
-                            Integrations first.
-                        </p>
+                        <div className="rounded-2xl border border-amber-300/50 bg-amber-50 p-4 text-sm text-amber-900">
+                            No active integration found. Connect Google Drive or configure an
+                            outbound webhook under Integrations first.
+                        </div>
                     ) : (
                         <>
-                            <label className="block space-y-1.5">
-                                <span className="text-xs font-semibold text-[var(--foreground-muted)]">
-                                    Connection
-                                </span>
-                                <select
-                                    value={connectionId}
-                                    onChange={(e) => setConnectionId(e.target.value)}
-                                    className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm"
+                            <section className="space-y-2">
+                                <label
+                                    htmlFor="send-integration-connection"
+                                    className="block text-xs font-bold uppercase tracking-[0.08em] text-[var(--foreground-secondary)]"
                                 >
-                                    {connections.map((c) => (
-                                        <option key={c.connectionId} value={c.connectionId}>
-                                            {c.label || c.providerId}
-                                            {c.supportsFolderSend ? " · folder" : ""}
-                                            {c.hasOutboundWebhook ? " · webhook" : ""}
+                                    Connection
+                                </label>
+                                <select
+                                    id="send-integration-connection"
+                                    value={connectionId}
+                                    onChange={(event) => setConnectionId(event.target.value)}
+                                    className="premium-input w-full h-12 px-4 text-sm font-medium"
+                                >
+                                    {connections.map((connection) => (
+                                        <option
+                                            key={connection.connectionId}
+                                            value={connection.connectionId}
+                                        >
+                                            {connection.label || connection.providerId}
+                                            {connection.supportsFolderSend ? " · Drive folder" : ""}
+                                            {connection.hasOutboundWebhook ? " · Webhook" : ""}
                                         </option>
                                     ))}
                                 </select>
-                            </label>
+                            </section>
 
-                            {needsDocPicker && (
-                                <div className="space-y-2">
-                                    <span className="text-xs font-semibold text-[var(--foreground-muted)]">
-                                        Documents
-                                    </span>
+                            {needsDocPicker ? (
+                                <section className="space-y-2">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <label
+                                            htmlFor="send-integration-search"
+                                            className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--foreground-secondary)]"
+                                        >
+                                            Documents
+                                        </label>
+                                        <span className="text-xs font-semibold text-[var(--accent)]">
+                                            {selectedDocs.length} selected
+                                        </span>
+                                    </div>
                                     <input
+                                        id="send-integration-search"
                                         value={docSearch}
-                                        onChange={(e) => setDocSearch(e.target.value)}
-                                        placeholder="Search library…"
-                                        className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                                        onChange={(event) => setDocSearch(event.target.value)}
+                                        placeholder="Search your document library…"
+                                        className="premium-input w-full h-11 px-4 text-sm"
                                     />
-                                    <ul className="max-h-40 overflow-y-auto rounded-xl border border-[var(--border)] divide-y divide-[var(--border)]">
+                                    <ul className="max-h-48 overflow-y-auto rounded-xl border border-[var(--border-strong)] divide-y divide-[var(--border)] bg-[var(--surface)]">
                                         {filteredLibrary.length === 0 ? (
-                                            <li className="px-3 py-3 text-xs text-[var(--foreground-muted)]">
+                                            <li className="px-4 py-6 text-center text-sm text-[var(--foreground-muted)]">
                                                 No documents found
                                             </li>
                                         ) : (
-                                            filteredLibrary.map((d) => (
-                                                <li key={d.documentId}>
-                                                    <label className="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer hover:bg-[var(--surface-2)]">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={selectedDocs.includes(d.documentId)}
-                                                            onChange={() => toggleDoc(d.documentId)}
-                                                        />
-                                                        <span className="truncate flex-1">
-                                                            {d.originalFilename}
-                                                        </span>
-                                                    </label>
-                                                </li>
-                                            ))
+                                            filteredLibrary.map((doc) => {
+                                                const selected = selectedDocs.includes(doc.documentId);
+                                                return (
+                                                    <li key={doc.documentId}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleDoc(doc.documentId)}
+                                                            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+                                                                selected
+                                                                    ? "bg-[var(--accent-muted)]"
+                                                                    : "hover:bg-[var(--surface-2)]"
+                                                            }`}
+                                                        >
+                                                            <span
+                                                                className={`h-5 w-5 rounded-md border flex items-center justify-center shrink-0 ${
+                                                                    selected
+                                                                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                                                                        : "border-[var(--border-strong)]"
+                                                                }`}
+                                                            >
+                                                                {selected && <CheckCircle2 size={14} />}
+                                                            </span>
+                                                            <FileUp
+                                                                size={16}
+                                                                className="text-[var(--foreground-muted)] shrink-0"
+                                                            />
+                                                            <span className="truncate flex-1 text-sm font-medium">
+                                                                {doc.originalFilename}
+                                                            </span>
+                                                        </button>
+                                                    </li>
+                                                );
+                                            })
                                         )}
                                     </ul>
-                                </div>
+                                </section>
+                            ) : (
+                                <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3.5 flex items-center gap-3">
+                                    <div className="h-9 w-9 rounded-xl bg-[var(--accent-muted)] text-[var(--accent)] flex items-center justify-center shrink-0">
+                                        <FileUp size={16} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-semibold text-[var(--foreground-secondary)]">
+                                            Original file
+                                        </p>
+                                        <p className="text-sm font-medium truncate mt-0.5">
+                                            {fileSummary}
+                                        </p>
+                                    </div>
+                                </section>
                             )}
 
-                            <p className="text-[11px] text-[var(--foreground-muted)] rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-2">
-                                Sends the original file only (simple upload).
-                            </p>
-
-                            <div className="space-y-2">
-                                <span className="text-xs font-semibold text-[var(--foreground-muted)]">
-                                    Destination
-                                </span>
-                                <div className="grid gap-2">
+                            <section className="space-y-2.5">
+                                <div>
+                                    <p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--foreground-secondary)]">
+                                        Destination
+                                    </p>
+                                    <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                                        Select where the original file should be delivered.
+                                    </p>
+                                </div>
+                                <div className="grid sm:grid-cols-2 gap-3">
                                     <button
                                         type="button"
                                         disabled={!activeConn?.supportsFolderSend}
                                         onClick={() =>
-                                            activeConn?.supportsFolderSend && setDestFolder(!destFolder)
+                                            activeConn?.supportsFolderSend &&
+                                            setDestFolder((current) => !current)
                                         }
-                                        className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors disabled:opacity-45 ${
+                                        className={`relative min-h-[112px] rounded-2xl border p-4 text-left transition-all disabled:cursor-not-allowed ${
                                             destFolder && activeConn?.supportsFolderSend
-                                                ? "border-[var(--accent)] bg-[var(--accent-muted)]"
-                                                : "border-[var(--border)]"
+                                                ? "border-[var(--accent)] bg-[var(--accent-muted)] shadow-[0_0_0_3px_var(--accent-ring)]"
+                                                : activeConn?.supportsFolderSend
+                                                  ? "border-[var(--border-strong)] hover:border-[var(--accent)] bg-[var(--surface)]"
+                                                  : "border-[var(--border)] bg-[var(--surface-2)] opacity-55"
                                         }`}
                                     >
-                                        <HardDrive
-                                            size={16}
-                                            className="mt-0.5 text-[var(--accent)] shrink-0"
-                                        />
-                                        <span>
-                                            <span className="text-sm font-semibold block">
-                                                Connected Drive folder
-                                            </span>
-                                            <span className="text-[11px] text-[var(--foreground-muted)]">
-                                                {activeConn?.supportsFolderSend
-                                                    ? "Uploads into the same folder you linked for this connection"
-                                                    : "Available for Google Drive connections"}
-                                            </span>
-                                        </span>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="h-9 w-9 rounded-xl bg-[var(--surface)] border border-[var(--border)] text-[var(--accent)] flex items-center justify-center">
+                                                <HardDrive size={17} />
+                                            </div>
+                                            {destFolder && activeConn?.supportsFolderSend && (
+                                                <CheckCircle2
+                                                    size={18}
+                                                    className="text-[var(--accent)]"
+                                                />
+                                            )}
+                                        </div>
+                                        <p className="text-sm font-bold mt-3">Connected Drive folder</p>
+                                        <p className="text-[11px] leading-4 text-[var(--foreground-secondary)] mt-1">
+                                            {activeConn?.supportsFolderSend
+                                                ? "Upload to the folder linked with this connection."
+                                                : "Available with Google Drive."}
+                                        </p>
                                     </button>
+
                                     <button
                                         type="button"
                                         disabled={!activeConn?.hasOutboundWebhook}
                                         onClick={() =>
                                             activeConn?.hasOutboundWebhook &&
-                                            setDestWebhook(!destWebhook)
+                                            setDestWebhook((current) => !current)
                                         }
-                                        className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors disabled:opacity-45 ${
+                                        className={`relative min-h-[112px] rounded-2xl border p-4 text-left transition-all disabled:cursor-not-allowed ${
                                             destWebhook && activeConn?.hasOutboundWebhook
-                                                ? "border-[var(--accent)] bg-[var(--accent-muted)]"
-                                                : "border-[var(--border)]"
+                                                ? "border-[var(--accent)] bg-[var(--accent-muted)] shadow-[0_0_0_3px_var(--accent-ring)]"
+                                                : activeConn?.hasOutboundWebhook
+                                                  ? "border-[var(--border-strong)] hover:border-[var(--accent)] bg-[var(--surface)]"
+                                                  : "border-[var(--border)] bg-[var(--surface-2)] opacity-55"
                                         }`}
                                     >
-                                        <Link2
-                                            size={16}
-                                            className="mt-0.5 text-[var(--accent)] shrink-0"
-                                        />
-                                        <span>
-                                            <span className="text-sm font-semibold block">
-                                                Outbound webhook URL
-                                            </span>
-                                            <span className="text-[11px] text-[var(--foreground-muted)]">
-                                                {activeConn?.hasOutboundWebhook
-                                                    ? "POST meta + files to your webhook"
-                                                    : "Set URL in Integrations → Edit"}
-                                            </span>
-                                        </span>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="h-9 w-9 rounded-xl bg-[var(--surface)] border border-[var(--border)] text-[var(--accent)] flex items-center justify-center">
+                                                <Link2 size={17} />
+                                            </div>
+                                            {destWebhook && activeConn?.hasOutboundWebhook && (
+                                                <CheckCircle2
+                                                    size={18}
+                                                    className="text-[var(--accent)]"
+                                                />
+                                            )}
+                                        </div>
+                                        <p className="text-sm font-bold mt-3">Outbound webhook</p>
+                                        <p className="text-[11px] leading-4 text-[var(--foreground-secondary)] mt-1">
+                                            {activeConn?.hasOutboundWebhook
+                                                ? "POST the file and metadata to your URL."
+                                                : "Configure a URL in Integrations → Edit."}
+                                        </p>
                                     </button>
                                 </div>
-                                {!activeConn?.supportsFolderSend && !activeConn?.hasOutboundWebhook && (
-                                    <p className="text-[11px] text-amber-600 dark:text-amber-300">
-                                        Set Outbound webhook URL in Edit, or connect Google Drive for folder
-                                        send.
-                                    </p>
-                                )}
-                            </div>
+                            </section>
                         </>
                     )}
 
                     {error && (
-                        <div className="rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300 px-3 py-2 text-sm">
+                        <div className="rounded-xl border border-red-300/60 bg-red-50 text-red-700 px-4 py-3 text-sm font-medium">
                             {error}
                         </div>
                     )}
                     {success && (
-                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-3 py-2 text-sm">
+                        <div className="rounded-xl border border-emerald-300/60 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm font-medium flex items-center gap-2">
+                            <CheckCircle2 size={16} className="shrink-0" />
                             {success}
                         </div>
                     )}
                 </div>
 
-                <div className="flex gap-2 px-5 py-4 border-t border-[var(--border)] bg-[var(--surface-2)]/60">
+                <footer
+                    className="px-5 sm:px-6 py-4 border-t border-[var(--border)] flex flex-col-reverse sm:flex-row gap-2.5"
+                    style={{ backgroundColor: "var(--surface-2)" }}
+                >
                     <button
                         type="button"
                         onClick={onClose}
                         disabled={sending}
-                        className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] py-2.5 text-sm font-semibold"
+                        className="sm:w-36 h-11 rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:bg-[var(--surface-3)] text-sm font-semibold transition-colors disabled:opacity-50"
                     >
-                        Close
+                        Cancel
                     </button>
                     <button
                         type="button"
                         onClick={send}
-                        disabled={sending || loading || connections.length === 0}
-                        className="flex-[1.3] btn-gradient rounded-xl py-2.5 text-sm font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                        disabled={
+                            sending ||
+                            loading ||
+                            connections.length === 0 ||
+                            (!destFolder && !destWebhook) ||
+                            (needsDocPicker && selectedDocs.length === 0)
+                        }
+                        className="flex-1 h-11 btn-gradient rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-50"
                     >
-                        {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                        Send now
+                        {sending ? (
+                            <>
+                                <Loader2 size={16} className="animate-spin" />
+                                Sending…
+                            </>
+                        ) : (
+                            <>
+                                <Send size={16} />
+                                Send original file
+                            </>
+                        )}
                     </button>
-                </div>
+                </footer>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

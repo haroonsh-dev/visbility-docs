@@ -332,10 +332,14 @@ export async function saveUploadedFile(
 
     const contentHash = crypto.createHash('sha256').update(fs.readFileSync(storagePath)).digest('hex');
 
+    // Content duplicates are organization-wide, regardless of whether the
+    // first copy came from manual upload, Drive, webhook, or AI sync status.
+    const duplicateScope = user.organizationId
+        ? { organizationId: user.organizationId }
+        : { uploadedBy: user.userId };
     const existingDup = await Document.findOne({
-        uploadedBy: user.userId,
+        ...duplicateScope,
         contentHash,
-        pythonDocumentId: { $exists: true, $ne: null },
     }).lean();
 
     if (existingDup) {

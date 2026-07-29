@@ -53,10 +53,12 @@ type DriveFileRow = {
     name: string;
     mimeType: string;
     size?: number;
+    md5Checksum?: string;
     modifiedTime?: string;
     existsInLibrary: boolean;
     documentId?: string | null;
     documentStatus?: string | null;
+    duplicateMatch?: "drive_id" | "checksum" | "name_size" | "name" | null;
 };
 
 type PanelTab = "guide" | "setup" | "status";
@@ -1155,7 +1157,7 @@ function IntegrationsContent() {
                                                                         </p>
                                                                         <p className="text-[10px] text-[var(--foreground-muted)] mt-0.5">
                                                                             {f.existsInLibrary
-                                                                                ? `In library${f.documentStatus ? ` · ${f.documentStatus}` : ""}`
+                                                                                ? `Already exists${f.duplicateMatch === "checksum" ? " · exact file match" : ""}${f.documentStatus ? ` · ${f.documentStatus}` : ""}`
                                                                                 : "Not in library — select to upload"}
                                                                             {f.modifiedTime
                                                                                 ? ` · ${new Date(f.modifiedTime).toLocaleString()}`

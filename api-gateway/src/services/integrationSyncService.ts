@@ -15,11 +15,13 @@ import { ensureUploadDir, saveUploadedFile } from './documentStorage';
 import type { AuthUser } from './accessScope';
 import logger from '../utils/logger';
 import fs from 'fs';
+import crypto from 'crypto';
 
 export type LibraryFileRow = DriveRemoteFile & {
     existsInLibrary: boolean;
     documentId?: string | null;
     documentStatus?: string | null;
+    duplicateMatch?: 'drive_id' | 'checksum' | 'name_size' | 'name' | null;
 };
 
 function getDriveCreds(conn: IIntegrationConnection) {
@@ -76,16 +78,33 @@ async function resolveOrgAdmin(conn: IIntegrationConnection): Promise<AuthUser> 
     };
 }
 
-export async function listDriveFilesWithLibraryStatus(
-    conn: IIntegrationConnection
+function normalizedFilename(value: string): string {
+    return String(value || '').trim().toLowerCase();
+}
+
+function md5File(filePath: string): string | null {
+    try {
+        if (!filePath || !fs.existsSync(filePath)) return null;
+        return crypto.createHash('md5').update(fs.readFileSync(filePath)).digest('hex');
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Match remote Drive files against every document in the organization.
+ * Drive ID is preferred; otherwise use exact content checksum, then a
+ * name+size fallback for providers/files without checksum support.
+ */
+export async function matchDriveFilesToLibrary(
+    organizationId: string,
+    files: DriveRemoteFile[]
 ): Promise<LibraryFileRow[]> {
-    const creds = getDriveCreds(conn);
-    const files = await listGoogleDriveFiles(creds);
     if (!files.length) return [];
 
     const ids = files.map((f) => f.id);
     const existing = await Document.find({
-        organizationId: conn.organizationId,
+        organizationId,
         'metadata.googleDriveFileId': { $in: ids },
     })
         .select('documentId status metadata.googleDriveFileId originalFilename')
@@ -97,32 +116,93 @@ export async function listDriveFilesWithLibraryStatus(
         if (gid) byDriveId.set(gid, { documentId: d.documentId, status: d.status });
     }
 
-    // Fallback: same filename already in org library from google_drive
+    // Manual and integration uploads are both candidates. Restrict by names
+    // and remote sizes to avoid hashing the whole organization library.
     const names = files.map((f) => f.name);
+    const sizes = [
+        ...new Set(
+            files
+                .map((f) => f.size)
+                .filter((size): size is number => typeof size === 'number')
+        ),
+    ];
     const byName = await Document.find({
-        organizationId: conn.organizationId,
-        originalFilename: { $in: names },
-        'metadata.source': 'google_drive',
+        organizationId,
+        $or: [
+            { originalFilename: { $in: names } },
+            ...(sizes.length ? [{ sizeBytes: { $in: sizes } }] : []),
+        ],
     })
-        .select('documentId status originalFilename metadata.googleDriveFileId')
+        .select(
+            'documentId status originalFilename sizeBytes storagePath contentHash metadata.googleDriveFileId metadata.googleDriveMd5Checksum'
+        )
         .lean();
 
-    const nameMap = new Map<string, { documentId: string; status: string }>();
+    const nameMap = new Map<string, typeof byName>();
+    const sizeMap = new Map<number, typeof byName>();
     for (const d of byName) {
-        if (!nameMap.has(d.originalFilename)) {
-            nameMap.set(d.originalFilename, { documentId: d.documentId, status: d.status });
-        }
+        const key = normalizedFilename(d.originalFilename);
+        const rows = nameMap.get(key) || [];
+        rows.push(d);
+        nameMap.set(key, rows);
+
+        const sizeRows = sizeMap.get(Number(d.sizeBytes)) || [];
+        sizeRows.push(d);
+        sizeMap.set(Number(d.sizeBytes), sizeRows);
     }
 
     return files.map((f) => {
-        const hit = byDriveId.get(f.id) || nameMap.get(f.name);
+        const idHit = byDriveId.get(f.id);
+        if (idHit) {
+            return {
+                ...f,
+                existsInLibrary: true,
+                documentId: idHit.documentId,
+                documentStatus: idHit.status,
+                duplicateMatch: 'drive_id' as const,
+            };
+        }
+
+        const sameName = nameMap.get(normalizedFilename(f.name)) || [];
+        const sameSize = typeof f.size === 'number' ? sizeMap.get(f.size) || [] : [];
+        const candidates = f.md5Checksum
+            ? [...new Map([...sameName, ...sameSize].map((d) => [d.documentId, d])).values()]
+            : sameName;
+        let matched: (typeof candidates)[number] | undefined;
+        let duplicateMatch: LibraryFileRow['duplicateMatch'] = null;
+
+        if (f.md5Checksum) {
+            matched = candidates.find((d) => {
+                const storedMd5 = String((d.metadata as any)?.googleDriveMd5Checksum || '').toLowerCase();
+                if (storedMd5 && storedMd5 === f.md5Checksum) return true;
+                const localMd5 = md5File(String(d.storagePath || ''));
+                return !!localMd5 && localMd5 === f.md5Checksum;
+            });
+            if (matched) duplicateMatch = 'checksum';
+        } else if (typeof f.size === 'number') {
+            matched = candidates.find((d) => Number(d.sizeBytes) === f.size);
+            if (matched) duplicateMatch = 'name_size';
+        } else {
+            matched = candidates[0];
+            if (matched) duplicateMatch = 'name';
+        }
+
         return {
             ...f,
-            existsInLibrary: !!hit,
-            documentId: hit?.documentId || null,
-            documentStatus: hit?.status || null,
+            existsInLibrary: !!matched,
+            documentId: matched?.documentId || null,
+            documentStatus: matched?.status || null,
+            duplicateMatch,
         };
     });
+}
+
+export async function listDriveFilesWithLibraryStatus(
+    conn: IIntegrationConnection
+): Promise<LibraryFileRow[]> {
+    const creds = getDriveCreds(conn);
+    const files = await listGoogleDriveFiles(creds);
+    return matchDriveFilesToLibrary(conn.organizationId, files);
 }
 
 export async function importDriveFiles(
@@ -188,6 +268,7 @@ export async function importDriveFiles(
                 source: 'google_drive',
                 googleDriveFileId: file.id,
                 googleDriveMimeType: file.mimeType,
+                ...(file.md5Checksum ? { googleDriveMd5Checksum: file.md5Checksum } : {}),
                 integrationConnectionId: conn.connectionId,
                 integrationLabel: conn.label,
             };

@@ -12,6 +12,11 @@ export interface IOrgRolePermissions {
     'org.documents.view'?: boolean;
     'department.manage'?: boolean;
     'department.view'?: boolean;
+    'page.dashboard'?: boolean;
+    'page.documents'?: boolean;
+    'page.chat'?: boolean;
+    'page.activity'?: boolean;
+    'page.departments'?: boolean;
 }
 
 export interface IOrgRole extends Document {
@@ -20,6 +25,8 @@ export interface IOrgRole extends Document {
     name: string;
     description?: string;
     permissions: IOrgRolePermissions;
+    /** Hierarchy: Employee=1, Leader=2, Manager=3 (+ custom) */
+    rank: number;
     /** When true, department-scoped uploads are private to peers until shared */
     isLeader: boolean;
     isSystem: boolean;
@@ -39,6 +46,11 @@ const OrgRolePermissionsSchema = new Schema<IOrgRolePermissions>(
         'org.documents.view': { type: Boolean, default: false },
         'department.manage': { type: Boolean, default: false },
         'department.view': { type: Boolean, default: true },
+        'page.dashboard': { type: Boolean, default: true },
+        'page.documents': { type: Boolean, default: true },
+        'page.chat': { type: Boolean, default: true },
+        'page.activity': { type: Boolean, default: false },
+        'page.departments': { type: Boolean, default: false },
     },
     { _id: false }
 );
@@ -50,6 +62,7 @@ const OrgRoleSchema = new Schema<IOrgRole>(
         name: { type: String, required: true },
         description: { type: String, default: '' },
         permissions: { type: OrgRolePermissionsSchema, required: true },
+        rank: { type: Number, default: 1, min: 1, max: 99 },
         isLeader: { type: Boolean, default: false },
         isSystem: { type: Boolean, default: false },
     },

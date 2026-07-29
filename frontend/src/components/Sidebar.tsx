@@ -6,7 +6,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
     FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
-    X, Building2, ChevronDown, Settings, LayoutDashboard, User, Search,
+    X, Building2, ChevronDown, Settings, LayoutDashboard, User,
     CreditCard, Plug, Mail,
 } from "lucide-react";
 import { useTheme } from "@/context/ColorContext";
@@ -24,7 +24,16 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     const pathname = usePathname();
     const router = useRouter();
     const { theme } = useTheme();
-    const { role: permRole, canChat, canUpload, canViewDocs, hasPermission, ready } = usePermissions();
+    const {
+        role: permRole,
+        canChat,
+        canUpload,
+        canViewDocs,
+        hasPermission,
+        canAccessPage,
+        canManageDepartments,
+        ready,
+    } = usePermissions();
     // Avoid reading localStorage during SSR/first paint (hydration mismatch)
     const [user, setUser] = React.useState<StoredUser | null>(null);
     const [mounted, setMounted] = React.useState(false);
@@ -73,22 +82,61 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     }, [mounted, ready, role]);
 
     const isSuperAdmin = role === "superAdmin";
-    const canSeeDepts = role === "admin" || isSuperAdmin || hasPermission("department.view") || hasPermission("department.manage");
+    const canSeeDepts =
+        role === "admin" ||
+        isSuperAdmin ||
+        (canAccessPage("departments") &&
+            (hasPermission("department.view") || hasPermission("department.manage") || canManageDepartments()));
 
     const nav: { href: string; label: string; icon: React.ElementType; roles: string[]; allow?: () => boolean }[] = [
-        { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["superAdmin", "admin", "team", "service_account"] },
-        { href: "/documents", label: "Documents", icon: FileText, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canViewDocs() || canUpload() || role === "admin" || role === "superAdmin" },
-        // { href: "/search", label: "Search", icon: Search, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canViewDocs() || role === "admin" || role === "superAdmin" },
+        {
+            href: "/dashboard",
+            label: "Dashboard",
+            icon: LayoutDashboard,
+            roles: ["superAdmin", "admin", "team", "service_account"],
+            allow: () => role === "admin" || role === "superAdmin" || canAccessPage("dashboard"),
+        },
+        {
+            href: "/documents",
+            label: "Documents",
+            icon: FileText,
+            roles: ["superAdmin", "admin", "team", "service_account"],
+            allow: () =>
+                role === "admin" ||
+                role === "superAdmin" ||
+                (canAccessPage("documents") && (canViewDocs() || canUpload())),
+        },
         { href: "/admin/documents", label: "All Documents", icon: FolderOpen, roles: ["superAdmin"] },
-        { href: "/activity", label: "Activity", icon: Activity, roles: ["superAdmin", "admin", "team"] },
+        {
+            href: "/chat",
+            label: "AI Chat",
+            icon: MessageSquare,
+            roles: ["superAdmin", "admin", "team", "service_account"],
+            allow: () =>
+                role === "admin" ||
+                role === "superAdmin" ||
+                (canAccessPage("chat") && canChat()),
+        },
+        {
+            href: "/admin/departments",
+            label: "Departments",
+            icon: Building2,
+            roles: ["admin", "superAdmin"],
+            allow: () => role === "admin" || role === "superAdmin" || hasPermission("department.manage"),
+        },
         { href: "/admin/admins", label: "Admins", icon: Shield, roles: ["superAdmin"] },
         { href: "/admin/plans", label: "Plans", icon: CreditCard, roles: ["superAdmin"] },
         { href: "/plans", label: "Plans", icon: CreditCard, roles: ["admin"] },
-        { href: "/chat", label: "AI Chat", icon: MessageSquare, roles: ["superAdmin", "admin", "team", "service_account"], allow: () => canChat() },
-        { href: "/admin/departments", label: "Departments", icon: Building2, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" || hasPermission("department.manage") },
-        { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
         { href: "/admin/email-reports", label: "Email reports", icon: Mail, roles: ["admin"], allow: () => role === "admin" },
         { href: "/admin/integrations", label: "Integrations", icon: Plug, roles: ["admin"], allow: () => role === "admin" && hasActivePlan },
+        { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
+        {
+            href: "/activity",
+            label: "Activity",
+            icon: Activity,
+            roles: ["superAdmin", "admin", "team"],
+            allow: () => role === "admin" || role === "superAdmin" || canAccessPage("activity"),
+        },
     ];
 
     // Until client has hydrated auth, render a stable baseline nav (no permission gates)

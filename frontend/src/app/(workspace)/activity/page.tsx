@@ -25,12 +25,6 @@ const CATEGORIES = [
     { value: "team", label: "Team", accent: "amber", icon: Users },
 ];
 
-function roleSubtitle(role: string | undefined) {
-    if (role === "superAdmin") return "Your activity, all admins, and their team members";
-    if (role === "admin") return "Your activity and your team members";
-    return "Your own activity only";
-}
-
 function ActivityContent() {
     const { theme } = useTheme();
     const colors = theme.colors;
@@ -51,7 +45,7 @@ function ActivityContent() {
     const [actors, setActors] = useState<ActorOption[]>([]);
 
     const totalPages = Math.max(1, Math.ceil(total / limit));
-    const canFilterActors = role === "admin" || role === "superAdmin";
+    const canFilterActors = role === "admin" || role === "superAdmin" || actors.length > 1;
 
     const load = useCallback(async () => {
         setLoading(true); setError(null);
@@ -68,15 +62,19 @@ function ActivityContent() {
     }, [page, limit, category, actorUserId, q]);
 
     const loadActors = useCallback(async () => {
-        if (!canFilterActors) return;
         try { const data = await apiRequest("/docs/activity/actors"); setActors(data?.data?.actors || []); }
         catch { setActors([]); }
-    }, [canFilterActors]);
+    }, []);
 
     useEffect(() => { load(); }, [load]);
     useEffect(() => { loadActors(); }, [loadActors]);
     const applySearch = () => { setPage(1); setQ(searchInput.trim()); };
-    const subtitle = useMemo(() => roleSubtitle(role), [role]);
+    const subtitle = useMemo(() => {
+        if (role === "superAdmin") return "Your activity, all admins, and their team members";
+        if (role === "admin") return "Your activity and your team members";
+        if (actors.length > 1) return "Your activity and lower-rank department members you supervise";
+        return "Your own activity only";
+    }, [role, actors.length]);
     const hasFilter = category || actorUserId || q;
 
     return (

@@ -14,6 +14,11 @@ export interface IUserPermissions {
     'org.documents.view'?: boolean;
     'department.manage'?: boolean;
     'department.view'?: boolean;
+    'page.dashboard'?: boolean;
+    'page.documents'?: boolean;
+    'page.chat'?: boolean;
+    'page.activity'?: boolean;
+    'page.departments'?: boolean;
 }
 
 export interface IUser extends Document {
@@ -56,6 +61,11 @@ const PermissionsSchema = new Schema<IUserPermissions>(
         'org.documents.view': { type: Boolean, default: false },
         'department.manage': { type: Boolean, default: false },
         'department.view': { type: Boolean, default: true },
+        'page.dashboard': { type: Boolean, default: true },
+        'page.documents': { type: Boolean, default: true },
+        'page.chat': { type: Boolean, default: true },
+        'page.activity': { type: Boolean, default: false },
+        'page.departments': { type: Boolean, default: false },
     },
     { _id: false }
 );

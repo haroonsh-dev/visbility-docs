@@ -9,6 +9,7 @@ export type DriveRemoteFile = {
     name: string;
     mimeType: string;
     size?: number;
+    md5Checksum?: string;
     modifiedTime?: string;
     isGoogleDoc: boolean;
 };
@@ -391,7 +392,7 @@ export async function listGoogleDriveFiles(params: {
                 q: `'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
                 pageSize: 100,
                 pageToken,
-                fields: 'nextPageToken, files(id,name,mimeType,size,modifiedTime)',
+                fields: 'nextPageToken, files(id,name,mimeType,size,md5Checksum,modifiedTime)',
                 orderBy: 'modifiedTime desc',
                 supportsAllDrives: true,
                 includeItemsFromAllDrives: true,
@@ -404,6 +405,7 @@ export async function listGoogleDriveFiles(params: {
                     name: f.name,
                     mimeType: mime,
                     size: f.size ? Number(f.size) : undefined,
+                    md5Checksum: f.md5Checksum ? String(f.md5Checksum).toLowerCase() : undefined,
                     modifiedTime: f.modifiedTime || undefined,
                     isGoogleDoc: mime.startsWith('application/vnd.google-apps.'),
                 });

@@ -25,6 +25,7 @@ const PAGE_TITLES: Record<string, string> = {
     "/admin/documents": "All Documents",
     "/admin/settings": "AI Settings",
     "/admin/integrations": "Integrations",
+    "/admin/email-reports": "Email reports",
 };
 
 function resolvePageTitle(pathname: string | null): string {
@@ -34,6 +35,7 @@ function resolvePageTitle(pathname: string | null): string {
     if (pathname.startsWith("/search")) return "Search";
     if (pathname.startsWith("/chat")) return "AI Chat";
     if (pathname.startsWith("/activity")) return "Activity";
+    if (pathname.startsWith("/departments/") && pathname.includes("/members/")) return "Employee oversight";
     if (pathname.startsWith("/departments/")) return "Department";
     if (pathname.startsWith("/admin/departments")) return "Departments";
     if (pathname.startsWith("/admin")) return "Admin";
@@ -43,7 +45,8 @@ function resolvePageTitle(pathname: string | null): string {
 function Shell({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
-    const { ready, role } = usePermissions();
+    const { ready, role, canAccessPage, canChat, canViewDocs, canUpload, firstAllowedPath } =
+        usePermissions();
     const [navOpen, setNavOpen] = useState(false);
     const bootedRef = useRef(false);
 
@@ -78,6 +81,45 @@ function Shell({ children }: { children: React.ReactNode }) {
             }
         }
     }, [ready, role, pathname, router]);
+
+    // Team users: soft-guard pages by page.* permissions
+    useEffect(() => {
+        if (!ready || role !== "team" || !pathname) return;
+        if (pathname === "/profile" || pathname.startsWith("/profile/")) return;
+
+        const blocked =
+            (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) &&
+            !canAccessPage("dashboard")
+                ? true
+                : (pathname === "/documents" || pathname.startsWith("/documents/")) &&
+                    !(canAccessPage("documents") && (canViewDocs() || canUpload()))
+                  ? true
+                  : (pathname === "/chat" || pathname.startsWith("/chat/")) &&
+                      !(canAccessPage("chat") && canChat())
+                    ? true
+                    : (pathname === "/activity" || pathname.startsWith("/activity/")) &&
+                        !canAccessPage("activity")
+                      ? true
+                      : pathname.startsWith("/departments/") && !canAccessPage("departments")
+                        ? true
+                        : pathname.startsWith("/admin/")
+                          ? true
+                          : false;
+
+        if (blocked) {
+            router.replace(firstAllowedPath());
+        }
+    }, [
+        ready,
+        role,
+        pathname,
+        router,
+        canAccessPage,
+        canChat,
+        canViewDocs,
+        canUpload,
+        firstAllowedPath,
+    ]);
 
     useEffect(() => {
         setNavOpen(false);

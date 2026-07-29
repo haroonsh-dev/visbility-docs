@@ -8,6 +8,7 @@ import {
     buildDocumentFilter,
     canAccessDocument,
     canDeleteDocument,
+    canSuperviseUser,
     getLeaderDeletableUploaderIds,
     loadUserDeptContext,
     hasPermission,
@@ -150,6 +151,7 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
                 ? scopeRaw
                 : undefined;
         const classification = ((req.query.classification as string) || (req.query.documentType as string) || '').trim() || undefined;
+        const uploadedBy = ((req.query.uploadedBy as string) || '').trim() || undefined;
 
         const extra: Record<string, unknown> = {};
         if (status) extra.status = status;
@@ -171,9 +173,19 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
             extra['metadata.cvScore'] = { $exists: true, $ne: null };
         }
 
+        if (uploadedBy) {
+            if (uploadedBy !== req.user.userId) {
+                const check = await canSuperviseUser(req.user, uploadedBy, departmentId ? { departmentId } : undefined);
+                if (!check.allowed) {
+                    return res.status(403).json({ success: false, message: check.reason || 'Forbidden' });
+                }
+            }
+            extra.uploadedBy = uploadedBy;
+        }
+
         // If querying by departmentId, expand results for admins and leaders to include documents
         // uploaded by any member of the department (so admins/leaders see member uploads).
-        if (departmentId) {
+        if (departmentId && !uploadedBy) {
             try {
                 const members = await DepartmentMember.find({ departmentId }).select('userId').lean();
                 const memberIds = members.map((m) => m.userId).filter(Boolean);
@@ -196,12 +208,54 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
             }
         }
 
-        const baseFilter = await buildDocumentFilter(req.user, extra, {
-            organizationId,
-            departmentId,
-            scope,
-            classification,
-        });
+        let baseFilter: Record<string, unknown>;
+        if (uploadedBy) {
+            // Supervisor/admin oversight: list that user's uploads (already authorized above).
+            const { uploadedBy: _ub, $or: searchOr, ...restExtra } = extra as {
+                uploadedBy?: string;
+                $or?: unknown;
+                [k: string]: unknown;
+            };
+            baseFilter = {
+                ...restExtra,
+                uploadedBy,
+            };
+            const andParts: Record<string, unknown>[] = [];
+            if (searchOr) andParts.push({ $or: searchOr as any });
+
+            if (req.user.role === 'admin' && req.user.organizationId) {
+                baseFilter.organizationId = req.user.organizationId;
+            } else if (req.user.role === 'team') {
+                const ctx = await loadUserDeptContext(req.user);
+                if (ctx.departmentId) {
+                    andParts.push({
+                        $or: [
+                            { departmentId: ctx.departmentId },
+                            { departmentId: null },
+                            { departmentId: { $exists: false } },
+                        ],
+                    });
+                }
+            } else if (organizationId && req.user.role === 'superAdmin') {
+                baseFilter.organizationId = organizationId;
+            }
+            if (classification) baseFilter.classification = classification;
+            if (scope === 'personal' || scope === 'department') {
+                baseFilter.visibilityScope = scope;
+            }
+            if (andParts.length === 1) {
+                Object.assign(baseFilter, andParts[0]);
+            } else if (andParts.length > 1) {
+                baseFilter.$and = andParts;
+            }
+        } else {
+            baseFilter = await buildDocumentFilter(req.user, extra, {
+                organizationId,
+                departmentId,
+                scope,
+                classification,
+            });
+        }
         let filter = baseFilter;
 
         if (duplicatesOnly) {
