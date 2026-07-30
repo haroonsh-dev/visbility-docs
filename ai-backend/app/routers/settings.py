@@ -72,6 +72,13 @@ async def remove_provider(provider: str):
     }
 
 
+class PrimaryProviderBody(BaseModel):
+    provider: str
+    apiKey: Optional[str] = ""
+    model: Optional[str] = ""
+    baseUrl: Optional[str] = ""
+
+
 @router.get("/providers/primary")
 async def get_primary():
     """Get the primary (currently active) provider."""
@@ -85,4 +92,38 @@ async def get_primary():
             "model": primary.model,
             "base_url": primary.base_url,
         },
+    }
+
+
+@router.post("/providers/primary")
+async def set_primary_provider(body: PrimaryProviderBody):
+    """Set the primary (active) AI provider."""
+    valid_providers = ["groq", "openai", "gemini", "anthropic", "custom"]
+    if body.provider not in valid_providers:
+        raise HTTPException(status_code=400, detail=f"Invalid provider. Must be one of: {valid_providers}")
+
+    if body.apiKey:
+        provider_manager.set_provider(
+            provider=body.provider,
+            api_key=body.apiKey,
+            model=body.model or "",
+            base_url=body.baseUrl or "",
+        )
+    else:
+        provider_manager._primary_provider = body.provider
+        provider_manager._save_state()
+
+    try:
+        from ..services.conversation_service import conversation_service
+        conversation_service.reconfigure(preferred_provider=body.provider)
+        if body.provider == "groq" and body.apiKey:
+            from ..services.groq_service import groq_service
+            groq_service.reconfigure(body.apiKey)
+    except Exception as e:
+        print(f"[SETTINGS] Warning setting primary provider {body.provider}: {e}")
+
+    return {
+        "success": True,
+        "message": f"Primary active provider set to {body.provider}",
+        "data": provider_manager.get_config_summary(),
     }

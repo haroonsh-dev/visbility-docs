@@ -21,15 +21,23 @@ class GroqService:
         self.client = None
         self.model = "llama-3.3-70b-versatile"
         self.vision_models = [
-            "llama-3.2-11b-vision-preview",
+            "qwen/qwen3.6-27b",
         ]
         self._vision_model_idx = 0
         self.available = False
         self.vision_available = True
+        self._current_key = ""
         # Only use key configured via AI Settings (provider_manager)
         groq_config = provider_manager.get_provider("groq")
         key = groq_config.api_key if groq_config else ""
         self._configure(key)
+
+    def _sync_with_provider_manager(self):
+        """Ensure groq_service is using the latest runtime key configured in AI Settings."""
+        groq_cfg = provider_manager.get_provider("groq")
+        key = (groq_cfg.api_key if groq_cfg else "").strip()
+        if key and key != getattr(self, "_current_key", ""):
+            self._configure(key)
 
     def _configure(self, api_key: str):
         key = (api_key or "").strip()
@@ -46,10 +54,13 @@ class GroqService:
         if invalid:
             self.client = None
             self.available = False
+            self._current_key = ""
             return
 
         self.client = Groq(api_key=key, timeout=httpx.Timeout(120.0))
         self.available = True
+        self.vision_available = True
+        self._current_key = key
         settings.GROQ_API_KEY = key
 
     def reconfigure(self, api_key: str) -> bool:
@@ -95,21 +106,30 @@ class GroqService:
                 response = client.chat.completions.create(
                     model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
                 )
-                return response.choices[0].message.content
+                return _strip_think_tags(response.choices[0].message.content or "")
+            elif fallback.provider == "gemini":
+                base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+                client = OpenAI(api_key=fallback.api_key, base_url=base_url, timeout=120)
+                model = fallback.model or "gemini-2.0-flash"
+                response = client.chat.completions.create(
+                    model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
+                )
+                return _strip_think_tags(response.choices[0].message.content or "")
             else:
-                # OpenAI-compatible providers (openai, gemini, custom)
+                # OpenAI-compatible providers (openai, custom)
                 base_url = fallback.base_url or "https://api.openai.com/v1"
                 client = OpenAI(api_key=fallback.api_key, base_url=base_url, timeout=120)
                 model = fallback.model or "gpt-4o"
                 response = client.chat.completions.create(
                     model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
                 )
-                return response.choices[0].message.content
+                return _strip_think_tags(response.choices[0].message.content or "")
         except Exception as e:
             # Try next fallback
             return self._try_fallback(messages, temperature, max_tokens, fallback.provider)
 
     def chat(self, messages: list[dict], temperature: float = 0.1, max_tokens: int = 4096, model: str = None) -> str:
+        self._sync_with_provider_manager()
         self._raise_if_locked()
         if not self.available:
             # Try fallback providers
@@ -125,7 +145,8 @@ class GroqService:
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return response.choices[0].message.content
+            raw = response.choices[0].message.content or ""
+            return _strip_think_tags(raw)
         except RateLimitError as e:
             # Try fallback before raising
             fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
@@ -141,6 +162,7 @@ class GroqService:
             raise
 
     def chat_vision(self, messages: list[dict], temperature: float = 0.1, max_tokens: int = 4096) -> str:
+        self._sync_with_provider_manager()
         self._raise_if_locked()
         if not self.available or not self.vision_available:
             fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
@@ -159,7 +181,8 @@ class GroqService:
                     max_tokens=max_tokens,
                 )
                 self._vision_model_idx = i
-                return response.choices[0].message.content
+                raw = response.choices[0].message.content or ""
+                return _strip_think_tags(raw)
             except RateLimitError as e:
                 fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
                 if fallback_result:
@@ -209,6 +232,28 @@ class GroqService:
             return default
         except (json.JSONDecodeError, Exception):
             return default
+
+
+def _strip_think_tags(text: str) -> str:
+    if not text:
+        return ""
+    # Remove all <think>...</think> blocks
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    if "</think>" in cleaned:
+        cleaned = cleaned.split("</think>")[-1]
+
+    cleaned = cleaned.strip()
+    # Strip untagged reasoning monologue before actual Markdown table or heading
+    first_table = cleaned.find("|")
+    first_header = cleaned.find("#")
+    
+    starts = [pos for pos in (first_table, first_header) if pos != -1]
+    if starts:
+        min_start = min(starts)
+        if min_start > 0:
+            cleaned = cleaned[min_start:]
+
+    return cleaned.strip()
 
 
 groq_service = GroqService()

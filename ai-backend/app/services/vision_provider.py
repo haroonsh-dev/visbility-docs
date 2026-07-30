@@ -8,41 +8,14 @@ from typing import Optional
 
 logger = logging.getLogger("visibility-docs")
 
-VISION_IMAGE_PROMPT = """You are analyzing a single image extracted from a document page.
+VISION_IMAGE_PROMPT = """You are a precision OCR engine and document data extractor.
 
-Extract the following if present:
-- Every visible word, number, label, callout
-- Figure title / caption
-- Component names, part numbers, serial numbers
-- Dimensions, units, symbols
-- Warnings, notes, annotations
-- Table text if present
-
-If this is a machine diagram, engineering drawing, or technical illustration:
-- Provide a concise factual description of what the image represents
-- List every visible component label
-- Do NOT hallucinate or guess
-
-Output format:
-## Figure Title
-[figure title or caption if found, otherwise "Untitled Figure"]
-
-## OCR
-[every visible word and number]
-
-## Components
-[comma-separated list of detected component names and labels]
-
-## Description
-[concise factual description — only if diagram/engineering]
-
-## Labels
-[comma-separated list of all labels, callouts, annotations]
-
-## Warnings
-[any warning, caution, note text found]
-
-Return ONLY clean Markdown. No explanations, no summaries, no questions."""
+Instructions:
+1. Extract ALL visible text, numbers, tables, headings, and labels from this image with 100% fidelity.
+2. Format any tabular data strictly as Markdown tables (| Header | Header |).
+3. If diagrams, drawings, or figures are present, extract all visible component names, labels, and callouts.
+4. Output ONLY clean Markdown data — NEVER include conversational text, intros, outros, or explanations.
+5. Do NOT hallucinate or guess missing information."""
 
 
 def _decode_b64_to_bytes(b64_str: str) -> bytes:
@@ -65,7 +38,7 @@ def _is_blank_b64(b64_str: str, threshold: float = 10.0) -> bool:
 
 
 class VisionProvider:
-    SUPPORTED_PROVIDERS = {"openai", "groq", "ollama"}
+    SUPPORTED_PROVIDERS = {"groq", "gemini", "openai", "anthropic", "ollama"}
 
     def __init__(self):
         from ..config import settings
@@ -74,49 +47,43 @@ class VisionProvider:
         self.model = os.getenv("VISION_MODEL") or ""
         self.api_base = os.getenv("VISION_API_BASE") or ""
 
-        self._check_api_key()
-        self._set_defaults()
-
-    def _check_api_key(self):
-        placeholders = {"your-api-key-here", "gsk_your_groq_key_here", "gsk_your_groq_api_key"}
-        if not self.api_key or self.api_key in placeholders or self.api_key.startswith("gsk_your_"):
-            logger.warning(f"VisionProvider: invalid API key for provider '{self.provider}'")
-            self.api_key = ""
-
-    def _set_defaults(self):
-        if self.provider == "groq":
-            if not self.model:
-                self.model = "meta-llama/llama-4-scout-17b-16e-instruct"
-            if not self.api_base:
-                self.api_base = "https://api.groq.com/openai/v1"
-        elif self.provider == "openai":
-            if not self.model:
-                self.model = "gpt-4o"
-            if not self.api_base:
-                self.api_base = "https://api.openai.com/v1"
-        elif self.provider == "ollama":
-            if not self.model:
-                self.model = "llama3.2-vision"
-            if not self.api_base:
-                self.api_base = "http://localhost:11434"
-
     def analyze(self, b64_image: str) -> dict:
         if not b64_image:
             return {"markdown": "", "error": "no image data"}
         if _is_blank_b64(b64_image):
             return {"markdown": "", "error": "blank image"}
 
-        if self.provider == "groq":
-            markdown = self._call_groq(b64_image)
-        elif self.provider == "openai":
-            markdown = self._call_openai(b64_image)
-        elif self.provider == "ollama":
-            markdown = self._call_ollama(b64_image)
-        else:
-            return {"markdown": "", "error": f"unsupported provider '{self.provider}', use one of: {', '.join(self.SUPPORTED_PROVIDERS)}"}
+        from .provider_manager import provider_manager
+        active_providers = provider_manager.get_active_providers()
 
-        if not markdown or markdown.startswith("[Groq"):
-            return {"markdown": "", "error": "API call failed"}
+        markdown = ""
+        if not active_providers:
+            # Fall back to env provider
+            active_providers = [provider_manager.get_provider(self.provider)] if provider_manager.get_provider(self.provider) else []
+
+        for cfg in active_providers:
+            if not cfg:
+                continue
+            p_name = cfg.provider.lower()
+            key = cfg.api_key
+            model = cfg.model
+
+            if p_name == "groq":
+                markdown = self._call_groq(b64_image)
+            elif p_name == "gemini":
+                markdown = self._call_gemini(b64_image, api_key=key, model=model)
+            elif p_name == "openai":
+                markdown = self._call_openai(b64_image, api_key=key, model=model)
+            elif p_name == "anthropic":
+                markdown = self._call_anthropic(b64_image, api_key=key, model=model)
+            elif p_name == "ollama":
+                markdown = self._call_ollama(b64_image)
+
+            if markdown and not markdown.startswith("[") and not markdown.startswith("⚠️"):
+                break
+
+        if not markdown or markdown.startswith("["):
+            return {"markdown": "", "error": "Vision API call failed or no active key configured"}
 
         parsed = self._parse_markdown(markdown)
         parsed["markdown"] = markdown
@@ -131,7 +98,7 @@ class VisionProvider:
             {"type": "text", "text": VISION_IMAGE_PROMPT},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}},
         ]
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 result = groq_service.chat_vision(
@@ -153,13 +120,65 @@ class VisionProvider:
                     continue
                 logger.error(f"Groq vision call failed: {e}")
                 return ""
-        logger.warning(f"Groq vision failed after {max_retries} retries (rate limited)")
         return ""
 
-    def _call_openai(self, b64_image: str) -> str:
-        if not self.api_key:
+    def _call_gemini(self, b64_image: str, api_key: str = "", model: str = "") -> str:
+        key = api_key or os.getenv("GEMINI_API_KEY") or ""
+        if not key:
+            from .provider_manager import provider_manager
+            cfg = provider_manager.get_provider("gemini")
+            key = cfg.api_key if cfg else ""
+        if not key:
+            logger.warning("Gemini API key not configured")
+            return ""
+
+        use_model = model or "gemini-2.0-flash"
+        import httpx
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{use_model}:generateContent?key={key}"
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": VISION_IMAGE_PROMPT},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/jpeg",
+                                "data": b64_image,
+                            }
+                        },
+                    ]
+                }
+            ],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 2048},
+        }
+        headers = {"Content-Type": "application/json"}
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=120)
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates and "content" in candidates[0]:
+                parts = candidates[0]["content"].get("parts", [])
+                if parts:
+                    return parts[0].get("text", "")
+            return ""
+        except Exception as e:
+            logger.error(f"Gemini vision call failed: {e}")
+            return ""
+
+    def _call_openai(self, b64_image: str, api_key: str = "", model: str = "") -> str:
+        key = api_key or self.api_key or os.getenv("OPENAI_API_KEY") or ""
+        if not key:
+            from .provider_manager import provider_manager
+            cfg = provider_manager.get_provider("openai")
+            key = cfg.api_key if cfg else ""
+        if not key:
             logger.warning("OpenAI API key not configured")
             return ""
+
+        use_model = model or self.model or "gpt-4o"
+        api_base = self.api_base or "https://api.openai.com/v1"
+
         import httpx
         content = [
             {"type": "text", "text": VISION_IMAGE_PROMPT},
@@ -172,16 +191,16 @@ class VisionProvider:
             },
         ]
         payload = {
-            "model": self.model,
+            "model": use_model,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": 2048,
             "temperature": 0.0,
         }
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
-        chat_url = f"{self.api_base.rstrip('/')}/chat/completions"
+        chat_url = f"{api_base.rstrip('/')}/chat/completions"
         try:
             resp = httpx.post(chat_url, json=payload, headers=headers, timeout=120)
             resp.raise_for_status()
@@ -194,10 +213,60 @@ class VisionProvider:
                 logger.error(f"OpenAI vision call failed: {e}")
             return ""
 
+    def _call_anthropic(self, b64_image: str, api_key: str = "", model: str = "") -> str:
+        key = api_key or os.getenv("ANTHROPIC_API_KEY") or ""
+        if not key:
+            from .provider_manager import provider_manager
+            cfg = provider_manager.get_provider("anthropic")
+            key = cfg.api_key if cfg else ""
+        if not key:
+            logger.warning("Anthropic API key not configured")
+            return ""
+
+        use_model = model or "claude-3-5-sonnet-20241022"
+        import httpx
+        url = "https://api.anthropic.com/v1/messages"
+        payload = {
+            "model": use_model,
+            "max_tokens": 2048,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64_image,
+                            },
+                        },
+                        {"type": "text", "text": VISION_IMAGE_PROMPT},
+                    ],
+                }
+            ],
+        }
+        headers = {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=120)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data.get("content", [])
+            if content and content[0].get("type") == "text":
+                return content[0].get("text", "")
+            return ""
+        except Exception as e:
+            logger.error(f"Anthropic vision call failed: {e}")
+            return ""
+
     def _call_ollama(self, b64_image: str) -> str:
         import httpx
         payload = {
-            "model": self.model,
+            "model": self.model or "llama3.2-vision",
             "messages": [
                 {
                     "role": "user",
@@ -209,7 +278,7 @@ class VisionProvider:
         }
         try:
             resp = httpx.post(
-                f"{self.api_base.rstrip('/')}/api/chat",
+                f"{(self.api_base or 'http://localhost:11434').rstrip('/')}/api/chat",
                 json=payload,
                 timeout=120,
             )

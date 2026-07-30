@@ -37,6 +37,23 @@ class ProviderConfig:
         }
 
 
+def _is_valid_key(provider: str, api_key: str) -> bool:
+    key = (api_key or "").strip()
+    if not key or len(key) < 8:
+        return False
+    placeholders = {"gsk_your_groq_api_key", "gsk_your_groq_key_here", "your-api-key-here"}
+    if key in placeholders or key.startswith("gsk_your_"):
+        return False
+    p = (provider or "").lower().strip()
+    if p == "groq" and not key.startswith("gsk_"):
+        return False
+    if p == "gemini" and not (key.startswith("AIza") or (len(key) >= 30 and not key.startswith("AQ."))):
+        return False
+    if p == "openai" and (key.startswith("gsk_") or key.startswith("AIza") or key.startswith("sk-ant-")):
+        return False
+    return True
+
+
 class ProviderManager:
     """
     Manages AI provider configurations with fallback support.
@@ -60,7 +77,7 @@ class ProviderManager:
                     data = json.load(f)
                 self._primary_provider = data.get("primary")
                 for p in data.get("providers", []):
-                    if p.get("api_key"):
+                    if _is_valid_key(p.get("provider", ""), p.get("api_key", "")):
                         self._providers[p["provider"]] = ProviderConfig(**p)
                 logger.info(f"Loaded {len(self._providers)} providers from state file (primary={self._primary_provider})")
         except Exception as e:
@@ -81,6 +98,9 @@ class ProviderManager:
 
     def set_provider(self, provider: str, api_key: str, model: str = "", base_url: str = ""):
         """Add or update a provider configuration."""
+        if not _is_valid_key(provider, api_key):
+            logger.warning(f"Rejecting invalid API key for provider '{provider}'")
+            return
         self._providers[provider] = ProviderConfig(
             provider=provider, api_key=api_key, model=model, base_url=base_url
         )
@@ -112,7 +132,7 @@ class ProviderManager:
         """Get all configured providers in priority order, placing preferred_provider or primary provider first."""
         result = []
         for p in self.PROVIDER_PRIORITY:
-            if p in self._providers and self._providers[p].api_key:
+            if p in self._providers and _is_valid_key(p, self._providers[p].api_key):
                 result.append(self._providers[p])
 
         target_pref = (preferred_provider or getattr(self, "_primary_provider", None) or "").lower().strip()

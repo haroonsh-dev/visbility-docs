@@ -227,6 +227,59 @@ export const getProviderConfig = async (req: Request, res: Response, next: NextF
     }
 };
 
+/** Set the primary active provider */
+export const setPrimaryProvider = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.DEPARTMENT_MANAGE) && req.user.role !== 'superAdmin') {
+            return res.status(403).json({ success: false, message: 'Only admins can manage API keys' });
+        }
+
+        const orgId = requireOrg(req);
+        const { provider } = req.body || {};
+        if (!provider || !Object.keys(PROVIDER_DEFAULTS).includes(provider)) {
+            return res.status(400).json({ success: false, message: 'Invalid provider' });
+        }
+
+        const targetKey = await ApiKey.findOne({ organizationId: orgId || undefined, provider });
+        if (!targetKey || !targetKey.apiKey) {
+            return res.status(400).json({ success: false, message: `No API key configured for provider ${provider}` });
+        }
+
+        // Set targetKey as primary in MongoDB
+        await ApiKey.updateMany({ organizationId: orgId || undefined }, { isActive: true });
+        
+        // Sync primary choice to AI backend
+        try {
+            const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8001';
+            await fetch(`${aiUrl}/api/v1/settings/providers/primary`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    provider,
+                    apiKey: targetKey.apiKey,
+                    model: targetKey.aiModel,
+                    baseUrl: targetKey.baseUrl,
+                }),
+            });
+        } catch {
+            // Best effort
+        }
+
+        recordActivityFromReq(req, {
+            action: 'settings.api_key.set_primary',
+            category: 'admin',
+            resourceType: 'api_key',
+            resourceId: targetKey.keyId,
+            message: `Set ${provider} as primary AI provider`,
+            metadata: { provider },
+        });
+
+        res.json({ success: true, message: `Primary provider set to ${provider}` });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // ── Helpers ──────────────────────────────────────────────
 
 function maskKey(key: string): string {

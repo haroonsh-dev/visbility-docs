@@ -194,6 +194,30 @@ function SettingsContent() {
         setShowKeys((prev) => ({ ...prev, [keyId]: !prev[keyId] }));
     };
 
+    const [settingPrimary, setSettingPrimary] = useState(false);
+
+    // Filter ONLY providers that have a configured key
+    const configuredKeys = keys.filter((k) => k.hasKey);
+
+    const handleSetPrimary = async (providerToSet: Provider) => {
+        if (!providerToSet) return;
+        setSettingPrimary(true);
+        setError(null);
+        setSaveSuccess(null);
+        try {
+            await apiRequest("/docs/settings/api-keys/primary", {
+                method: "POST",
+                body: JSON.stringify({ provider: providerToSet }),
+            });
+            setSaveSuccess(`Active AI Provider set to ${providerToSet.toUpperCase()}`);
+            await loadKeys();
+        } catch (e: any) {
+            setError(e.message || "Failed to set active provider");
+        } finally {
+            setSettingPrimary(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex justify-center py-20">
@@ -206,7 +230,7 @@ function SettingsContent() {
         <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
             <PageHeader
                 title="AI Provider Settings"
-                subtitle="Manage API keys for AI providers. Keys are used for document processing, chat, and search."
+                subtitle="Manage API keys for AI providers. Keys are used for document processing, vision models, chat, and search."
             />
 
             {error && (
@@ -221,6 +245,41 @@ function SettingsContent() {
                     {saveSuccess}
                 </div>
             )}
+
+            {/* Active Provider Selector Card */}
+            <div className="surface-card border border-[var(--border)] rounded-2xl p-5 space-y-3 bg-gradient-to-r from-[var(--surface-2)]/60 to-[var(--surface-1)]">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <Brain size={18} className="text-amber-400" />
+                            <h3 className="text-sm font-bold text-[var(--foreground)]">Active AI & Vision Provider</h3>
+                        </div>
+                        <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                            Select which uploaded API key to use for Vision, OCR, and AI processing. Only configured keys are shown below.
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 min-w-[240px]">
+                        <select
+                            value={keys.find((k) => k.isActive)?.provider || ""}
+                            onChange={(e) => handleSetPrimary(e.target.value as Provider)}
+                            disabled={settingPrimary || configuredKeys.length === 0}
+                            className="w-full premium-input rounded-xl px-4 py-2.5 text-sm font-medium border border-[var(--border)] bg-[var(--surface-1)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] cursor-pointer"
+                        >
+                            {configuredKeys.length === 0 ? (
+                                <option value="">No Configured API Keys Found</option>
+                            ) : (
+                                configuredKeys.map((k) => (
+                                    <option key={k.provider} value={k.provider}>
+                                        {k.label || k.provider.toUpperCase()} ({k.provider})
+                                    </option>
+                                ))
+                            )}
+                        </select>
+                        {settingPrimary && <Loader2 size={16} className="animate-spin text-[var(--accent)] shrink-0" />}
+                    </div>
+                </div>
+            </div>
 
             {/* Provider Cards */}
             <div className="grid gap-4">

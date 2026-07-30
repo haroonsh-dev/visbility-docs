@@ -1,67 +1,77 @@
 import os
 import re
-import base64
 import io
-import tempfile
+import base64
 import logging
 from enum import Enum
-import fitz
+from typing import Optional, List
 from PIL import Image
+import fitz  # PyMuPDF
+
+try:
+    from .image_preprocessing import preprocessing_service
+except ImportError:
+    try:
+        from app.services.image_preprocessing import preprocessing_service
+    except ImportError:
+        preprocessing_service = type("MockPreprocessing", (), {
+            "deskew": lambda self, img: img,
+            "enhance_contrast": lambda self, img: img,
+        })()
+
+logger = logging.getLogger(__name__)
+
 try:
     import pytesseract
+    TESSERACT_AVAILABLE = True
 except ImportError:
-    pass
-from .preprocessing_service import preprocessing_service
-from ..config import settings
-
-logger = logging.getLogger("visibility-docs")
+    TESSERACT_AVAILABLE = False
 
 
 class FileType(str, Enum):
     DIGITAL_PDF = "digital_pdf"
     SCANNED_PDF = "scanned_pdf"
+    IMAGE = "image"
     DOCX = "docx"
     XLSX = "xlsx"
     PPTX = "pptx"
     TXT = "txt"
-    IMAGE = "image"
-
-
-ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
+    UNKNOWN = "unknown"
 
 
 def _is_image_ext(ext: str) -> bool:
-    return ext.lower() in ALLOWED_IMAGE_EXT
+    return ext.lower() in {".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp", ".gif"}
 
 
 def detect_file_type(file_path: str) -> FileType:
     ext = os.path.splitext(file_path)[1].lower()
-
-    if ext == ".docx":
-        return FileType.DOCX
-    if ext == ".xlsx":
-        return FileType.XLSX
-    if ext == ".pptx":
-        return FileType.PPTX
-    if ext == ".txt":
-        return FileType.TXT
-    if _is_image_ext(ext):
-        return FileType.IMAGE
     if ext == ".pdf":
         try:
             doc = fitz.open(file_path)
-            page_count = doc.page_count
-            text_len = 0
+            total_pages = len(doc)
+            text_pages = 0
             for page in doc:
-                text_len += len(page.get_text().strip())
+                text = page.get_text().strip()
+                if len(text) > 30:
+                    text_pages += 1
             doc.close()
-            avg_chars = text_len / max(page_count, 1)
-            if avg_chars > 50:
+            if text_pages > 0 and (text_pages / max(total_pages, 1)) > 0.3:
                 return FileType.DIGITAL_PDF
             return FileType.SCANNED_PDF
         except Exception as e:
-            logger.warning(f"PDF detection failed for {file_path}: {e}")
+            logger.warning(f"Failed to inspect PDF {file_path}: {e}")
             return FileType.SCANNED_PDF
+
+    if _is_image_ext(ext):
+        return FileType.IMAGE
+    if ext == ".docx":
+        return FileType.DOCX
+    if ext in {".xlsx", ".xls"}:
+        return FileType.XLSX
+    if ext in {".pptx", ".ppt"}:
+        return FileType.PPTX
+    if ext in {".txt", ".csv", ".json", ".xml", ".html", ".md"}:
+        return FileType.TXT
 
     logger.warning(f"Unknown file type for {file_path}, treating as scanned")
     return FileType.SCANNED_PDF
@@ -99,64 +109,65 @@ def _extract_digital_pdf(file_path: str) -> str:
 
 
 def _extract_docx(file_path: str) -> str:
-    from docx import Document
-    doc = Document(file_path)
+    import docx
+    doc = docx.Document(file_path)
     parts = []
-    for para in doc.paragraphs:
-        style = para.style.name.lower() if para.style else ""
-        text = para.text.strip()
-        if not text:
-            parts.append("")
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        if not t:
             continue
-        if "heading" in style or "title" in style:
-            try:
-                level = int(re.search(r"heading\s*(\d+)", style).group(1))
-                parts.append(f"{'#' * level} {text}")
-            except Exception:
-                parts.append(f"## {text}")
-        elif any(r.bold for r in para.runs if r.bold):
-            parts.append(f"**{text}**")
+        style_name = (p.style.name or "").lower()
+        if "heading 1" in style_name:
+            parts.append(f"# {t}")
+        elif "heading 2" in style_name:
+            parts.append(f"## {t}")
+        elif "heading 3" in style_name:
+            parts.append(f"### {t}")
         else:
-            parts.append(text)
+            parts.append(t)
 
-    tables = []
     for table in doc.tables:
-        md_rows = []
-        for row_idx, row in enumerate(table.rows):
+        rows_data = []
+        for row in table.rows:
             cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-            md_rows.append("| " + " | ".join(cells) + " |")
-            if row_idx == 0:
-                md_rows.append("| " + " | ".join("---" for _ in cells) + " |")
-        tables.append("\n".join(md_rows))
+            rows_data.append(cells)
+        if rows_data:
+            ncols = max(len(r) for r in rows_data)
+            sep = "| " + " | ".join(["---"] * ncols) + " |"
+            parts.append("| " + " | ".join(rows_data[0]) + " |")
+            parts.append(sep)
+            for cells in rows_data[1:]:
+                parts.append("| " + " | ".join(cells) + " |")
+            parts.append("")
 
-    result = "\n".join(parts)
-    if tables:
-        result += "\n\n" + "\n\n".join(tables)
-    result = _normalize_markdown(result)
-    return result
+    result = "\n\n".join(parts)
+    return _normalize_markdown(result)
 
 
 def _extract_txt(file_path: str) -> str:
-    for enc in ("utf-8", "utf-16", "latin-1"):
+    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    for enc in encodings:
         try:
             with open(file_path, "r", encoding=enc) as f:
                 return f.read()
-        except (UnicodeError, Exception):
+        except UnicodeDecodeError:
             continue
-    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-        return f.read()
+    with open(file_path, "rb") as f:
+        return f.read().decode("utf-8", errors="replace")
 
 
 def _extract_xlsx(file_path: str) -> str:
     import openpyxl
-    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    wb = openpyxl.load_workbook(file_path, data_only=True)
     parts = []
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         parts.append(f"## Sheet: {sheet_name}")
         rows_data = []
         for row in ws.iter_rows(values_only=True):
-            cells = [str(c) if c is not None else "" for c in row]
+            if not any(row):
+                continue
+            cells = [str(c).strip() if c is not None else "" for c in row]
             rows_data.append(cells)
         if rows_data:
             ncols = max(len(r) for r in rows_data)
@@ -234,142 +245,177 @@ def _load_image_b64(file_path: str) -> tuple[str, Image.Image]:
     return base64.b64encode(buf.getvalue()).decode("utf-8"), img
 
 
-VISION_PROMPT = """You are an OCR engine. Extract ALL visible text from this document page image.
+VISION_PROMPT = """You are a precision OCR engine and document data extractor.
 
-Rules:
-- Extract every character, word, number exactly as it appears
-- Preserve layout: headings, paragraphs, bullet lists, numbered lists, tables
-- Output tables as Markdown tables
-- If the image contains a diagram, engineering drawing, chart, or figure, extract all visible labels and annotations
-- Prefix each page with '--- Page X ---'
-- Output ONLY clean Markdown — no explanations, no summaries, no commentary
-- NEVER convert tables into paragraphs — always use Markdown table syntax
-- Preserve figure labels, captions, warnings, notes, cautions as they appear"""
+Instructions:
+1. Extract ALL visible text, numbers, tables, headings, and labels from this image with 100% fidelity.
+2. Format ANY tabular data (including continuation tables or table rows without a top header) strictly as Markdown tables (| Col 1 | Col 2 | ... |). Extract EVERY SINGLE row (e.g., items 11, 12, 13), product description, SKU, quantity, rate, and amount.
+3. If diagrams, drawings, or figures are present, extract all visible component names, labels, and callouts.
+4. Output ONLY clean Markdown data starting directly with the content — NEVER include conversational text, intros, outros, reasoning, or <think> tags.
+5. Do NOT skip any rows or missing information."""
+
+
+def _strip_think_tags(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    if "</think>" in cleaned:
+        cleaned = cleaned.split("</think>")[-1]
+
+    cleaned = cleaned.strip()
+    first_table = cleaned.find("|")
+    first_header = cleaned.find("#")
+    
+    starts = [pos for pos in (first_table, first_header) if pos != -1]
+    if starts:
+        min_start = min(starts)
+        if min_start > 0:
+            cleaned = cleaned[min_start:]
+
+    return cleaned.strip()
 
 
 def _vision_ocr(image_b64s: list[str]) -> str:
     from .groq_service import groq_service
     from .vision_provider import vision_provider
 
-    texts = []
-    batch_size = 5
-    for i in range(0, len(image_b64s), batch_size):
-        batch = image_b64s[i:i + batch_size]
-        content = [{"type": "text", "text": VISION_PROMPT}]
-        for b64 in batch:
-            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-        
-        batch_text = ""
-        # Attempt 1: Groq Vision
+    page_texts = []
+    for idx, b64 in enumerate(image_b64s, 1):
+        content = [
+            {"type": "text", "text": VISION_PROMPT},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+        ]
+        page_text = ""
+        # Attempt 1: Active Groq Vision
         if groq_service.available and groq_service.vision_available:
             try:
                 result = groq_service.chat_vision(
                     [{"role": "user", "content": content}],
                     temperature=0.0,
-                    max_tokens=8192,
+                    max_tokens=4096,
                 )
                 if result and not result.startswith("[Groq") and not result.startswith("⚠️"):
-                    batch_text = result
+                    page_text = result
             except Exception as e:
-                logger.warning(f"Groq vision batch failed: {e}")
+                logger.warning(f"Groq vision page {idx} failed: {e}")
 
-        # Attempt 2: Multi-provider Vision Fallback
-        if not batch_text.strip():
-            for b64 in batch:
-                res = vision_provider.analyze(b64)
-                ocr_out = res.get("ocr_text", "") or res.get("markdown", "")
-                if ocr_out and not ocr_out.startswith("["):
-                    batch_text += "\n" + ocr_out
+        # Attempt 2: Multi-provider Vision Fallback (Gemini, OpenAI, Anthropic)
+        if not page_text.strip():
+            res = vision_provider.analyze(b64)
+            ocr_out = res.get("ocr_text", "") or res.get("markdown", "")
+            if ocr_out and not ocr_out.startswith("["):
+                page_text = ocr_out
 
-        texts.append(batch_text.strip())
+        if page_text.strip():
+            page_text = _strip_think_tags(page_text)
+            page_texts.append(f"<!-- Page {idx} -->\n{page_text.strip()}")
 
-    return "\n\n".join(t for t in texts if t)
+    return "\n\n".join(page_texts)
 
 
 def _tesseract_ocr(images: list[Image.Image]) -> str:
+    if not TESSERACT_AVAILABLE:
+        logger.warning("Tesseract not installed, skipping fallback OCR")
+        return ""
     try:
         import pytesseract
         texts = []
-        for i, img in enumerate(images, 1):
+        for img in images:
             text = pytesseract.image_to_string(img)
-            texts.append(f"--- Page {i} ---\n{text}")
+            if text.strip():
+                texts.append(text.strip())
         return "\n\n".join(texts)
     except Exception as e:
-        logger.warning(f"Tesseract OCR failed: {e}")
+        logger.error(f"Tesseract OCR failed: {e}")
         return ""
 
 
 def process_scanned_pdf(file_path: str) -> str:
-    doc = fitz.open(file_path)
-    b64s = []
     images = []
-    for page in doc:
-        b64, img = _page_to_image(page)
-        b64s.append(b64)
-        images.append(img)
-    doc.close()
+    b64s = []
+    try:
+        doc = fitz.open(file_path)
+        for page in doc:
+            b64, img = _page_to_image(page)
+            b64s.append(b64)
+            images.append(img)
+        doc.close()
+    except Exception as e:
+        logger.error(f"Failed to load PDF pages for OCR: {e}")
 
-    if not b64s:
-        return ""
+    # 1. Attempt Vision OCR (Groq -> Gemini -> OpenAI -> Anthropic)
+    if b64s:
+        try:
+            v_text = _vision_ocr(b64s)
+            if v_text.strip() and not v_text.startswith("["):
+                return _normalize_markdown(v_text)
+        except Exception as e:
+            logger.warning(f"Vision OCR failed with exception: {e}, shifting to local OCR fallback")
 
-    text = _vision_ocr(b64s)
-    if text.strip():
-        text = _normalize_markdown(text)
-        return text
+    # 2. Fallback: Local Tesseract OCR
+    if images:
+        try:
+            tess_text = _tesseract_ocr(images)
+            if tess_text.strip():
+                logger.info("Successfully extracted text via local Tesseract OCR fallback")
+                return _normalize_markdown(tess_text)
+        except Exception as e:
+            logger.warning(f"Tesseract OCR fallback failed: {e}")
 
-    logger.warning("Vision returned empty for scanned PDF, falling back to Tesseract OCR")
-    tess_text = _tesseract_ocr(images)
-    if tess_text.strip():
-        return _normalize_markdown(tess_text)
-
-    logger.warning("Tesseract returned empty, trying PyMuPDF fallback")
+    # 3. Fallback: PyMuPDF Direct Text Extraction
     try:
         doc = fitz.open(file_path)
         parts = []
-        for page in doc:
+        for page_num, page in enumerate(doc, 1):
             t = page.get_text().strip()
             if t:
-                parts.append(t)
+                parts.append(f"<!-- Page {page_num} -->\n{t}")
         doc.close()
         fallback = "\n\n".join(parts)
-        return _normalize_markdown(fallback) if fallback else "[OCR failed]"
-    except Exception:
-        return "[OCR failed]"
+        if fallback.strip():
+            logger.info("Successfully extracted text via PyMuPDF fallback")
+            return _normalize_markdown(fallback)
+    except Exception as e:
+        logger.error(f"PyMuPDF fallback failed: {e}")
+
+    return "[OCR failed: All Vision and Local OCR methods failed]"
 
 
 def process_image(file_path: str) -> str:
-    b64, img = _load_image_b64(file_path)
-    text = _vision_ocr([b64])
-    if text.strip():
-        return _normalize_markdown(text)
-        
-    logger.warning("Vision returned empty for image, falling back to Tesseract OCR")
-    tess_text = _tesseract_ocr([img])
-    if tess_text.strip():
-        return _normalize_markdown(tess_text)
-        
-    return "[OCR failed]"
+    b64, img = None, None
+    try:
+        b64, img = _load_image_b64(file_path)
+    except Exception as e:
+        logger.error(f"Failed to load image for OCR: {e}")
+
+    # 1. Attempt Vision OCR
+    if b64:
+        try:
+            v_text = _vision_ocr([b64])
+            if v_text.strip() and not v_text.startswith("["):
+                return _normalize_markdown(v_text)
+        except Exception as e:
+            logger.warning(f"Vision OCR failed for image: {e}, shifting to local OCR fallback")
+
+    # 2. Fallback: Local Tesseract OCR
+    if img:
+        try:
+            tess_text = _tesseract_ocr([img])
+            if tess_text.strip():
+                return _normalize_markdown(tess_text)
+        except Exception as e:
+            logger.warning(f"Tesseract OCR failed for image: {e}")
+
+    return "[OCR failed: All Vision and Local OCR methods failed]"
 
 
 def _normalize_markdown(text: str) -> str:
-    text = re.sub(r'\r\n', '\n', text)
-    text = re.sub(r'\n{4,}', '\n\n\n', text)
-    text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n{3,}', '\n\n', text)
     lines = text.split('\n')
     result = []
     for line in lines:
-        stripped = line.strip()
-        if re.match(r'^#{1,6}\s', stripped):
-            result.append(stripped)
-        elif re.match(r'^[-*]\s', stripped):
-            result.append(stripped)
-        elif re.match(r'^\d+[.)]\s', stripped):
-            result.append(stripped)
-        elif re.match(r'^\|', stripped):
-            result.append(stripped)
-        elif re.match(r'^>\s', stripped):
-            result.append(stripped)
-        elif re.match(r'^```', stripped):
+        if line.startswith('#'):
+            stripped = re.sub(r'^(#+)\s*', r'\1 ', line)
             result.append(stripped)
         else:
             result.append(line)
@@ -382,14 +428,26 @@ def process_document(file_path: str) -> dict:
 
     text = ""
     page_count = 0
+    source = "vision"
 
     if file_type == FileType.DIGITAL_PDF:
         text = _extract_digital_pdf(file_path)
-        if text:
+        # If digital PDF text is sparse, minimal, or contains images, combine with Vision OCR!
+        if not text.strip() or len(text.strip()) < 200 or "[IMAGE]" in text:
+            vision_text = process_scanned_pdf(file_path)
+            if vision_text and vision_text != "[OCR failed]" and len(vision_text) > len(text):
+                text = vision_text
+                source = "vision"
+            else:
+                source = "digital_pdf"
+        else:
+            source = "digital_pdf"
+        try:
             doc = fitz.open(file_path)
             page_count = doc.page_count
             doc.close()
-        source = "digital_pdf"
+        except Exception:
+            page_count = 1
 
     elif file_type == FileType.DOCX:
         text = _extract_docx(file_path)

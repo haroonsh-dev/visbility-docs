@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
     FileText, Upload, Trash2, RefreshCw, Eye, Search, FolderUp, Copy, X, Loader2, Info, Filter, Share2,
-    CheckCircle, Clock, AlertTriangle, List, FolderTree,
+    CheckCircle, Clock, AlertTriangle, List, FolderTree, Brain,
 } from "lucide-react";
 import FilterSelect from "@/components/FilterSelect";
 import ClassifyAgentPopup from "@/components/ClassifyAgentPopup";
@@ -164,7 +164,43 @@ function DocumentsContent() {
     const [members, setMembers] = useState<Array<{ userId: string; name?: string; email?: string }>>([]);
     const [mounted, setMounted] = useState(false);
 
-    useEffect(() => { setMounted(true); }, []);
+    // Active AI Provider state for Documents page
+    const [configuredProviders, setConfiguredProviders] = useState<Array<{ provider: string; label: string; isActive: boolean; hasKey: boolean }>>([]);
+    const [activeProvider, setActiveProvider] = useState<string>("");
+    const [switchingProvider, setSwitchingProvider] = useState(false);
+
+    const loadProviderKeys = useCallback(async () => {
+        try {
+            const res = await apiRequest("/docs/settings/api-keys");
+            const keysList = res?.data?.keys || [];
+            const active = keysList.filter((k: any) => k.hasKey);
+            setConfiguredProviders(active);
+            const currentActive = keysList.find((k: any) => k.isActive)?.provider || active[0]?.provider || "";
+            setActiveProvider(currentActive);
+        } catch {
+            /* ignore */
+        }
+    }, []);
+
+    useEffect(() => { setMounted(true); loadProviderKeys(); }, [loadProviderKeys]);
+
+    const handleSwitchProvider = async (newProvider: string) => {
+        if (!newProvider) return;
+        setSwitchingProvider(true);
+        try {
+            await apiRequest("/docs/settings/api-keys/primary", {
+                method: "POST",
+                body: JSON.stringify({ provider: newProvider }),
+            });
+            setActiveProvider(newProvider);
+            setToast(`Active AI Provider switched to ${newProvider.toUpperCase()}`);
+            await loadProviderKeys();
+        } catch (e: any) {
+            setError(e.message || "Failed to switch provider");
+        } finally {
+            setSwitchingProvider(false);
+        }
+    };
 
     const activeSort = SORT_PRESETS.find((s) => s.value === sortPreset) || SORT_PRESETS[0];
     const applySearch = () => { setQ(searchInput); setPage(1); };
@@ -556,7 +592,27 @@ function DocumentsContent() {
                                 <p className="text-[11px] text-slate-400">{pagination.total} document{pagination.total !== 1 ? "s" : ""}</p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {/* Small Active AI Provider Selector */}
+                            {configuredProviders.length > 0 && (
+                                <div className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 px-2.5 py-1.5 shadow-sm">
+                                    <Brain size={13} className="text-amber-500 shrink-0" />
+                                    <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">AI Model:</span>
+                                    <select
+                                        value={activeProvider}
+                                        onChange={(e) => handleSwitchProvider(e.target.value)}
+                                        disabled={switchingProvider}
+                                        className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer pr-1"
+                                    >
+                                        {configuredProviders.map((p) => (
+                                            <option key={p.provider} value={p.provider}>
+                                                {p.label || p.provider.toUpperCase()}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {switchingProvider && <Loader2 size={12} className="animate-spin text-teal-600 shrink-0" />}
+                                </div>
+                            )}
                             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
                                 <button
                                     type="button"
