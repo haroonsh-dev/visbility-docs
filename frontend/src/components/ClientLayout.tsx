@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
@@ -42,23 +42,37 @@ function resolvePageTitle(pathname: string | null): string {
     return "Docs AI";
 }
 
+function matchesPath(pathname: string, base: string) {
+    return pathname === base || pathname.startsWith(`${base}/`);
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
-    const { ready, role, canAccessPage, canChat, canViewDocs, canUpload, firstAllowedPath } =
-        usePermissions();
+    const {
+        ready,
+        role,
+        canAccessPage,
+        firstAllowedPath,
+    } = usePermissions();
     const [navOpen, setNavOpen] = useState(false);
     const bootedRef = useRef(false);
 
     const closeNav = useCallback(() => setNavOpen(false), []);
 
-    useEffect(() => {
+    const ensureAuthed = useCallback(() => {
         const token = getAuthValue("accessToken") || getAuthValue("token");
         if (!token || (!hasValidAccessToken() && !canRefreshSession())) {
             clearAuthState();
             router.replace("/login");
+            return false;
         }
+        return true;
     }, [router]);
+
+    useEffect(() => {
+        ensureAuthed();
+    }, [ensureAuthed, ready, pathname]);
 
     useEffect(() => {
         if (ready && role === "superAdmin" && pathname) {
@@ -82,44 +96,28 @@ function Shell({ children }: { children: React.ReactNode }) {
         }
     }, [ready, role, pathname, router]);
 
-    // Team users: soft-guard pages by page.* permissions
+    const teamRouteBlocked = useMemo(() => {
+        if (!ready || role !== "team" || !pathname) return false;
+        if (matchesPath(pathname, "/profile")) return false;
+
+        if (matchesPath(pathname, "/dashboard")) return !canAccessPage("dashboard");
+        if (matchesPath(pathname, "/documents")) return !canAccessPage("documents");
+        if (matchesPath(pathname, "/chat")) return !canAccessPage("chat");
+        if (matchesPath(pathname, "/activity")) return !canAccessPage("activity");
+        if (matchesPath(pathname, "/departments")) return !canAccessPage("departments");
+        if (matchesPath(pathname, "/plans")) return !canAccessPage("plans");
+        if (matchesPath(pathname, "/admin/email-reports")) return !canAccessPage("email_reports");
+        if (matchesPath(pathname, "/admin/integrations")) return !canAccessPage("integrations");
+        if (matchesPath(pathname, "/admin/settings")) return !canAccessPage("settings");
+        if (matchesPath(pathname, "/admin")) return true;
+        if (matchesPath(pathname, "/team") || matchesPath(pathname, "/search")) return true;
+        return false;
+    }, [ready, role, pathname, canAccessPage]);
+
     useEffect(() => {
-        if (!ready || role !== "team" || !pathname) return;
-        if (pathname === "/profile" || pathname.startsWith("/profile/")) return;
-
-        const blocked =
-            (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) &&
-            !canAccessPage("dashboard")
-                ? true
-                : (pathname === "/documents" || pathname.startsWith("/documents/")) &&
-                    !(canAccessPage("documents") && (canViewDocs() || canUpload()))
-                  ? true
-                  : (pathname === "/chat" || pathname.startsWith("/chat/")) &&
-                      !(canAccessPage("chat") && canChat())
-                    ? true
-                    : (pathname === "/activity" || pathname.startsWith("/activity/")) &&
-                        !canAccessPage("activity")
-                      ? true
-                      : pathname.startsWith("/departments/") && !canAccessPage("departments")
-                        ? true
-                        : pathname.startsWith("/admin/")
-                          ? true
-                          : false;
-
-        if (blocked) {
-            router.replace(firstAllowedPath());
-        }
-    }, [
-        ready,
-        role,
-        pathname,
-        router,
-        canAccessPage,
-        canChat,
-        canViewDocs,
-        canUpload,
-        firstAllowedPath,
-    ]);
+        if (!teamRouteBlocked) return;
+        router.replace(firstAllowedPath());
+    }, [teamRouteBlocked, router, firstAllowedPath]);
 
     useEffect(() => {
         setNavOpen(false);
@@ -159,7 +157,15 @@ function Shell({ children }: { children: React.ReactNode }) {
                         </p>
                     </div>
                 </header>
-                <main className="flex-1 min-h-0 min-w-0 overflow-y-auto app-main">{children}</main>
+                <main className="flex-1 min-h-0 min-w-0 overflow-y-auto app-main">
+                    {teamRouteBlocked ? (
+                        <div className="min-h-[40vh] flex items-center justify-center text-sm text-[var(--foreground-muted)]">
+                            Redirecting…
+                        </div>
+                    ) : (
+                        children
+                    )}
+                </main>
             </div>
         </div>
     );

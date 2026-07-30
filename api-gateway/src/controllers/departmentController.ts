@@ -11,7 +11,7 @@ import { hasPermission, loadUserDeptContext, canAccessDocument, canSuperviseUser
 import { KNOWN_DOCUMENT_TYPES, normalizeDocumentType } from '../services/documentStorage';
 import { recordActivityFromReq } from '../services/activityLog';
 import { ensureDefaultOrgRoles } from '../services/orgRoleSeed';
-import { buildFlatPermissionsDocument, normalizeTeamPermissions, permissionsToPlain } from '../utils/permissionsUtil';
+import { permissionsToPlain, applyOrgRolePermissions, resetToDefaultTeamPermissions } from '../utils/permissionsUtil';
 import ActivityLog from '../models/ActivityLog';
 
 function orgRoleForResponse(role: any) {
@@ -47,11 +47,10 @@ function canManageDepartments(req: Request): boolean {
 }
 
 function canViewDepartments(req: Request): boolean {
+    if (req.user.role === 'admin' || req.user.role === 'superAdmin') return true;
     return (
-        canManageDepartments(req) ||
-        hasPermission(req.user, PERMISSIONS.DEPARTMENT_VIEW) ||
-        req.user.role === 'admin' ||
-        req.user.role === 'superAdmin'
+        hasPermission(req.user, PERMISSIONS.PAGE_DEPARTMENTS) &&
+        hasPermission(req.user, PERMISSIONS.DEPARTMENT_VIEW)
     );
 }
 
@@ -192,10 +191,16 @@ export const deleteDepartment = async (req: Request, res: Response, next: NextFu
         }
 
         await DepartmentMember.deleteMany({ departmentId: dept.departmentId });
-        await User.updateMany(
-            { primaryDepartmentId: dept.departmentId },
-            { $set: { primaryDepartmentId: null, orgRoleId: null } }
-        );
+        const affectedUsers = await User.find({
+            primaryDepartmentId: dept.departmentId,
+            role: 'team',
+        });
+        for (const user of affectedUsers) {
+            user.primaryDepartmentId = null;
+            user.orgRoleId = null;
+            user.permissions = resetToDefaultTeamPermissions() as any;
+            await user.save();
+        }
         await Document.updateMany(
             { departmentId: dept.departmentId },
             { $set: { departmentId: null, visibilityScope: 'personal', uploaderIsLeader: false } }
@@ -373,14 +378,7 @@ export const addDepartmentMember = async (req: Request, res: Response, next: Nex
         user.orgRoleId = orgRoleId;
         // Merge role permissions onto user (keep account-level admin overrides)
         if (user.role === 'team') {
-            const perms = permissionsToPlain(user.permissions);
-            const rolePerms = permissionsToPlain(role.permissions);
-            for (const key of ORG_ROLE_EDITABLE_PERMISSIONS) {
-                if (typeof rolePerms[key] === 'boolean') {
-                    perms[key] = rolePerms[key];
-                }
-            }
-            user.permissions = buildFlatPermissionsDocument(normalizeTeamPermissions(perms)) as any;
+            user.permissions = applyOrgRolePermissions(user.permissions, role.permissions) as any;
         }
         await user.save();
 
@@ -409,10 +407,15 @@ export const removeDepartmentMember = async (req: Request, res: Response, next: 
         if (!dept) return res.status(404).json({ success: false, message: 'Department not found' });
 
         await DepartmentMember.deleteOne({ departmentId: dept.departmentId, userId });
-        await User.updateOne(
-            { userId, primaryDepartmentId: dept.departmentId },
-            { $set: { primaryDepartmentId: null, orgRoleId: null } }
-        );
+        const user = await User.findOne({ userId, primaryDepartmentId: dept.departmentId });
+        if (user) {
+            user.primaryDepartmentId = null;
+            user.orgRoleId = null;
+            if (user.role === 'team') {
+                user.permissions = resetToDefaultTeamPermissions() as any;
+            }
+            await user.save();
+        }
 
         recordActivityFromReq(req, {
             action: 'department.member.remove',
@@ -729,6 +732,8 @@ export const createOrgRole = async (req: Request, res: Response, next: NextFunct
             perms[key] = permissions?.[key] === true;
         }
         perms[PERMISSIONS.DOCUMENT_PREVIEW] = perms[PERMISSIONS.DOCUMENT_VIEW] === true;
+        perms[PERMISSIONS.DEPARTMENT_VIEW] = perms[PERMISSIONS.PAGE_DEPARTMENTS] === true;
+        perms[PERMISSIONS.DEPARTMENT_MANAGE] = false;
 
         const role = await OrgRole.create({
             roleId,
@@ -772,6 +777,8 @@ export const updateOrgRole = async (req: Request, res: Response, next: NextFunct
                 if (typeof permissions[key] === 'boolean') perms[key] = permissions[key];
             }
             perms[PERMISSIONS.DOCUMENT_PREVIEW] = perms[PERMISSIONS.DOCUMENT_VIEW] === true;
+            perms[PERMISSIONS.DEPARTMENT_VIEW] = perms[PERMISSIONS.PAGE_DEPARTMENTS] === true;
+            perms[PERMISSIONS.DEPARTMENT_MANAGE] = false;
             role.permissions = perms;
         }
         await role.save();
@@ -779,17 +786,10 @@ export const updateOrgRole = async (req: Request, res: Response, next: NextFunct
         // Sync role permissions onto assigned team users
         if (permissions && typeof permissions === 'object') {
             const members = await DepartmentMember.find({ orgRoleId: role.roleId }).lean();
-            const rolePerms = permissionsToPlain(role.permissions);
             for (const m of members) {
                 const user = await User.findOne({ userId: m.userId, role: 'team' });
                 if (!user) continue;
-                const perms = permissionsToPlain(user.permissions);
-                for (const key of ORG_ROLE_EDITABLE_PERMISSIONS) {
-                    if (typeof rolePerms[key] === 'boolean') {
-                        perms[key] = rolePerms[key];
-                    }
-                }
-                user.permissions = buildFlatPermissionsDocument(normalizeTeamPermissions(perms)) as any;
+                user.permissions = applyOrgRolePermissions(user.permissions, role.permissions) as any;
                 await user.save();
             }
         }

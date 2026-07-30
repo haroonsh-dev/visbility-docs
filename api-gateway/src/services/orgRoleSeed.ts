@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import OrgRole from '../models/OrgRole';
+import DepartmentMember from '../models/DepartmentMember';
+import User from '../models/User';
 import {
     ALL_PERMISSIONS,
     DEFAULT_EMPLOYEE_PERMISSIONS,
@@ -8,7 +10,7 @@ import {
     PERMISSIONS,
     PermissionKey,
 } from '../types/permissions';
-import { permissionsToPlain } from '../utils/permissionsUtil';
+import { applyOrgRolePermissions, permissionsToPlain } from '../utils/permissionsUtil';
 
 const DEFAULTS = [
     {
@@ -53,6 +55,16 @@ function fillMissingPermissionKeys(
     return { perms, changed };
 }
 
+async function syncRolePermissionsToAssignedUsers(roleId: string, rolePermissions: unknown) {
+    const members = await DepartmentMember.find({ orgRoleId: roleId }).lean();
+    for (const m of members) {
+        const user = await User.findOne({ userId: m.userId, role: 'team' });
+        if (!user) continue;
+        user.permissions = applyOrgRolePermissions(user.permissions, rolePermissions) as any;
+        await user.save();
+    }
+}
+
 /** Idempotent seed + upgrade of Leader / Employee / Manager for an organization. */
 export async function ensureDefaultOrgRoles(organizationId: string): Promise<void> {
     if (!organizationId) return;
@@ -90,6 +102,7 @@ export async function ensureDefaultOrgRoles(organizationId: string): Promise<voi
                 existing.description = def.description;
             }
             await existing.save();
+            await syncRolePermissionsToAssignedUsers(existing.roleId, existing.permissions);
         }
     }
 }

@@ -1,4 +1,5 @@
 import { getAuthValue } from "./authSession";
+import { firstAllowedPath } from "./permissions";
 
 export function enrichUserFromToken(user: any, token: string | null) {
     if (!user) return user;
@@ -18,13 +19,14 @@ export function enrichUserFromToken(user: any, token: string | null) {
 }
 
 export function getRedirectPath(_accountType?: string, role?: string) {
-    if (role === "superAdmin") return "/admin/documents";
-    return "/documents";
+    if (role === "superAdmin" || role === "admin") return "/dashboard";
+    return firstAllowedPath(undefined, role);
 }
 
 export async function resolvePostLoginPath(user: any) {
-    if (user?.role === "superAdmin") return "/admin/documents";
-    return "/documents";
+    if (!user) return "/dashboard";
+    if (user.role === "superAdmin" || user.role === "admin") return "/dashboard";
+    return firstAllowedPath(user.permissions || {}, user.role || "team");
 }
 
 export function isAuthenticated() {

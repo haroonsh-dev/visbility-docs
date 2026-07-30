@@ -26,18 +26,12 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     const { theme } = useTheme();
     const {
         role: permRole,
-        canChat,
-        canUpload,
-        canViewDocs,
-        hasPermission,
         canAccessPage,
-        canManageDepartments,
         ready,
     } = usePermissions();
     // Avoid reading localStorage during SSR/first paint (hydration mismatch)
     const [user, setUser] = React.useState<StoredUser | null>(null);
     const [mounted, setMounted] = React.useState(false);
-    const [hasActivePlan, setHasActivePlan] = React.useState(false);
 
     React.useEffect(() => {
         setMounted(true);
@@ -61,32 +55,11 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         return () => { cancelled = true; };
     }, [role, mounted, ready]);
 
-    useEffect(() => {
-        if (!mounted || !ready || role !== "admin") {
-            setHasActivePlan(false);
-            return;
-        }
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await apiRequest("/docs/plans/subscription");
-                const sub = res?.data?.entitlement?.subscription;
-                const active =
-                    !!sub && String(sub.status || "active").toLowerCase() === "active";
-                if (!cancelled) setHasActivePlan(active);
-            } catch {
-                if (!cancelled) setHasActivePlan(false);
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [mounted, ready, role]);
-
     const isSuperAdmin = role === "superAdmin";
     const canSeeDepts =
         role === "admin" ||
         isSuperAdmin ||
-        (canAccessPage("departments") &&
-            (hasPermission("department.view") || hasPermission("department.manage") || canManageDepartments()));
+        canAccessPage("departments");
 
     const nav: { href: string; label: string; icon: React.ElementType; roles: string[]; allow?: () => boolean }[] = [
         {
@@ -97,14 +70,21 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("dashboard"),
         },
         {
+            href: departments[0] ? `/departments/${departments[0].departmentId}` : "/documents",
+            label: "Department",
+            icon: Building2,
+            roles: ["team"],
+            allow: () =>
+                !canAccessPage("documents") &&
+                canAccessPage("departments") &&
+                departments.length > 0,
+        },
+        {
             href: "/documents",
             label: "Documents",
             icon: FileText,
             roles: ["superAdmin", "admin", "team", "service_account"],
-            allow: () =>
-                role === "admin" ||
-                role === "superAdmin" ||
-                (canAccessPage("documents") && (canViewDocs() || canUpload())),
+            allow: () => role === "admin" || role === "superAdmin" || canAccessPage("documents"),
         },
         { href: "/admin/documents", label: "All Documents", icon: FolderOpen, roles: ["superAdmin"] },
         {
@@ -112,24 +92,20 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             label: "AI Chat",
             icon: MessageSquare,
             roles: ["superAdmin", "admin", "team", "service_account"],
-            allow: () =>
-                role === "admin" ||
-                role === "superAdmin" ||
-                (canAccessPage("chat") && canChat()),
+            allow: () => role === "admin" || role === "superAdmin" || canAccessPage("chat"),
         },
         {
             href: "/admin/departments",
             label: "Departments",
             icon: Building2,
             roles: ["admin", "superAdmin"],
-            allow: () => role === "admin" || role === "superAdmin" || hasPermission("department.manage"),
         },
         { href: "/admin/admins", label: "Admins", icon: Shield, roles: ["superAdmin"] },
         { href: "/admin/plans", label: "Plans", icon: CreditCard, roles: ["superAdmin"] },
-        { href: "/plans", label: "Plans", icon: CreditCard, roles: ["admin"] },
-        { href: "/admin/email-reports", label: "Email reports", icon: Mail, roles: ["admin"], allow: () => role === "admin" },
-        { href: "/admin/integrations", label: "Integrations", icon: Plug, roles: ["admin"], allow: () => role === "admin" && hasActivePlan },
-        { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin"], allow: () => role === "admin" || role === "superAdmin" },
+        { href: "/plans", label: "Plans", icon: CreditCard, roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("plans") },
+        { href: "/admin/email-reports", label: "Email reports", icon: Mail, roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("email_reports") },
+        { href: "/admin/integrations", label: "Integrations", icon: Plug, roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("integrations") },
+        { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("settings") },
         {
             href: "/activity",
             label: "Activity",

@@ -66,7 +66,7 @@ const DEFAULT_SECTIONS: Sections = {
 function EmailReportsContent() {
     const { theme } = useTheme();
     const colors = theme.colors;
-    const { role, ready } = usePermissions();
+    const { ready, canAccessPage } = usePermissions();
     const { showToast } = useToast();
 
     const [loading, setLoading] = useState(true);
@@ -100,9 +100,9 @@ function EmailReportsContent() {
     }, [showToast]);
 
     useEffect(() => {
-        if (!ready || role !== "admin") return;
+        if (!ready || !canAccessPage("email_reports")) return;
         load();
-    }, [ready, role, load]);
+    }, [ready, canAccessPage, load]);
 
     const patch = <K extends keyof Config>(key: K, value: Config[K]) => {
         setConfig((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -182,14 +182,14 @@ function EmailReportsContent() {
         );
     }
 
-    if (role !== "admin") {
+    if (!canAccessPage("email_reports")) {
         return (
             <div className="p-6 max-w-lg mx-auto">
                 <div className="surface-card p-6 text-center space-y-2">
                     <AlertTriangle className="mx-auto text-amber-400" size={28} />
                     <p className={`text-lg font-semibold ${colors.textPrimary}`}>Admin only</p>
                     <p className={`text-sm ${colors.textMuted}`}>
-                        Only organization admins can configure scheduled email reports.
+                        Your assigned role does not include access to email reports.
                     </p>
                 </div>
             </div>

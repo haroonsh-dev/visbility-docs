@@ -58,17 +58,18 @@ const ROLE_PAGE_LABELS: { key: string; label: string; hint: string }[] = [
     { key: "page.chat", label: "AI Chat", hint: "Chat page (also needs Chat permission)" },
     { key: "page.activity", label: "Activity", hint: "Activity log page" },
     { key: "page.departments", label: "Department pages", hint: "Department overview under Documents" },
+    { key: "page.plans", label: "Plans", hint: "Subscription and plans page" },
+    { key: "page.email_reports", label: "Email reports", hint: "Scheduled email report settings" },
+    { key: "page.integrations", label: "Integrations", hint: "Third-party integrations page" },
+    { key: "page.settings", label: "AI Settings", hint: "AI configuration and settings page" },
 ];
 
 const ROLE_FEATURE_LABELS: { key: string; label: string; hint: string }[] = [
     { key: "document.upload", label: "Upload documents", hint: "Add files to the library" },
     { key: "document.view", label: "View documents", hint: "Browse and open files" },
-    { key: "document.preview", label: "Preview documents", hint: "Open file previews" },
     { key: "document.delete", label: "Delete documents", hint: "Remove files" },
     { key: "document.share", label: "Share documents", hint: "Allow others to see private leader files" },
     { key: "chat.use", label: "Use AI Chat", hint: "Ask questions about documents" },
-    { key: "department.view", label: "View department", hint: "See department info when page is allowed" },
-    { key: "department.manage", label: "Manage department", hint: "Add/edit members and department settings" },
     { key: "org.documents.view", label: "View all org documents", hint: "See every document in the organization" },
 ];
 
@@ -115,9 +116,12 @@ function defaultPerms(): Record<string, boolean> {
     const off = new Set([
         "document.share",
         "org.documents.view",
-        "department.manage",
         "page.activity",
         "page.departments",
+        "page.plans",
+        "page.email_reports",
+        "page.integrations",
+        "page.settings",
     ]);
     return Object.fromEntries(ROLE_PERM_LABELS.map((p) => [p.key, !off.has(p.key)]));
 }
@@ -205,6 +209,7 @@ function PermPicker({
                                 ...permissions,
                                 [p.key]: e.target.checked,
                                 ...(p.key === "document.view" ? { "document.preview": e.target.checked } : {}),
+                                ...(p.key === "page.departments" ? { "department.view": e.target.checked } : {}),
                             })
                         }
                     />
@@ -383,6 +388,8 @@ function DepartmentsAdminContent() {
         try {
             const permissions = { ...roleForm.permissions };
             permissions["document.preview"] = permissions["document.view"] === true;
+            permissions["department.view"] = permissions["page.departments"] === true;
+            permissions["department.manage"] = false;
             const body = {
                 name: roleForm.name,
                 description: roleForm.description,

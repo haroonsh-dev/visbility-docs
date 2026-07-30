@@ -109,6 +109,10 @@ async function main() {
             ...initialPermissions,
             [PERMISSIONS.PAGE_ACTIVITY]: true,
             [PERMISSIONS.PAGE_DEPARTMENTS]: true,
+            [PERMISSIONS.PAGE_PLANS]: true,
+            [PERMISSIONS.PAGE_EMAIL_REPORTS]: true,
+            [PERMISSIONS.PAGE_INTEGRATIONS]: true,
+            [PERMISSIONS.PAGE_SETTINGS]: true,
             [PERMISSIONS.DEPARTMENT_MANAGE]: true,
             [PERMISSIONS.DOCUMENT_SHARE]: true,
         };
@@ -119,13 +123,20 @@ async function main() {
         });
         assert.equal(updated.status, 200);
         assert.equal(updated.body.data.role.permissions[PERMISSIONS.PAGE_ACTIVITY], true);
-        assert.equal(updated.body.data.role.permissions[PERMISSIONS.DEPARTMENT_MANAGE], true);
+        assert.equal(updated.body.data.role.permissions[PERMISSIONS.PAGE_SETTINGS], true);
+        assert.equal(updated.body.data.role.permissions[PERMISSIONS.DEPARTMENT_MANAGE], false);
+        assert.equal(updated.body.data.role.permissions[PERMISSIONS.DEPARTMENT_VIEW], true);
 
         const savedUser = await User.findOne({ userId }).lean();
         const savedUserPermissions = permissionsToPlain(savedUser?.permissions);
         assert.equal(savedUserPermissions[PERMISSIONS.PAGE_ACTIVITY], true);
         assert.equal(savedUserPermissions[PERMISSIONS.PAGE_DEPARTMENTS], true);
-        assert.equal(savedUserPermissions[PERMISSIONS.DEPARTMENT_MANAGE], true);
+        assert.equal(savedUserPermissions[PERMISSIONS.PAGE_PLANS], true);
+        assert.equal(savedUserPermissions[PERMISSIONS.PAGE_EMAIL_REPORTS], true);
+        assert.equal(savedUserPermissions[PERMISSIONS.PAGE_INTEGRATIONS], true);
+        assert.equal(savedUserPermissions[PERMISSIONS.PAGE_SETTINGS], true);
+        assert.equal(savedUserPermissions[PERMISSIONS.DEPARTMENT_MANAGE], false);
+        assert.equal(savedUserPermissions[PERMISSIONS.DEPARTMENT_VIEW], true);
         assert.equal(savedUserPermissions[PERMISSIONS.DOCUMENT_SHARE], true);
 
         const listed = await invoke(listOrgRoles, { organizationId });
@@ -133,7 +144,7 @@ async function main() {
         const listedRole = listed.body.data.roles.find((role: any) => role.roleId === roleId);
         assert.ok(listedRole);
         assert.equal(listedRole.permissions[PERMISSIONS.PAGE_ACTIVITY], true);
-        assert.equal(listedRole.permissions[PERMISSIONS.DEPARTMENT_MANAGE], true);
+        assert.equal(listedRole.permissions[PERMISSIONS.DEPARTMENT_MANAGE], false);
 
         const rejectedDelete = await invoke(deleteOrgRole, {
             organizationId,

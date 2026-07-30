@@ -50,8 +50,8 @@ export const listApiKeys = async (req: Request, res: Response, next: NextFunctio
 /** Create or update an API key for a provider */
 export const saveApiKey = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        if (!hasPermission(req.user, PERMISSIONS.DEPARTMENT_MANAGE) && req.user.role !== 'superAdmin') {
-            return res.status(403).json({ success: false, message: 'Only admins can manage API keys' });
+        if (!hasPermission(req.user, PERMISSIONS.PAGE_SETTINGS)) {
+            return res.status(403).json({ success: false, message: 'Missing permission: page.settings' });
         }
 
         const orgId = requireOrg(req);
@@ -146,8 +146,8 @@ export const saveApiKey = async (req: Request, res: Response, next: NextFunction
 /** Toggle API key active status */
 export const toggleApiKey = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        if (!hasPermission(req.user, PERMISSIONS.DEPARTMENT_MANAGE) && req.user.role !== 'superAdmin') {
-            return res.status(403).json({ success: false, message: 'Only admins can manage API keys' });
+        if (!hasPermission(req.user, PERMISSIONS.PAGE_SETTINGS)) {
+            return res.status(403).json({ success: false, message: 'Missing permission: page.settings' });
         }
 
         const orgId = requireOrg(req);
@@ -166,8 +166,8 @@ export const toggleApiKey = async (req: Request, res: Response, next: NextFuncti
 /** Delete an API key */
 export const deleteApiKey = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        if (!hasPermission(req.user, PERMISSIONS.DEPARTMENT_MANAGE) && req.user.role !== 'superAdmin') {
-            return res.status(403).json({ success: false, message: 'Only admins can manage API keys' });
+        if (!hasPermission(req.user, PERMISSIONS.PAGE_SETTINGS)) {
+            return res.status(403).json({ success: false, message: 'Missing permission: page.settings' });
         }
 
         const orgId = requireOrg(req);
@@ -230,8 +230,8 @@ export const getProviderConfig = async (req: Request, res: Response, next: NextF
 /** Set the primary active provider */
 export const setPrimaryProvider = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        if (!hasPermission(req.user, PERMISSIONS.DEPARTMENT_MANAGE) && req.user.role !== 'superAdmin') {
-            return res.status(403).json({ success: false, message: 'Only admins can manage API keys' });
+        if (!hasPermission(req.user, PERMISSIONS.PAGE_SETTINGS)) {
+            return res.status(403).json({ success: false, message: 'Missing permission: page.settings' });
         }
 
         const orgId = requireOrg(req);

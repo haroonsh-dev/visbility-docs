@@ -17,6 +17,7 @@ const DEPT_COLORS = [COLORS.teal, COLORS.cyan, COLORS.emerald, COLORS.violet, CO
 
 type UploadTrendData = { date: string; uploads: number }[];
 type DepartmentData = { name: string; count: number }[];
+type StatusData = { name: string; count: number }[];
 
 type DashboardChartsProps = {
     trendData?: UploadTrendData;
@@ -24,6 +25,8 @@ type DashboardChartsProps = {
     loading?: boolean;
     allDocs?: any[];
     departmentNames?: Record<string, string>;
+    statusData?: StatusData;
+    isAdminView?: boolean;
 };
 
 const PRESETS = [
@@ -214,6 +217,8 @@ export default function DashboardCharts({
     loading = false,
     allDocs = [],
     departmentNames = {},
+    statusData = [],
+    isAdminView = false,
 }: DashboardChartsProps) {
     const [trendFrom, setTrendFrom] = useState("");
     const [trendTo, setTrendTo] = useState("");
@@ -222,6 +227,7 @@ export default function DashboardCharts({
 
     const hasTrend = trendData.length > 0;
     const hasDept = departmentData.length > 0;
+    const hasStatus = statusData.some((item) => item.count > 0);
 
     const filteredTrendData = useMemo(() => {
         if (!trendFrom && !trendTo) return trendData;
@@ -315,37 +321,51 @@ export default function DashboardCharts({
                 </div>
             </motion.div>
 
-            {/* Documents by Department */}
+            {/* Role-aware distribution: departments for admins, personal status for employees */}
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
                 className="chart-card overflow-hidden">
                 <div className="chart-card-header flex items-center justify-between">
                     <div>
-                        <h3 className="text-sm font-bold text-slate-800">Documents by Department</h3>
-                        <p className="text-[11px] text-slate-400 mt-0.5">Distribution across departments</p>
+                        <h3 className="text-sm font-bold text-slate-800">
+                            {isAdminView ? "Documents by Department" : "My Documents by Status"}
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                            {isAdminView
+                                ? "Distribution across departments"
+                                : "Current state of documents you uploaded"}
+                        </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <FilterDropdown
-                            dateFrom={deptFrom} dateTo={deptTo}
-                            onDateFromChange={setDeptFrom} onDateToChange={setDeptTo}
-                            onExport={exportDeptReport} label="Department Filter"
-                        />
-                        <button type="button" onClick={exportDeptReport}
-                            className="p-2 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-sm hover:shadow-md transition-all"
-                            title="Export full report (Excel)">
-                            <Download size={13} />
-                        </button>
-                    </div>
+                    {isAdminView && (
+                        <div className="flex items-center gap-2">
+                            <FilterDropdown
+                                dateFrom={deptFrom} dateTo={deptTo}
+                                onDateFromChange={setDeptFrom} onDateToChange={setDeptTo}
+                                onExport={exportDeptReport} label="Department Filter"
+                            />
+                            <button type="button" onClick={exportDeptReport}
+                                className="p-2 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-sm hover:shadow-md transition-all"
+                                title="Export full report (Excel)">
+                                <Download size={13} />
+                            </button>
+                        </div>
+                    )}
                 </div>
                 <div className="chart-card-body">
-                    {loading ? <LoadingSkeleton /> : !hasDept ? <EmptyChart emoji="🏢" title="No department data" desc="Documents will appear by department" /> : (
+                    {loading ? <LoadingSkeleton /> : isAdminView && !hasDept ? (
+                        <EmptyChart emoji="🏢" title="No department data" desc="Documents will appear by department" />
+                    ) : !isAdminView && !hasStatus ? (
+                        <EmptyChart emoji="📄" title="No document status data" desc="Upload a document to see its progress" />
+                    ) : (
                         <ResponsiveContainer width="100%" height={280}>
-                            <BarChart data={filteredDeptData} layout="vertical">
+                            <BarChart data={isAdminView ? filteredDeptData : statusData} layout="vertical">
                                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                                 <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} allowDecimals={false} />
                                 <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} width={80} />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Bar dataKey="count" name="Documents" radius={[0, 6, 6, 0]} barSize={18} animationDuration={800}>
-                                    {filteredDeptData.map((_, index) => <Cell key={`cell-${index}`} fill={DEPT_COLORS[index % DEPT_COLORS.length]} />)}
+                                    {(isAdminView ? filteredDeptData : statusData).map((_, index) => (
+                                        <Cell key={`cell-${index}`} fill={DEPT_COLORS[index % DEPT_COLORS.length]} />
+                                    ))}
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>

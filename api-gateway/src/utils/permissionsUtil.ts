@@ -1,6 +1,7 @@
 import {
     ALL_PERMISSIONS,
     DEFAULT_TEAM_PERMISSIONS,
+    ORG_ROLE_EDITABLE_PERMISSIONS,
     PERMISSIONS,
     PermissionKey,
     TEAM_MEMBER_EDITABLE_PERMISSIONS,
@@ -41,7 +42,8 @@ export function normalizeTeamPermissions(perms: unknown): Record<PermissionKey, 
         }
     }
     out[PERMISSIONS.DOCUMENT_PREVIEW] = out[PERMISSIONS.DOCUMENT_VIEW];
-    // Team accounts never get full org team admin; Managers use department.manage instead
+    // Department administration belongs to organization admins, not role templates.
+    out[PERMISSIONS.DEPARTMENT_MANAGE] = false;
     out[PERMISSIONS.TEAM_MANAGE] = false;
     return out;
 }
@@ -62,4 +64,24 @@ export function buildFlatPermissionsDocument(perms: Record<PermissionKey, boolea
         doc[key] = perms[key];
     }
     return doc;
+}
+
+/** Apply org-role template flags onto a team user's permission object. */
+export function applyOrgRolePermissions(
+    current: unknown,
+    rolePermissions: unknown
+): Record<string, boolean> {
+    const perms = permissionsToPlain(current);
+    const rolePerms = permissionsToPlain(rolePermissions);
+    for (const key of ORG_ROLE_EDITABLE_PERMISSIONS) {
+        if (typeof rolePerms[key] === 'boolean') {
+            perms[key] = rolePerms[key];
+        }
+    }
+    return buildFlatPermissionsDocument(normalizeTeamPermissions(perms));
+}
+
+/** Clear role-derived grants back to default team permissions. */
+export function resetToDefaultTeamPermissions(): Record<string, boolean> {
+    return buildFlatPermissionsDocument({ ...DEFAULT_TEAM_PERMISSIONS });
 }

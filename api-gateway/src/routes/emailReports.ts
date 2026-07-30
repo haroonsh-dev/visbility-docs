@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { authenticate, authorize } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
+import { PERMISSIONS } from '../types/permissions';
 import {
     getEmailReportConfig,
     saveEmailReportConfig,
@@ -8,7 +9,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authorize('admin'));
+router.use(authenticate, requirePermission(PERMISSIONS.PAGE_EMAIL_REPORTS));
 router.get('/', getEmailReportConfig);
 router.put('/', saveEmailReportConfig);
 router.post('/send-now', sendEmailReportNow);

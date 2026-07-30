@@ -159,6 +159,7 @@ function ChatContent() {
     const bottomRef = useRef<HTMLDivElement>(null);
     const msgsContainerRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
+    const deepLinkAppliedRef = useRef(false);
 
     const pythonToNode = new Map(
         libraryDocs.filter((d) => d.pythonDocumentId).map((d) => [d.pythonDocumentId as string, d.documentId])
@@ -347,6 +348,72 @@ function ChatContent() {
         setFocusedExcerpt("");
         localStorage.removeItem(LAST_SESSION_KEY);
     };
+
+    useEffect(() => {
+        if (deepLinkAppliedRef.current || typeof window === "undefined") return;
+        const targetId = new URLSearchParams(window.location.search).get("documentId");
+        if (!targetId) return;
+        if (!libraryDocs.length) return;
+
+        deepLinkAppliedRef.current = true;
+        const applyTarget = async () => {
+            let target = libraryDocs.find((doc) => doc.documentId === targetId);
+            if (!target) {
+                try {
+                    const response = await apiRequest(`/docs/documents/${targetId}`);
+                    const raw = response?.data?.document || response?.data;
+                    if (raw?.documentId) {
+                        target = {
+                            documentId: raw.documentId,
+                            originalFilename: raw.originalFilename,
+                            status: raw.status,
+                            pythonDocumentId: raw.pythonDocumentId,
+                            classification: raw.classification,
+                            mimeType: raw.mimeType,
+                            metadata: raw.metadata
+                                ? {
+                                      phase3Agent: raw.metadata.phase3Agent,
+                                      cvScore: raw.metadata.cvScore,
+                                  }
+                                : null,
+                        };
+                        setLibraryDocs((current) =>
+                            current.some((doc) => doc.documentId === raw.documentId)
+                                ? current
+                                : [target as LibraryDoc, ...current]
+                        );
+                    }
+                } catch {
+                    target = undefined;
+                }
+            }
+
+            if (!target) {
+                showToast("This document is not available in your chat library.", "error");
+                return;
+            }
+            if (!target.pythonDocumentId) {
+                showToast(
+                    `"${target.originalFilename}" is still processing. Chat will be available when processing finishes.`,
+                    "error"
+                );
+                return;
+            }
+
+            setSessionId(undefined);
+            setMessages([WELCOME_MSG]);
+            setFocusedExcerpt("");
+            localStorage.removeItem(LAST_SESSION_KEY);
+            setChatScope("selected");
+            setSelectedDocIds([target.documentId]);
+            setDocSearch("");
+            setDocStatusFilter("");
+            setScopePanelOpen(false);
+            showToast(`Chat is focused on "${target.originalFilename}".`, "success");
+        };
+
+        applyTarget();
+    }, [libraryDocs, showToast]);
 
     const loadSession = async (id: string) => {
         try {

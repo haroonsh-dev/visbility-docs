@@ -14,6 +14,7 @@ import ClassifyAgentPopup from "@/components/ClassifyAgentPopup";
 import DocumentFolderTree from "@/components/DocumentFolderTree";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
+import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -108,7 +109,7 @@ function DocumentsContent() {
     const colors = theme.colors;
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
-    const { canUpload, canViewDocs, canDeleteDocs, role } = usePermissions();
+    const { canUpload, canViewDocs, canDeleteDocs, canAccessPage, role } = usePermissions();
     const { agentOptions } = usePlanAgents();
     const preferredAgentOptions = [
         { value: "", label: "Auto (from document type)" },
@@ -182,7 +183,10 @@ function DocumentsContent() {
         }
     }, []);
 
-    useEffect(() => { setMounted(true); loadProviderKeys(); }, [loadProviderKeys]);
+    useEffect(() => {
+        setMounted(true);
+        if (canAccessPage("settings")) loadProviderKeys();
+    }, [canAccessPage, loadProviderKeys]);
 
     const handleSwitchProvider = async (newProvider: string) => {
         if (!newProvider) return;
@@ -594,7 +598,7 @@ function DocumentsContent() {
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
                             {/* Small Active AI Provider Selector */}
-                            {configuredProviders.length > 0 && (
+                            {canAccessPage("settings") && configuredProviders.length > 0 && (
                                 <div className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 px-2.5 py-1.5 shadow-sm">
                                     <Brain size={13} className="text-amber-500 shrink-0" />
                                     <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">AI Model:</span>
@@ -735,6 +739,10 @@ function DocumentsContent() {
                                         {doc.aiErrorMessage && <p className="text-xs text-rose-500 mt-1.5 flex items-center gap-1"><AlertTriangle size={11} /> {doc.aiErrorMessage}</p>}
                                     </div>
                                     <div className="flex gap-1.5 flex-wrap w-full sm:w-auto">
+                                        <ChatWithDocumentLink
+                                            documentId={doc.documentId}
+                                            ready={!!doc.pythonDocumentId}
+                                        />
                                         {allowView && <Link href={`/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-[36px]"><Info size={13} /> Details</Link>}
                                         {allowView && <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-[36px]"><Eye size={13} /> Preview</Link>}
                                         {allowDelete && <button type="button" onClick={() => remove(doc.documentId, doc.originalFilename)} className="btn-ghost rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 text-rose-500 min-h-[36px] hover:bg-rose-50"><Trash2 size={13} /></button>}

@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/apiClient";
-import { getStoredUser, setAuthValue } from "@/lib/authSession";
+import { getAuthValue, getStoredUser, setAuthValue } from "@/lib/authSession";
 import {
     DEFAULT_TEAM_PERMS,
     getUserPermissions,
@@ -54,8 +54,17 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
                 setAuthValue("permissions", JSON.stringify(perms));
             }
         } catch {
-            setPermissions(getUserPermissions());
-            setRole(getUserRole());
+            const token = getAuthValue("accessToken") || getAuthValue("token");
+            if (!token) {
+                setPermissions({});
+                setRole("");
+                if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+                    window.location.replace("/login");
+                }
+            } else {
+                setPermissions(getUserPermissions());
+                setRole(getUserRole());
+            }
         } finally {
             setReady(true);
         }
@@ -66,6 +75,21 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
         setRole(getUserRole());
         setReady(Boolean(getUserRole() || Object.keys(getUserPermissions()).length));
         reload();
+    }, [reload]);
+
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === "visible") void reload();
+        };
+        const onFocus = () => {
+            void reload();
+        };
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
     }, [reload]);
 
     const hasPermission = useCallback(
@@ -82,7 +106,14 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
                 if (key in permissions) return permissions[key] === true;
                 return true;
             }
-            if (key === PERMS.PAGE_ACTIVITY || key === PERMS.PAGE_DEPARTMENTS) {
+            if (
+                key === PERMS.PAGE_ACTIVITY ||
+                key === PERMS.PAGE_DEPARTMENTS ||
+                key === PERMS.PAGE_PLANS ||
+                key === PERMS.PAGE_EMAIL_REPORTS ||
+                key === PERMS.PAGE_INTEGRATIONS ||
+                key === PERMS.PAGE_SETTINGS
+            ) {
                 if (key in permissions) return permissions[key] === true;
                 return false;
             }

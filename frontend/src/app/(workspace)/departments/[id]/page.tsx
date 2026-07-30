@@ -8,6 +8,7 @@ import { FileText, Loader2, RefreshCw, Search, Filter, X, Info, Eye, Trash2, Sha
 import FilterSelect from "@/components/FilterSelect";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
+import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { usePermissions } from "@/context/PermissionsContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -354,6 +355,10 @@ function DepartmentContent() {
                                         {doc.aiErrorMessage && <p className="text-xs text-rose-600 mt-1">{doc.aiErrorMessage}</p>}
                                     </div>
                                     <div className="flex gap-2 flex-wrap w-full sm:w-auto">
+                                        <ChatWithDocumentLink
+                                            documentId={doc.documentId}
+                                            ready={!!doc.pythonDocumentId}
+                                        />
                                         <Link href={`/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 flex-1 sm:flex-initial min-h-10"><Info size={14} /> Details</Link>
                                         <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 flex-1 sm:flex-initial min-h-10"><Eye size={14} /> Preview</Link>
                                         {canDeleteDocs() && <button type="button" onClick={() => removeDocument(doc.documentId, doc.originalFilename)} className="btn-ghost rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 text-rose-500 min-h-10"><Trash2 size={14} /> Delete</button>}

@@ -19,6 +19,10 @@ export interface IUserPermissions {
     'page.chat'?: boolean;
     'page.activity'?: boolean;
     'page.departments'?: boolean;
+    'page.plans'?: boolean;
+    'page.email_reports'?: boolean;
+    'page.integrations'?: boolean;
+    'page.settings'?: boolean;
 }
 
 export interface IUser extends Document {
@@ -66,6 +70,10 @@ const PermissionsSchema = new Schema<IUserPermissions>(
         'page.chat': { type: Boolean, default: true },
         'page.activity': { type: Boolean, default: false },
         'page.departments': { type: Boolean, default: false },
+        'page.plans': { type: Boolean, default: false },
+        'page.email_reports': { type: Boolean, default: false },
+        'page.integrations': { type: Boolean, default: false },
+        'page.settings': { type: Boolean, default: false },
     },
     { _id: false }
 );

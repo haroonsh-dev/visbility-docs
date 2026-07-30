@@ -21,6 +21,7 @@ import {
 import FilterSelect from "@/components/FilterSelect";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
+import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
 import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { usePermissions } from "@/context/PermissionsContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -89,17 +90,18 @@ const PERM_LABELS: Record<string, string> = {
     "document.upload": "Upload documents",
     "document.view": "View documents",
     "document.delete": "Delete documents",
-    "document.preview": "Preview documents",
     "document.share": "Share documents",
     "chat.use": "AI Chat",
-    "department.view": "View department",
-    "department.manage": "Manage department",
     "org.documents.view": "View all org documents",
     "page.dashboard": "Dashboard page",
     "page.documents": "Documents page",
     "page.chat": "Chat page",
     "page.activity": "Activity page",
     "page.departments": "Departments page",
+    "page.plans": "Plans page",
+    "page.email_reports": "Email reports page",
+    "page.integrations": "Integrations page",
+    "page.settings": "AI Settings page",
 };
 
 function formatBytes(n: number) {
@@ -613,6 +615,10 @@ function MemberDetailContent() {
                                         </p>
                                     </div>
                                     <div className="flex gap-2 flex-wrap">
+                                        <ChatWithDocumentLink
+                                            documentId={doc.documentId}
+                                            ready={!!doc.pythonDocumentId}
+                                        />
                                         <Link
                                             href={`/documents/details?doc=${doc.documentId}`}
                                             className="btn-secondary rounded-lg px-3 py-2 text-sm inline-flex items-center gap-1.5"

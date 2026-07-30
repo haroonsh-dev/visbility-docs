@@ -99,7 +99,7 @@ function DirectionBadge({ directions }: { directions: IntegrationCatalogItem["di
 function IntegrationsContent() {
     const { theme } = useTheme();
     const colors = theme.colors;
-    const { role, ready } = usePermissions();
+    const { ready, canAccessPage } = usePermissions();
 
     const [hasActivePlan, setHasActivePlan] = useState<boolean | null>(null);
     const [connections, setConnections] = useState<Connection[]>([]);
@@ -153,9 +153,9 @@ function IntegrationsContent() {
     }, [ready, loadPlan]);
 
     useEffect(() => {
-        if (!ready || role !== "admin" || hasActivePlan !== true) return;
+        if (!ready || !canAccessPage("integrations") || hasActivePlan !== true) return;
         loadConnections();
-    }, [ready, role, hasActivePlan, loadConnections]);
+    }, [ready, canAccessPage, hasActivePlan, loadConnections]);
 
     const byProvider = useMemo(() => {
         const map = new Map<string, Connection>();
@@ -572,13 +572,13 @@ function IntegrationsContent() {
         );
     }
 
-    if (role !== "admin") {
+    if (!canAccessPage("integrations")) {
         return (
             <div className="p-8 max-w-lg mx-auto text-center space-y-3">
                 <AlertTriangle className="mx-auto text-amber-400" size={28} />
                 <h1 className="text-lg font-semibold">Admin only</h1>
                 <p className={`text-sm ${colors.textMuted}`}>
-                    Integrations are available to organization admins with an active plan.
+                    Your assigned role does not include access to integrations.
                 </p>
             </div>
         );

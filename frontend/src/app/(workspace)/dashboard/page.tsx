@@ -3,19 +3,50 @@
 import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { FileText, MessageSquare, Activity, RefreshCw, ArrowRight, Download } from "lucide-react";
+import {
+    Activity,
+    ArrowRight,
+    Building2,
+    Crown,
+    Download,
+    FileText,
+    MessageSquare,
+    RefreshCw,
+    ShieldCheck,
+} from "lucide-react";
 import DashboardStats from "@/components/DashboardStats";
 import DashboardCharts from "@/components/DashboardCharts";
-import { PageHeader } from "@/components/ui";
+import DashboardInsights from "@/components/DashboardInsights";
+import { Badge, PageHeader } from "@/components/ui";
 import { apiRequest } from "@/lib/apiClient";
 import { downloadDashboardReport } from "@/lib/dashboardExport";
+import { usePermissions } from "@/context/PermissionsContext";
+import { getStoredUser } from "@/lib/authSession";
 
 type DashboardData = {
     stats: { total: number; processed: number; processing: number; failed: number };
     trendData: { date: string; uploads: number }[];
     departmentData: { name: string; count: number }[];
+    statusData: { name: string; count: number }[];
     allDocs: any[];
+    recentActivity: any[];
     departmentNames: Record<string, string>;
+};
+
+type TeamIdentity = {
+    fullName?: string;
+    department?: {
+        departmentId: string;
+        name: string;
+        slug?: string;
+        allowedDocumentTypes?: string[];
+    } | null;
+    orgRole?: {
+        roleId: string;
+        name: string;
+        isLeader?: boolean;
+        rank?: number;
+    } | null;
 };
 
 const stagger = {
@@ -32,17 +63,27 @@ const fadeUp = {
 };
 
 function DashboardContent() {
+    const { role, ready, canAccessPage } = usePermissions();
+    const storedUser = getStoredUser<{ userId?: string; fullName?: string }>();
+    const isAdminView = role === "admin" || role === "superAdmin";
     const [data, setData] = useState<DashboardData>({
         stats: { total: 0, processed: 0, processing: 0, failed: 0 },
         trendData: [],
         departmentData: [],
+        statusData: [],
         allDocs: [],
+        recentActivity: [],
         departmentNames: {},
     });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [teamIdentity, setTeamIdentity] = useState<TeamIdentity | null>(null);
 
-    const buildData = useCallback((docs: any[], departmentNames: Record<string, string>) => {
+    const buildData = useCallback((
+        docs: any[],
+        departmentNames: Record<string, string>,
+        recentActivity: any[]
+    ) => {
         const total = docs.length;
         const processed = docs.filter((d: any) =>
             ["ready", "processed", "completed", "done"].includes((d.status || "").toLowerCase())
@@ -83,16 +124,27 @@ function DashboardContent() {
             .sort((a, b) => b.count - a.count)
             .slice(0, 8);
 
+        const other = Math.max(0, total - processed - processing - failed);
+        const statusData = [
+            { name: "Ready", count: processed },
+            { name: "Processing", count: processing },
+            { name: "Failed", count: failed },
+            { name: "Other", count: other },
+        ];
+
         setData({
             stats: { total, processed, processing, failed },
             trendData,
             departmentData,
+            statusData,
             allDocs: docs,
+            recentActivity,
             departmentNames,
         });
     }, []);
 
-    const loadDashboard = async () => {
+    const loadDashboard = useCallback(async () => {
+        if (!ready) return;
         setLoading(true);
         setError(null);
         try {
@@ -102,12 +154,37 @@ function DashboardContent() {
                 sortBy: "createdAt",
                 sortOrder: "desc",
             });
-            const [docsRes, deptRes] = await Promise.all([
+            if (!isAdminView && storedUser?.userId) {
+                params.set("uploadedBy", storedUser.userId);
+            }
+            const activityParams = new URLSearchParams({ page: "1", limit: "8" });
+            if (!isAdminView && storedUser?.userId) {
+                activityParams.set("actorUserId", storedUser.userId);
+            }
+
+            const [docsRes, deptRes, activityRes, meRes] = await Promise.all([
                 apiRequest(`/docs/documents?${params}`),
-                apiRequest(`/docs/departments`).catch(() => null),
+                isAdminView ? apiRequest(`/docs/departments`).catch(() => null) : Promise.resolve(null),
+                apiRequest(`/docs/activity?${activityParams}`).catch(() => null),
+                !isAdminView ? apiRequest("/auth/me").catch(() => null) : Promise.resolve(null),
             ]);
             const docs = docsRes?.data?.documents || [];
             const departments = deptRes?.data?.departments || deptRes?.data || [];
+            const recentActivity = activityRes?.data?.logs || [];
+            if (!isAdminView) {
+                const freshUser = meRes?.data?.user;
+                setTeamIdentity(
+                    freshUser
+                        ? {
+                              fullName: freshUser.fullName,
+                              department: freshUser.department || null,
+                              orgRole: freshUser.orgRole || null,
+                          }
+                        : null
+                );
+            } else {
+                setTeamIdentity(null);
+            }
             const departmentNames: Record<string, string> = {};
             if (Array.isArray(departments)) {
                 for (const d of departments) {
@@ -116,17 +193,17 @@ function DashboardContent() {
                     if (id && name) departmentNames[id] = name;
                 }
             }
-            buildData(docs, departmentNames);
+            buildData(docs, departmentNames, recentActivity);
         } catch (e: any) {
             setError(e.message || "Failed to load dashboard");
         } finally {
             setLoading(false);
         }
-    };
+    }, [ready, isAdminView, storedUser?.userId, buildData]);
 
     useEffect(() => {
         loadDashboard();
-    }, []);
+    }, [loadDashboard]);
 
     const exportFullReport = () => {
         if (!data.allDocs.length) return;
@@ -146,7 +223,11 @@ function DashboardContent() {
             >
                 <PageHeader
                     title="Dashboard"
-                    subtitle="Overview of your document intelligence workspace."
+                    subtitle={
+                        isAdminView
+                            ? "Organization-wide document intelligence and workspace activity."
+                            : `Your documents, processing progress, and recent activity${storedUser?.fullName ? `, ${storedUser.fullName}` : ""}.`
+                    }
                     actions={
                         <div className="flex flex-wrap gap-2">
                             <button
@@ -184,14 +265,107 @@ function DashboardContent() {
                 </motion.div>
             )}
 
+            {!isAdminView && ready && !loading && (
+                <motion.section
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.05, duration: 0.4 }}
+                    className={`surface-card overflow-hidden ${
+                        teamIdentity?.department ? "" : "border-amber-200"
+                    }`}
+                >
+                    {teamIdentity?.department ? (
+                        <div className="relative p-5 sm:p-6">
+                            <div className="absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b from-teal-500 to-cyan-500" />
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-5">
+                                <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
+                                    <Building2 size={24} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-teal-600">
+                                            Your department
+                                        </p>
+                                        {teamIdentity.orgRole?.isLeader && (
+                                            <Badge variant="warning">
+                                                <Crown size={10} /> Department leader
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    <h2 className="text-xl font-bold text-slate-800 truncate">
+                                        {teamIdentity.department.name}
+                                    </h2>
+                                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                                        <Badge variant="accent">
+                                            <ShieldCheck size={10} />
+                                            {teamIdentity.orgRole?.name || "Team member"}
+                                        </Badge>
+                                        {typeof teamIdentity.orgRole?.rank === "number" && (
+                                            <Badge variant="default">
+                                                Rank {teamIdentity.orgRole.rank}
+                                            </Badge>
+                                        )}
+                                        {!!teamIdentity.department.allowedDocumentTypes?.length && (
+                                            <span className="text-[11px] text-slate-500">
+                                                {teamIdentity.department.allowedDocumentTypes.length} allowed
+                                                document type
+                                                {teamIdentity.department.allowedDocumentTypes.length === 1
+                                                    ? ""
+                                                    : "s"}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-2">
+                                        This dashboard shows your own uploads and activity within the{" "}
+                                        {teamIdentity.department.name} department.
+                                    </p>
+                                </div>
+                                {canAccessPage("departments") && (
+                                    <Link
+                                        href={`/departments/${teamIdentity.department.departmentId}`}
+                                        className="btn-secondary rounded-xl px-4 py-2.5 text-sm font-semibold inline-flex items-center justify-center gap-2 shrink-0"
+                                    >
+                                        Open department <ArrowRight size={14} />
+                                    </Link>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-4 bg-amber-50/70">
+                            <div className="h-12 w-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                                <Building2 size={21} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <h2 className="text-base font-bold text-amber-900">
+                                    No department assigned
+                                </h2>
+                                <p className="text-xs text-amber-700 mt-1">
+                                    Ask your organization admin to assign your department and role.
+                                    Your personal document dashboard is still available below.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </motion.section>
+            )}
+
             <DashboardStats stats={data.stats} />
 
             <DashboardCharts
                 trendData={data.trendData}
                 departmentData={data.departmentData}
+                statusData={data.statusData}
                 loading={loading}
                 allDocs={data.allDocs}
                 departmentNames={data.departmentNames}
+                isAdminView={isAdminView}
+            />
+
+            <DashboardInsights
+                documents={data.allDocs}
+                activity={data.recentActivity}
+                loading={loading}
+                isAdminView={isAdminView}
             />
 
             <motion.div variants={stagger} initial="hidden" animate="show">
@@ -205,6 +379,7 @@ function DashboardContent() {
                             desc: "Upload, manage, and search files",
                             gradient: "from-teal-500 to-cyan-500",
                             shadow: "shadow-teal-500/20",
+                            allow: true,
                         },
                         {
                             href: "/chat",
@@ -213,6 +388,7 @@ function DashboardContent() {
                             desc: "Chat with your documents using AI",
                             gradient: "from-cyan-500 to-blue-500",
                             shadow: "shadow-cyan-500/20",
+                            allow: canAccessPage("chat"),
                         },
                         {
                             href: "/activity",
@@ -221,8 +397,9 @@ function DashboardContent() {
                             desc: "View recent actions and logs",
                             gradient: "from-violet-500 to-purple-500",
                             shadow: "shadow-violet-500/20",
+                            allow: canAccessPage("activity"),
                         },
-                    ].map((item) => (
+                    ].filter((item) => item.allow).map((item) => (
                         <motion.div key={item.href} variants={fadeUp}>
                             <Link href={item.href} className="action-card group block h-full">
                                 <div

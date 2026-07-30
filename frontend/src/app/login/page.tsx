@@ -43,7 +43,9 @@ function LoginForm() {
             return;
         }
 
-        router.replace("/documents");
+        void resolvePostLoginPath(JSON.parse(userRaw)).then((path) => {
+            router.replace(path);
+        });
     }, [router]);
 
     const handleSubmit = async (e: React.FormEvent) => {

@@ -8,7 +8,8 @@ import { getActiveSubscription } from '../services/planService';
 import { recordActivityFromReq, recordActivity } from '../services/activityLog';
 import { ensureUploadDir, saveUploadedFile } from '../services/documentStorage';
 import { assertStorageAvailable } from '../services/planService';
-import type { AuthUser } from '../services/accessScope';
+import { hasPermission, type AuthUser } from '../services/accessScope';
+import { PERMISSIONS } from '../types/permissions';
 import {
     computeNextSyncAt,
     importDriveFiles,
@@ -73,8 +74,8 @@ function parseBool(raw: unknown, fallback = true): boolean {
 }
 
 async function requireAdminWithActivePlan(req: Request, res: Response): Promise<string | null> {
-    if (!req.user || req.user.role !== 'admin') {
-        res.status(403).json({ success: false, message: 'Only organization admins can manage integrations' });
+    if (!req.user || !hasPermission(req.user, PERMISSIONS.PAGE_INTEGRATIONS)) {
+        res.status(403).json({ success: false, message: 'Missing permission: page.integrations' });
         return null;
     }
     const orgId = req.user.organizationId;

@@ -15,6 +15,10 @@ export const PERMS = {
     PAGE_CHAT: "page.chat",
     PAGE_ACTIVITY: "page.activity",
     PAGE_DEPARTMENTS: "page.departments",
+    PAGE_PLANS: "page.plans",
+    PAGE_EMAIL_REPORTS: "page.email_reports",
+    PAGE_INTEGRATIONS: "page.integrations",
+    PAGE_SETTINGS: "page.settings",
 } as const;
 
 export type PageAccessKey =
@@ -22,7 +26,11 @@ export type PageAccessKey =
     | "documents"
     | "chat"
     | "activity"
-    | "departments";
+    | "departments"
+    | "plans"
+    | "email_reports"
+    | "integrations"
+    | "settings";
 
 export const PAGE_PERM_BY_KEY: Record<PageAccessKey, string> = {
     dashboard: PERMS.PAGE_DASHBOARD,
@@ -30,6 +38,10 @@ export const PAGE_PERM_BY_KEY: Record<PageAccessKey, string> = {
     chat: PERMS.PAGE_CHAT,
     activity: PERMS.PAGE_ACTIVITY,
     departments: PERMS.PAGE_DEPARTMENTS,
+    plans: PERMS.PAGE_PLANS,
+    email_reports: PERMS.PAGE_EMAIL_REPORTS,
+    integrations: PERMS.PAGE_INTEGRATIONS,
+    settings: PERMS.PAGE_SETTINGS,
 };
 
 /** Permissions editable for team members (shown in Team UI). */
@@ -56,6 +68,10 @@ export const DEFAULT_TEAM_PERMS: Record<string, boolean> = {
     [PERMS.PAGE_CHAT]: true,
     [PERMS.PAGE_ACTIVITY]: false,
     [PERMS.PAGE_DEPARTMENTS]: false,
+    [PERMS.PAGE_PLANS]: false,
+    [PERMS.PAGE_EMAIL_REPORTS]: false,
+    [PERMS.PAGE_INTEGRATIONS]: false,
+    [PERMS.PAGE_SETTINGS]: false,
 };
 
 export function getUserPermissions(): Record<string, boolean> {
@@ -93,7 +109,14 @@ export function hasAppPermission(permission: string): boolean {
         if (permission in perms) return perms[permission] === true;
         return true;
     }
-    if (permission === PERMS.PAGE_ACTIVITY || permission === PERMS.PAGE_DEPARTMENTS) {
+    if (
+        permission === PERMS.PAGE_ACTIVITY ||
+        permission === PERMS.PAGE_DEPARTMENTS ||
+        permission === PERMS.PAGE_PLANS ||
+        permission === PERMS.PAGE_EMAIL_REPORTS ||
+        permission === PERMS.PAGE_INTEGRATIONS ||
+        permission === PERMS.PAGE_SETTINGS
+    ) {
         if (permission in perms) return perms[permission] === true;
         return false;
     }
@@ -137,10 +160,12 @@ export function firstAllowedPath(perms?: Record<string, boolean>, role?: string)
         return legacyDefault;
     };
     if (check(PERMS.PAGE_DASHBOARD, true)) return "/dashboard";
-    if (check(PERMS.PAGE_DOCUMENTS, true) && (p[PERMS.VIEW] !== false || p[PERMS.UPLOAD] !== false)) {
-        return "/documents";
-    }
-    if (check(PERMS.PAGE_CHAT, true) && p[PERMS.CHAT] !== false) return "/chat";
+    if (check(PERMS.PAGE_DOCUMENTS, true)) return "/documents";
+    if (check(PERMS.PAGE_CHAT, true)) return "/chat";
     if (check(PERMS.PAGE_ACTIVITY, false)) return "/activity";
+    if (check(PERMS.PAGE_PLANS, false)) return "/plans";
+    if (check(PERMS.PAGE_EMAIL_REPORTS, false)) return "/admin/email-reports";
+    if (check(PERMS.PAGE_INTEGRATIONS, false)) return "/admin/integrations";
+    if (check(PERMS.PAGE_SETTINGS, false)) return "/admin/settings";
     return "/profile";
 }

@@ -3,12 +3,14 @@
 import React from "react";
 import { FileText, Folder, Trash2 } from "lucide-react";
 import { agentLabel, docTypeLabel, resolveDocAgent } from "@/lib/documentAgents";
+import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
 
 export type FolderTreeDoc = {
     documentId: string;
     originalFilename: string;
     status: string;
     classification?: string | null;
+    pythonDocumentId?: string | null;
     metadata?: { phase3Agent?: string; cvScore?: number } | null;
 };
 
@@ -170,6 +172,12 @@ export default function DocumentFolderTree({
                                                                 </span>
                                                             </span>
                                                         </button>
+                                                        <ChatWithDocumentLink
+                                                            documentId={d.documentId}
+                                                            ready={!!d.pythonDocumentId}
+                                                            compact
+                                                            className="p-1.5 min-h-0 opacity-0 group-hover:opacity-100"
+                                                        />
                                                         {onDelete && (
                                                             <button
                                                                 type="button"
