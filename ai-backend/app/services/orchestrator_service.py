@@ -490,7 +490,11 @@ class OrchestratorService:
             if ext == ".pdf":
                 try:
                     from .image_extraction_service import image_extraction_service
-                    images = image_extraction_service.process_pdf_images(file_path, document_id, organization_id)
+                    doc_rec = SupabaseDB.select_one("documents", "id", document_id)
+                    active_path = doc_rec.get("file_path", file_path) if doc_rec else file_path
+                    if not os.path.exists(active_path) and os.path.exists(file_path):
+                        active_path = file_path
+                    images = image_extraction_service.process_pdf_images(active_path, document_id, organization_id)
                     if images:
                         log.ok(f"Extracted {len(images)} images")
                         for img in images:

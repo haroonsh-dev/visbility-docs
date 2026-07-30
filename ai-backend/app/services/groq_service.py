@@ -57,7 +57,7 @@ class GroqService:
             self._current_key = ""
             return
 
-        self.client = Groq(api_key=key, timeout=httpx.Timeout(120.0))
+        self.client = Groq(api_key=key, timeout=httpx.Timeout(15.0), max_retries=0)
         self.available = True
         self.vision_available = True
         self._current_key = key
@@ -184,15 +184,12 @@ class GroqService:
                 raw = response.choices[0].message.content or ""
                 return _strip_think_tags(raw)
             except RateLimitError as e:
-                fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
-                if fallback_result:
-                    return fallback_result
+                # Immediately raise — let caller fall back to fast local OCR
+                logger.warning(f"Groq vision rate limited on {model} — skipping fallback, raising immediately")
                 self._handle_rate_limit(e, model)
             except APIStatusError as e:
                 if getattr(e, "status_code", None) == 429 or "rate_limit" in str(e).lower():
-                    fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
-                    if fallback_result:
-                        return fallback_result
+                    logger.warning(f"Groq vision rate limited on {model} — skipping fallback, raising immediately")
                     self._handle_rate_limit(e, model)
                 err = str(e).lower()
                 errors.append(f"{model}: {e}")
@@ -203,9 +200,7 @@ class GroqService:
                 err = str(e).lower()
                 errors.append(f"{model}: {e}")
                 if "429" in err or "rate_limit" in err:
-                    fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
-                    if fallback_result:
-                        return fallback_result
+                    logger.warning(f"Groq vision rate limited on {model} — skipping fallback, raising immediately")
                     self._handle_rate_limit(e, model)
                 if "does not support image" in err or "cannot read" in err or "decommissioned" in err or "not found" in err:
                     continue

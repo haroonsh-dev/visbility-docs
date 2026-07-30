@@ -112,12 +112,8 @@ class VisionProvider:
             except Exception as e:
                 err_str = str(e)
                 if "429" in err_str or "rate_limit" in err_str.lower():
-                    import re
-                    match = re.search(r"try again in (\d+\.?\d*)s", err_str)
-                    wait = float(match.group(1)) + 0.5 if match else float(2 ** attempt)
-                    logger.warning(f"Groq rate limited, retry {attempt+1}/{max_retries} in {wait:.1f}s")
-                    time.sleep(wait)
-                    continue
+                    logger.warning("Groq Vision API rate limited (429) — triggering fast local OCR fallback immediately")
+                    return ""
                 logger.error(f"Groq vision call failed: {e}")
                 return ""
         return ""

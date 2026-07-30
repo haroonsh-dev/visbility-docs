@@ -275,7 +275,8 @@ def _strip_think_tags(text: str) -> str:
     return cleaned.strip()
 
 
-def _vision_ocr(image_b64s: list[str]) -> str:
+def _vision_ocr(image_b64s: list[str], pil_images: list[Image.Image] | None = None) -> str:
+    """Hybrid per-page OCR: Vision first, instant Tesseract fallback per page."""
     from .groq_service import groq_service
     from .vision_provider import vision_provider
 
@@ -286,6 +287,7 @@ def _vision_ocr(image_b64s: list[str]) -> str:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
         ]
         page_text = ""
+
         # Attempt 1: Active Groq Vision
         if groq_service.available and groq_service.vision_available:
             try:
@@ -305,6 +307,27 @@ def _vision_ocr(image_b64s: list[str]) -> str:
             ocr_out = res.get("ocr_text", "") or res.get("markdown", "")
             if ocr_out and not ocr_out.startswith("["):
                 page_text = ocr_out
+
+        # Attempt 3: Local Tesseract OCR for this specific page (GUARANTEED fallback)
+        if not page_text.strip() and pil_images and idx - 1 < len(pil_images):
+            logger.info(f"[OCR] Vision failed for page {idx}, using local Tesseract fallback")
+            try:
+                import subprocess, tempfile
+                tess_bin = "/opt/homebrew/bin/tesseract" if os.path.exists("/opt/homebrew/bin/tesseract") else "tesseract"
+                tmp_img = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+                pil_images[idx - 1].save(tmp_img)
+                proc = subprocess.run(
+                    [tess_bin, tmp_img, "stdout", "--psm", "3", "-l", "eng"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                if os.path.exists(tmp_img):
+                    os.remove(tmp_img)
+                tess_text = (proc.stdout or "").strip()
+                if tess_text:
+                    page_text = tess_text
+                    logger.info(f"[OCR] Tesseract extracted {len(tess_text)} chars for page {idx}")
+            except Exception as e:
+                logger.warning(f"Tesseract fallback failed for page {idx}: {e}")
 
         if page_text.strip():
             page_text = _strip_think_tags(page_text)
@@ -343,10 +366,10 @@ def process_scanned_pdf(file_path: str) -> str:
     except Exception as e:
         logger.error(f"Failed to load PDF pages for OCR: {e}")
 
-    # 1. Attempt Vision OCR (Groq -> Gemini -> OpenAI -> Anthropic)
+    # 1. Hybrid Vision + Tesseract OCR (per-page fallback)
     if b64s:
         try:
-            v_text = _vision_ocr(b64s)
+            v_text = _vision_ocr(b64s, pil_images=images)
             if v_text.strip() and not v_text.startswith("["):
                 return _normalize_markdown(v_text)
         except Exception as e:
@@ -391,7 +414,7 @@ def process_image(file_path: str) -> str:
     # 1. Attempt Vision OCR
     if b64:
         try:
-            v_text = _vision_ocr([b64])
+            v_text = _vision_ocr([b64], pil_images=[img] if img else None)
             if v_text.strip() and not v_text.startswith("["):
                 return _normalize_markdown(v_text)
         except Exception as e:
