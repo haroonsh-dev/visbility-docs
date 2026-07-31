@@ -177,6 +177,14 @@ export const deleteApiKey = async (req: Request, res: Response, next: NextFuncti
         const provider = key.provider;
         await ApiKey.deleteOne({ keyId: key.keyId });
 
+        // Sync provider deletion to Python AI backend
+        try {
+            const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+            await fetch(`${aiUrl}/api/v1/settings/providers/${provider}`, { method: 'DELETE' });
+        } catch (e) {
+            console.warn(`[SETTINGS] Failed to sync provider deletion '${provider}' to AI backend:`, e);
+        }
+
         recordActivityFromReq(req, {
             action: 'settings.api_key.delete',
             category: 'admin',
