@@ -13,9 +13,8 @@ VISION_IMAGE_PROMPT = """You are a precision OCR engine and document data extrac
 Instructions:
 1. Extract ALL visible text, numbers, tables, headings, and labels from this image with 100% fidelity.
 2. Format any tabular data strictly as Markdown tables (| Header | Header |).
-3. If diagrams, drawings, or figures are present, extract all visible component names, labels, and callouts.
-4. Output ONLY clean Markdown data — NEVER include conversational text, intros, outros, or explanations.
-5. Do NOT hallucinate or guess missing information."""
+3. Output ONLY clean Markdown text — NEVER include conversational text, reasoning, self-corrections, or intros.
+4. ABSOLUTELY NO internal monologue like "Wait, looking at..." or "Let me re-examine...". Output ONLY visible document text."""
 
 
 def _decode_b64_to_bytes(b64_str: str) -> bytes:

@@ -1,11 +1,14 @@
 import os
 import json
 import re
+import logging
 import httpx
 from groq import Groq, RateLimitError, APIStatusError
 from ..config import settings
 from . import groq_limit_state
 from .provider_manager import provider_manager
+
+logger = logging.getLogger(__name__)
 
 
 class GroqRateLimitExceeded(Exception):
@@ -154,7 +157,9 @@ class GroqService:
                 return fallback_result
             self._handle_rate_limit(e, use_model)
         except APIStatusError as e:
-            if getattr(e, "status_code", None) == 429 or "rate_limit" in str(e).lower():
+            status_code = getattr(e, "status_code", None)
+            err_msg = str(e).lower()
+            if status_code in (413, 429) or "rate" in err_msg or "too large" in err_msg or "limit" in err_msg or "tpm" in err_msg:
                 fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
                 if fallback_result:
                     return fallback_result

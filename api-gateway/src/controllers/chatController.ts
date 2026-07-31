@@ -174,15 +174,15 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             const model = (req.body.model || req.body.aiModel || '').toString().trim() || undefined;
 
             const providerConfig = await resolveChatProviderConfig(orgId, provider, model);
-            if (provider && !providerConfig) {
+            if (!providerConfig) {
                 return res.status(400).json({
                     success: false,
-                    message: `Selected AI provider "${provider}" is not configured. Add an API key in AI Settings.`,
+                    message: provider
+                        ? `Selected AI provider "${provider}" is not configured. Add an API key in AI Settings.`
+                        : 'No active AI provider configured. Please go to AI Settings and enter your API key.',
                 });
             }
-            if (providerConfig) {
-                await syncProviderToAIBackend(providerConfig);
-            }
+            await syncProviderToAIBackend(providerConfig);
 
             let phase3Agent = phase3AgentRaw;
             let allowedAgents: string[] | undefined;

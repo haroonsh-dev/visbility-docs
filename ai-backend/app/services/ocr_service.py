@@ -21,9 +21,41 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+def _get_tesseract_cmd() -> str:
+    """Locate Tesseract binary on Windows, macOS, or Linux, or return 'tesseract' default."""
+    env_path = os.getenv("TESSERACT_PATH") or os.getenv("TESSERACT_CMD")
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    # Common Windows installation locations
+    win_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+    ]
+    for p in win_paths:
+        if os.path.exists(p):
+            return p
+
+    # Common macOS / Linux locations
+    unix_paths = [
+        "/opt/homebrew/bin/tesseract",
+        "/usr/local/bin/tesseract",
+        "/usr/bin/tesseract",
+    ]
+    for p in unix_paths:
+        if os.path.exists(p):
+            return p
+
+    return "tesseract"
+
+
 try:
     import pytesseract
     TESSERACT_AVAILABLE = True
+    tess_cmd = _get_tesseract_cmd()
+    if os.path.exists(tess_cmd):
+        pytesseract.pytesseract.tesseract_cmd = tess_cmd
 except ImportError:
     TESSERACT_AVAILABLE = False
 
@@ -223,36 +255,35 @@ def _preprocess_image(img: Image.Image) -> Image.Image:
 def _page_to_image(page) -> tuple[str, Image.Image]:
     pix = page.get_pixmap(dpi=300, alpha=False)
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    img = _preprocess_image(img)
-    target_w = 1024
+    target_w = 1600
     w_percent = target_w / float(img.width)
     h_size = int(float(img.height) * float(w_percent))
     img_resized = img.resize((target_w, h_size), Image.LANCZOS)
     buf = io.BytesIO()
-    img_resized.save(buf, format="JPEG", quality=85, optimize=True)
+    img_resized.save(buf, format="JPEG", quality=90, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("utf-8"), img
 
 
 def _load_image_b64(file_path: str) -> tuple[str, Image.Image]:
     img = Image.open(file_path)
     img = _preprocess_image(img)
-    target_w = 1024
+    target_w = 1600
     w_percent = target_w / float(img.width)
     h_size = int(float(img.height) * float(w_percent))
     img_resized = img.resize((target_w, h_size), Image.LANCZOS)
     buf = io.BytesIO()
-    img_resized.save(buf, format="JPEG", quality=85, optimize=True)
+    img_resized.save(buf, format="JPEG", quality=90, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("utf-8"), img
 
 
 VISION_PROMPT = """You are a precision OCR engine and document data extractor.
 
 Instructions:
-1. Extract ALL visible text, numbers, tables, headings, and labels from this image with 100% fidelity.
-2. Format ANY tabular data (including continuation tables or table rows without a top header) strictly as Markdown tables (| Col 1 | Col 2 | ... |). Extract EVERY SINGLE row (e.g., items 11, 12, 13), product description, SKU, quantity, rate, and amount.
-3. If diagrams, drawings, or figures are present, extract all visible component names, labels, and callouts.
-4. Output ONLY clean Markdown data starting directly with the content — NEVER include conversational text, intros, outros, reasoning, or <think> tags.
-5. Do NOT skip any rows or missing information."""
+1. Extract ALL visible text, numbers, tables, headings, customer details, invoice metadata, and labels from this image with 100% fidelity.
+2. Format ALL tabular data strictly as Markdown tables (| Col 1 | Col 2 | ... |). Extract EVERY SINGLE row (e.g., items 1, 2, ... 11, 12, 13) including product descriptions, SKUs, quantities, rates, and amounts.
+3. If a page contains a continuation table (e.g., items 11, 12, 13), format those continuation rows strictly as a Markdown table as well.
+4. Output ONLY clean Markdown text starting directly with the content.
+5. ABSOLUTELY NO internal thinking, reasoning out loud, self-corrections, or phrases like "Wait, looking at..." or "Let me re-examine...". Output ONLY the visible document content."""
 
 
 def _strip_think_tags(text: str) -> str:
@@ -262,17 +293,100 @@ def _strip_think_tags(text: str) -> str:
     if "</think>" in cleaned:
         cleaned = cleaned.split("</think>")[-1]
 
-    cleaned = cleaned.strip()
-    first_table = cleaned.find("|")
-    first_header = cleaned.find("#")
-    
-    starts = [pos for pos in (first_table, first_header) if pos != -1]
-    if starts:
-        min_start = min(starts)
-        if min_start > 0:
-            cleaned = cleaned[min_start:]
+    # Strip Vision LLM internal monologue and repetitive chain-of-thought reasoning loops
+    reasoning_keywords = [
+        "wait, looking", "let me re-examine", "let's look at",
+        "crop ", "transcribe what is visible", "looking closely at",
+        "looking at the very bottom", "i can see `sku:", "let's assume the sku"
+    ]
+    filtered_lines = []
+    for line in cleaned.splitlines():
+        lower = line.lower().strip()
+        if any(kw in lower for kw in reasoning_keywords):
+            continue
+        filtered_lines.append(line)
 
-    return cleaned.strip()
+    return "\n".join(filtered_lines).strip()
+
+
+def _extract_tesseract_page_text(img: Image.Image) -> str:
+    """Run fast local Tesseract on PIL image to capture all text including headers."""
+    try:
+        import subprocess, tempfile
+        tess_bin = _get_tesseract_cmd()
+        tmp_img = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+        img.save(tmp_img)
+        proc = subprocess.run(
+            [tess_bin, tmp_img, "stdout", "--psm", "3", "-l", "eng"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        if os.path.exists(tmp_img):
+            os.remove(tmp_img)
+        return (proc.stdout or "").strip()
+    except Exception:
+        return ""
+
+
+def _merge_tesseract_header(page_text: str, tess_text: str) -> str:
+    """Generically prepend pre-table header lines from Tesseract if missing from Vision OCR output."""
+    if not tess_text:
+        return page_text
+
+    lower_vision = page_text.lower()
+    header_lines = []
+
+    for line in tess_text.splitlines():
+        l_str = line.strip()
+        if not l_str:
+            continue
+        # Stop header extraction as soon as table rows or table headers start
+        if l_str.startswith("|") or l_str.startswith("#") or re.match(r"^\d+[\.\)]\s+", l_str):
+            break
+
+        # Check if this non-table line is already in page_text
+        words = [w for w in re.findall(r"\w+", l_str.lower()) if len(w) > 2]
+        already_present = any(w in lower_vision for w in words[:3]) if words else False
+        if not already_present:
+            header_lines.append(l_str)
+
+    if header_lines:
+        header_block = "\n".join(header_lines)
+        return f"{header_block}\n\n{page_text}"
+
+    return page_text
+
+
+def _format_tesseract_items_table(text: str) -> str:
+    """Generically format un-tabled structured text into Markdown tables if Vision API is unavailable."""
+    if not text or "|" in text:
+        return text
+
+    import re
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return text
+
+    # Detect lines containing numeric item prefixes, currency symbols, quantities, or SKU/ID patterns
+    item_pattern = re.compile(
+        r"^\d+[\.\)]\s+|"  # Item number e.g. "1.", "1)"
+        r"\b(?:rs\.?|pkr|\$|eur|usd|gbp|sku|code|part\s*#?|qty|pcs)\b|"  # Financial/Inventory identifiers
+        r"\b\d+(?:\.\d{1,2})?\s*(?:rs\.?|pkr|\$|eur|usd)\b",
+        re.IGNORECASE
+    )
+
+    table_rows = [l for l in lines if item_pattern.search(l)]
+
+    if len(table_rows) >= 2:
+        md_lines = [
+            "| # | Product / Item Description | Details / Amounts |",
+            "|---|---|---|",
+        ]
+        for idx, row in enumerate(table_rows, 1):
+            md_lines.append(f"| {idx} | {row} | |")
+
+        return text + "\n\n### Extracted Structured Data\n" + "\n".join(md_lines)
+
+    return text
 
 
 def _vision_ocr(image_b64s: list[str], pil_images: list[Image.Image] | None = None) -> str:
@@ -287,6 +401,9 @@ def _vision_ocr(image_b64s: list[str], pil_images: list[Image.Image] | None = No
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
         ]
         page_text = ""
+        tess_text = ""
+        if pil_images and idx - 1 < len(pil_images):
+            tess_text = _extract_tesseract_page_text(pil_images[idx - 1])
 
         # Attempt 1: Active Groq Vision
         if groq_service.available and groq_service.vision_available:
@@ -299,37 +416,29 @@ def _vision_ocr(image_b64s: list[str], pil_images: list[Image.Image] | None = No
                 if result and not result.startswith("[Groq") and not result.startswith("⚠️"):
                     page_text = result
             except Exception as e:
-                logger.warning(f"Groq vision page {idx} failed: {e}")
+                print(f"[OCR] Groq vision page {idx} failed: {e}")
 
         # Attempt 2: Multi-provider Vision Fallback (Gemini, OpenAI, Anthropic)
         if not page_text.strip():
-            res = vision_provider.analyze(b64)
-            ocr_out = res.get("ocr_text", "") or res.get("markdown", "")
-            if ocr_out and not ocr_out.startswith("["):
-                page_text = ocr_out
-
-        # Attempt 3: Local Tesseract OCR for this specific page (GUARANTEED fallback)
-        if not page_text.strip() and pil_images and idx - 1 < len(pil_images):
-            logger.info(f"[OCR] Vision failed for page {idx}, using local Tesseract fallback")
             try:
-                import subprocess, tempfile
-                tess_bin = "/opt/homebrew/bin/tesseract" if os.path.exists("/opt/homebrew/bin/tesseract") else "tesseract"
-                tmp_img = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
-                pil_images[idx - 1].save(tmp_img)
-                proc = subprocess.run(
-                    [tess_bin, tmp_img, "stdout", "--psm", "3", "-l", "eng"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                )
-                if os.path.exists(tmp_img):
-                    os.remove(tmp_img)
-                tess_text = (proc.stdout or "").strip()
-                if tess_text:
-                    page_text = tess_text
-                    logger.info(f"[OCR] Tesseract extracted {len(tess_text)} chars for page {idx}")
+                res = vision_provider.analyze(b64)
+                ocr_out = res.get("ocr_text", "") or res.get("markdown", "")
+                if ocr_out and not ocr_out.startswith("["):
+                    page_text = ocr_out
             except Exception as e:
-                logger.warning(f"Tesseract fallback failed for page {idx}: {e}")
+                print(f"[OCR] Multi-provider vision failed: {e}")
+
+        # Attempt 3: Local Tesseract OCR fallback for page
+        if not page_text.strip():
+            page_text = _format_tesseract_items_table(tess_text)
+            if page_text:
+                print(f"[OCR] Tesseract extracted {len(page_text)} chars for page {idx}")
 
         if page_text.strip():
+            # Merge missing customer/vendor/invoice metadata from Tesseract if Vision skipped them
+            if tess_text:
+                page_text = _merge_tesseract_header(page_text, tess_text)
+
             page_text = _strip_think_tags(page_text)
             page_texts.append(f"<!-- Page {idx} -->\n{page_text.strip()}")
 
@@ -342,6 +451,9 @@ def _tesseract_ocr(images: list[Image.Image]) -> str:
         return ""
     try:
         import pytesseract
+        tess_bin = _get_tesseract_cmd()
+        if os.path.exists(tess_bin):
+            pytesseract.pytesseract.tesseract_cmd = tess_bin
         texts = []
         for img in images:
             text = pytesseract.image_to_string(img)

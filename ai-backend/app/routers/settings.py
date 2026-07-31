@@ -61,10 +61,42 @@ async def update_provider(body: ProviderUpdateBody):
     }
 
 
+@router.delete("/providers")
+async def clear_all_providers():
+    """Clear all configured providers."""
+    provider_manager.clear_all_providers()
+    try:
+        from ..services.groq_service import groq_service
+        groq_service._configure("")
+    except Exception:
+        pass
+    try:
+        from ..services.conversation_service import conversation_service
+        conversation_service.reconfigure(preferred_provider="")
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "message": "All providers removed",
+        "data": provider_manager.get_config_summary(),
+    }
+
+
 @router.delete("/providers/{provider}")
 async def remove_provider(provider: str):
     """Remove a provider configuration."""
     provider_manager.remove_provider(provider)
+    if provider == "groq":
+        try:
+            from ..services.groq_service import groq_service
+            groq_service._configure("")
+        except Exception:
+            pass
+    try:
+        from ..services.conversation_service import conversation_service
+        conversation_service.reconfigure(preferred_provider="")
+    except Exception:
+        pass
     return {
         "success": True,
         "message": f"Provider {provider} removed",

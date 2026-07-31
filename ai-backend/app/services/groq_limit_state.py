@@ -64,7 +64,7 @@ def status_payload() -> dict[str, Any]:
 
 
 def parse_retry_seconds(err_msg: str) -> int:
-    """Parse Groq retry hint; TPD (tokens per day) defaults toward 24h."""
+    """Parse Groq retry hint; TPD (tokens per day) defaults toward 24h, TPM toward 60s."""
     msg = err_msg or ""
     lower = msg.lower()
 
@@ -86,7 +86,12 @@ def parse_retry_seconds(err_msg: str) -> int:
 
     if parsed > 0:
         return parsed
-    return 24 * 3600
+
+    # Tokens per minute (TPM) or 413 Payload Too Large — lock for 60s max
+    if "per minute" in lower or "tpm" in lower or "tokens per minute" in lower or "413" in lower or "too large" in lower:
+        return 60
+
+    return 60
 
 
 def mark_limited(err_msg: str, model: str | None = None) -> dict[str, Any]:

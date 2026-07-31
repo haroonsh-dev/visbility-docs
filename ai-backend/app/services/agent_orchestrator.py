@@ -320,7 +320,18 @@ class ClassificationAgent:
         try:
             t0 = __import__("time").time()
             log.info("Calling Groq API (llama-3.3-70b-versatile)...")
-            raw_response = groq_service.chat([{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.3-70b-versatile")
+            raw_response = ""
+            try:
+                raw_response = groq_service.chat(
+                    [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.3-70b-versatile"
+                )
+            except Exception as first_err:
+                log.warn(f"Groq 70b first try error ({first_err}), retrying on 70b with truncated text...")
+                short_text = text[:4000]
+                short_prompt = prompt_template.replace("{text}", short_text[:4000]).replace("{filename}", filename)
+                raw_response = groq_service.chat(
+                    [{"role": "user", "content": short_prompt}], temperature=0.05, max_tokens=1500, model="llama-3.3-70b-versatile"
+                )
             
             import re
             scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
@@ -363,6 +374,61 @@ class ClassificationAgent:
             return fallback
 
 
+def _clean_repetitive_ocr(text: str) -> str:
+    """Strip repetitive OCR loops to keep token count compact."""
+    if not text:
+        return ""
+    lines = text.split("\n")
+    cleaned = []
+    seen = set()
+    repeat_count = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned.append(line)
+            continue
+        # Skip OCR vision artifact repetition loops
+        if "looking at" in stripped.lower() or "transcribe" in stripped.lower() or "crop" in stripped.lower():
+            if stripped in seen:
+                continue
+        if stripped in seen:
+            repeat_count += 1
+            if repeat_count > 3:
+                continue
+        else:
+            repeat_count = 0
+            seen.add(stripped)
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+def _heuristic_extract_fields(text: str, document_type: str) -> dict:
+    """Regex-based fallback extraction when LLM hits rate limit or payload too large."""
+    import re
+    data = {}
+    if not text:
+        return data
+
+    inv_num = re.search(r"(?:invoice\s*#?|inv\s*#?|order\s*#?|bill\s*#?)\s*:?\s*([A-Za-z0-9\-_]+)", text, re.IGNORECASE)
+    if inv_num:
+        data["invoice_number"] = inv_num.group(1)
+        data["document_number"] = inv_num.group(1)
+
+    inv_date = re.search(r"(?:date|invoice\s*date)\s*:?\s*(\d{1,4}[\/\.-]\d{1,4}[\/\.-]\d{1,4})", text, re.IGNORECASE)
+    if inv_date:
+        data["invoice_date"] = inv_date.group(1)
+
+    total_amt = re.search(r"(?:total|net\s*amount|amount\s*due|grand\s*total)\s*:?\s*(?:rs\.?|pkr|\$|eur|usd)?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    if total_amt:
+        data["total_amount"] = total_amt.group(1)
+
+    vendor = re.search(r"^(?:company|vendor|from)?\s*([A-Z0-9\s\.\-]{3,40})(?=\n|\r)", text, re.MULTILINE)
+    if vendor:
+        data["vendor_name"] = vendor.group(1).strip()
+
+    return data
+
+
 class CategoryExtractionAgent:
     def extract(self, text: str, document_type: str, agent_type: str = "") -> dict:
         from .groq_service import groq_service
@@ -371,7 +437,8 @@ class CategoryExtractionAgent:
         log = get_logger()
         log.info(f"DocType: {document_type} | Text: {len(text if text else '')} chars")
 
-        clean_text = (text or "").strip()
+        raw_clean_text = (text or "").strip()
+        clean_text = _clean_repetitive_ocr(raw_clean_text)
         if not clean_text or clean_text == "[OCR failed]" or len(clean_text) < 15:
             log.warn(f"Empty or failed OCR text ({len(clean_text)} chars) — skipping extraction LLM call to prevent field leakage")
             return {
@@ -389,27 +456,38 @@ class CategoryExtractionAgent:
             log.warn(f"No prompt found for agent '{agent}' / type '{document_type}', returning empty")
             return {"extracted_data": {}, "confidence": 0.0}
 
-        prompt = prompt_template.replace("{text}", "") # Remove legacy {text} if present
-        
-        prompt += "\n\nCRITICAL INSTRUCTION: You MUST extract EVERY SINGLE line item, row, and record present in the text. DO NOT truncate, summarize, or stop early to save space. If there are 50 rows, you MUST output 50 objects in the array. Omitting rows will cause catastrophic failure!"
-        prompt += "\nCRITICAL INSTRUCTION: You MUST format your response exactly as follows. First, write out your reasoning inside a `<scratchpad>` XML block. Then, output the final JSON block. DO NOT include any other text outside these blocks."
-        prompt += "\nCRITICAL INSTRUCTION [ANTI-HALLUCINATION]: You MUST NOT invent, guess, or hallucinate ANY data. DO NOT copy placeholder text or field names from the prompt template. If a specific field is NOT explicitly written in the document text, you MUST output `null` or an empty string `\"\"`. NEVER generate fake numbers, dates, or guess missing fields!"
-        prompt += f"\n\n<document>\n{clean_text[:64000]}\n</document>"
-        
+        prompt_base = prompt_template.replace("{text}", "")
+        prompt_base += "\n\nCRITICAL INSTRUCTION: You MUST extract EVERY SINGLE line item, row, and record present in the text. DO NOT truncate, summarize, or stop early to save space."
+        prompt_base += "\nCRITICAL INSTRUCTION: You MUST format your response exactly as follows. First, write out your reasoning inside a `<scratchpad>` XML block. Then, output the final JSON block."
+        prompt_base += "\nCRITICAL INSTRUCTION [ANTI-HALLUCINATION]: You MUST NOT invent, guess, or hallucinate ANY data. If a specific field is NOT explicitly written in the document text, output `null` or `\"\"`."
+
+        # Cap text size to ~8,000 chars (~2,000 tokens) to prevent Groq 6,000 TPM limit 413 error
+        doc_slice = clean_text[:8000]
+        prompt = prompt_base + f"\n\n<document>\n{doc_slice}\n</document>"
+
         log.info(f"Prompt loaded ({C.DIM}{prompt_path}, {len(prompt_template)} chars{C.RESET})")
         log.info(f"Prompt preview: {C.DIM}{prompt[:200].replace(chr(10), ' ')}...{C.RESET}")
 
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.1-8b-instant) for extraction...")
-            raw_response = groq_service.chat(
-                [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000, model="llama-3.1-8b-instant"
-            )
-            
+            log.info("Calling Groq API (llama-3.3-70b-versatile) for extraction...")
+            raw_response = ""
+            try:
+                raw_response = groq_service.chat(
+                    [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000, model="llama-3.3-70b-versatile"
+                )
+            except Exception as rate_err:
+                log.warn(f"Groq API error on 70b-versatile ({rate_err}), retrying on 70b-versatile with truncated text...")
+                short_doc_slice = clean_text[:4000]
+                short_prompt = prompt_base + f"\n\n<document>\n{short_doc_slice}\n</document>"
+                raw_response = groq_service.chat(
+                    [{"role": "user", "content": short_prompt}], temperature=0.0, max_tokens=2000, model="llama-3.3-70b-versatile"
+                )
+
             import re
             scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
             scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else ""
-            
+
             result = groq_service._parse_json(raw_response, {})
             duration = __import__("time").time() - t0
             field_confidence = result.pop("_field_confidence", {}) if isinstance(result, dict) else {}
@@ -430,14 +508,13 @@ class CategoryExtractionAgent:
                 "prompt_path": prompt_path,
             }
         except Exception as e:
-            log.fail(f"Extraction failed: {e}")
-            import traceback as tb
-            tb.print_exc()
+            log.fail(f"Extraction failed: {e}, falling back to local heuristic extraction")
             logger.error(f"Category extraction agent ({document_type}) error: {e}")
+            fallback_data = _heuristic_extract_fields(clean_text, document_type)
             return {
-                "extracted_data": {},
-                "scratchpad": "",
-                "confidence": 0.0,
+                "extracted_data": fallback_data,
+                "scratchpad": f"LLM rate limit fallback: {e}",
+                "confidence": 0.5 if fallback_data else 0.0,
                 "field_confidence": {},
                 "agent_type": agent,
             }

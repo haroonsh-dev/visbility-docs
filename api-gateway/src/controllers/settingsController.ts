@@ -177,10 +177,16 @@ export const deleteApiKey = async (req: Request, res: Response, next: NextFuncti
         const provider = key.provider;
         await ApiKey.deleteOne({ keyId: key.keyId });
 
+        // Check if any keys remain for this org
+        const remainingCount = await ApiKey.countDocuments(orgId ? { organizationId: orgId } : {});
+
         // Sync provider deletion to Python AI backend
         try {
             const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
             await fetch(`${aiUrl}/api/v1/settings/providers/${provider}`, { method: 'DELETE' });
+            if (remainingCount === 0) {
+                await fetch(`${aiUrl}/api/v1/settings/providers`, { method: 'DELETE' });
+            }
         } catch (e) {
             console.warn(`[SETTINGS] Failed to sync provider deletion '${provider}' to AI backend:`, e);
         }

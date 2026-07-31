@@ -122,6 +122,23 @@ class ProviderManager:
         self._providers.pop(provider, None)
         if getattr(self, "_primary_provider", None) == provider:
             self._primary_provider = list(self._providers.keys())[0] if self._providers else None
+        env_key_map = {
+            "groq": "GROQ_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+        }
+        if provider in env_key_map:
+            os.environ.pop(env_key_map[provider], None)
+        self._save_state()
+
+    def clear_all_providers(self):
+        """Clear all configured providers."""
+        self._providers.clear()
+        self._primary_provider = None
+        env_keys = ["GROQ_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"]
+        for k in env_keys:
+            os.environ.pop(k, None)
         self._save_state()
 
     def get_provider(self, provider: str) -> Optional[ProviderConfig]:
