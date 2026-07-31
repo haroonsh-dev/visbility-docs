@@ -119,13 +119,13 @@ class VisionProvider:
         return ""
 
     def _call_gemini(self, b64_image: str, api_key: str = "", model: str = "") -> str:
-        key = api_key or os.getenv("GEMINI_API_KEY") or ""
+        key = api_key
         if not key:
             from .provider_manager import provider_manager
             cfg = provider_manager.get_provider("gemini")
             key = cfg.api_key if cfg else ""
         if not key:
-            logger.warning("Gemini API key not configured")
+            logger.warning("Gemini API key not configured in AI Settings")
             return ""
 
         use_model = model or "gemini-2.0-flash"
@@ -163,13 +163,13 @@ class VisionProvider:
             return ""
 
     def _call_openai(self, b64_image: str, api_key: str = "", model: str = "") -> str:
-        key = api_key or self.api_key or os.getenv("OPENAI_API_KEY") or ""
+        key = api_key
         if not key:
             from .provider_manager import provider_manager
             cfg = provider_manager.get_provider("openai")
             key = cfg.api_key if cfg else ""
         if not key:
-            logger.warning("OpenAI API key not configured")
+            logger.warning("OpenAI API key not configured in AI Settings")
             return ""
 
         use_model = model or self.model or "gpt-4o"
@@ -210,13 +210,13 @@ class VisionProvider:
             return ""
 
     def _call_anthropic(self, b64_image: str, api_key: str = "", model: str = "") -> str:
-        key = api_key or os.getenv("ANTHROPIC_API_KEY") or ""
+        key = api_key
         if not key:
             from .provider_manager import provider_manager
             cfg = provider_manager.get_provider("anthropic")
             key = cfg.api_key if cfg else ""
         if not key:
-            logger.warning("Anthropic API key not configured")
+            logger.warning("Anthropic API key not configured in AI Settings")
             return ""
 
         use_model = model or "claude-3-5-sonnet-20241022"
