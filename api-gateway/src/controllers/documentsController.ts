@@ -42,6 +42,8 @@ import {
 import { PERMISSIONS } from '../types/permissions';
 import logger from '../utils/logger';
 
+const ALLOWED_AI_PROVIDERS = ['groq', 'openai', 'gemini', 'anthropic', 'custom'];
+
 const SORT_FIELDS: Record<string, string> = {
     createdAt: 'createdAt',
     name: 'originalFilename',
@@ -430,7 +432,12 @@ export const uploadDocument = async (req: Request, res: Response, next: NextFunc
             }
         }
 
-        const { doc, aiModelResponse } = await saveUploadedFile(req.user, file, phase3Agent);
+        const aiProvider = ((req.body?.aiProvider as string) || '').trim().toLowerCase() || undefined;
+        if (aiProvider && !ALLOWED_AI_PROVIDERS.includes(aiProvider)) {
+            return res.status(400).json({ success: false, message: `Unsupported AI provider: ${aiProvider}` });
+        }
+
+        const { doc, aiModelResponse } = await saveUploadedFile(req.user, file, phase3Agent, aiProvider);
         recordActivityFromReq(req, {
             action: 'document.upload',
             category: 'document',
@@ -460,7 +467,7 @@ export const uploadDocument = async (req: Request, res: Response, next: NextFunc
             return res.status(415).json({ success: false, message: error.message });
         }
         if (error.statusCode === 409) {
-            return res.status(409).json({ success: false, message: error.message });
+            return res.status(409).json({ success: false, code: 'DUPLICATE_FILE', message: error.message });
         }
         next(error);
     }

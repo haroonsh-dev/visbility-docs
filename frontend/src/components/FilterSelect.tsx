@@ -16,6 +16,11 @@ type FilterSelectProps = {
     minWidth?: string;
     menuPlacement?: "top" | "bottom" | "auto";
     hideLabel?: boolean;
+    /** "card" renders a taller trigger with an icon badge and the label stacked above the value. */
+    variant?: "default" | "card";
+    icon?: React.ComponentType<{ size?: number; className?: string }>;
+    iconClassName?: string;
+    labelHint?: string;
 };
 
 type MenuPos = { top: number; left: number; width: number; openUp: boolean };
@@ -29,6 +34,10 @@ export default function FilterSelect({
     minWidth = "min-w-[130px]",
     menuPlacement = "auto",
     hideLabel = false,
+    variant = "default",
+    icon: Icon,
+    iconClassName,
+    labelHint,
 }: FilterSelectProps) {
     const [open, setOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
@@ -140,6 +149,61 @@ export default function FilterSelect({
                   document.body
               )
             : null;
+
+    if (variant === "card") {
+        const insetLabel = Icon ? "pl-14" : "pl-4";
+        return (
+            <div ref={rootRef} className={cn("relative", className)}>
+                <button
+                    ref={btnRef}
+                    type="button"
+                    onClick={() => setOpen((v) => !v)}
+                    className={cn(
+                        "relative w-full rounded-2xl border bg-white text-left shadow-sm transition-all",
+                        open
+                            ? "border-[var(--accent)] ring-4 ring-[var(--accent-ring)]"
+                            : "border-[var(--border)] hover:border-[var(--accent)]/40 hover:shadow-md"
+                    )}
+                    aria-haspopup="listbox"
+                    aria-expanded={open}
+                    aria-label={label}
+                >
+                    {Icon && (
+                        <span
+                            className={cn(
+                                "absolute left-3 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-xl border",
+                                iconClassName
+                            )}
+                        >
+                            <Icon size={16} />
+                        </span>
+                    )}
+                    <span
+                        className={cn(
+                            "block pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--foreground-muted)]",
+                            insetLabel
+                        )}
+                    >
+                        {label}
+                        {labelHint && (
+                            <span className="ml-1.5 font-medium normal-case tracking-normal opacity-70">{labelHint}</span>
+                        )}
+                    </span>
+                    <span className={cn("block truncate pb-2.5 pr-9 text-sm font-semibold text-[var(--foreground)]", insetLabel)}>
+                        {selected?.label}
+                    </span>
+                    <ChevronDown
+                        size={16}
+                        className={cn(
+                            "absolute right-3 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)] transition-transform",
+                            open && "rotate-180 text-[var(--accent)]"
+                        )}
+                    />
+                </button>
+                {menu}
+            </div>
+        );
+    }
 
     return (
         <div ref={rootRef} className={cn("flex flex-col gap-1", className)}>

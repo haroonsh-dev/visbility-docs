@@ -541,14 +541,15 @@ class SupabaseDB:
 
     @staticmethod
     def update_chat_session_title(session_id: str, title: str):
+        now = datetime.utcnow().isoformat()
         try:
             client = _get_supabase()
             if _use_supabase and client:
-                client.table("chat_sessions").update({"title": title}).eq("id", session_id).execute()
+                client.table("chat_sessions").update({"title": title, "updated_at": now}).eq("id", session_id).execute()
         except Exception:
             pass
         conn = _get_local_db()
-        conn.execute("UPDATE chat_sessions SET title=? WHERE id=?", (title, session_id))
+        conn.execute("UPDATE chat_sessions SET title=?, updated_at=? WHERE id=?", (title, now, session_id))
         conn.commit()
 
     @staticmethod

@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import Document, { IDocument } from '../models/Document';
 import DocumentChunk from '../models/DocumentChunk';
+import type { AIProvider } from '../models/ApiKey';
 import { isAllowedFile, sanitizeFilename } from '../utils/fileValidation';
 import { AuthUser } from './accessScope';
 import {
@@ -11,6 +12,7 @@ import {
     deleteDocumentFromAi,
     isAiServiceEnabled,
     resolveAiOrganizationId,
+    setAiPrimaryProvider,
     uploadDocumentToAi,
 } from './aiServiceClient';
 import logger from '../utils/logger';
@@ -307,10 +309,38 @@ export type SaveUploadResult = {
     aiModelResponse: AiUploadResult | null;
 };
 
+/**
+ * The AI backend keeps a single active provider, so an upload-time choice has to be
+ * applied right before the file is forwarded. Returns the provider actually applied.
+ */
+async function applyRequestedAiProvider(
+    organizationId: string | null | undefined,
+    provider?: string
+): Promise<string | null> {
+    const wanted = (provider || '').trim().toLowerCase();
+    if (!wanted || !organizationId) return null;
+
+    const { default: ApiKey } = await import('../models/ApiKey');
+    const key = await ApiKey.findOne({ organizationId, provider: wanted as AIProvider }).lean();
+    if (!key?.apiKey) {
+        logger.warn(`Requested AI provider "${wanted}" has no API key for org ${organizationId} — using current provider`);
+        return null;
+    }
+
+    await setAiPrimaryProvider({
+        provider: wanted,
+        apiKey: key.apiKey,
+        model: key.aiModel || '',
+        baseUrl: key.baseUrl || '',
+    });
+    return wanted;
+}
+
 export async function saveUploadedFile(
     user: AuthUser,
     file: UploadFileInput,
-    phase3Agent?: string
+    phase3Agent?: string,
+    aiProvider?: string
 ): Promise<SaveUploadResult> {
     const validation = isAllowedFile(file.originalname, file.mimetype);
     if (!validation.ok) {
@@ -358,10 +388,12 @@ export async function saveUploadedFile(
     let status: 'uploaded' | 'processing' | 'failed' = 'uploaded';
     let aiModelResponse: AiUploadResult | null = null;
     let aiOrgId: string | null = null;
+    let appliedProvider: string | null = null;
 
     if (isAiServiceEnabled()) {
         try {
             aiOrgId = resolveAiOrganizationId(user);
+            appliedProvider = await applyRequestedAiProvider(user.organizationId, aiProvider);
             let allowedAgents: string[] | undefined;
             if (user.role !== 'superAdmin' && user.organizationId) {
                 const { getAllowedAgentsForOrg } = await import('./planService');
@@ -420,6 +452,7 @@ export async function saveUploadedFile(
             storageLayout: 'by-type',
             storageType: 'inbox',
             ...(phase3Agent ? { phase3Agent } : {}),
+            ...(appliedProvider ? { aiProvider: appliedProvider } : {}),
             ...(pythonDocumentId && aiOrgId ? { aiOrgId } : {}),
         },
     });
