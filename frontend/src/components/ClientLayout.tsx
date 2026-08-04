@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
@@ -10,6 +12,7 @@ import { PermissionsProvider, usePermissions } from "@/context/PermissionsContex
 import { GroqLimitProvider } from "./GroqLimitModal";
 import DriveSyncInbox from "./DriveSyncInbox";
 import { clearAuthState, hasValidAccessToken, canRefreshSession, getAuthValue } from "@/lib/authSession";
+import SiteLogo from "@/assets/Logo/Visibility-Docs-light-bg.png";
 
 const PAGE_TITLES: Record<string, string> = {
     "/dashboard": "Dashboard",
@@ -56,7 +59,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         firstAllowedPath,
     } = usePermissions();
     const [navOpen, setNavOpen] = useState(false);
-    const bootedRef = useRef(false);
 
     const closeNav = useCallback(() => setNavOpen(false), []);
 
@@ -123,43 +125,37 @@ function Shell({ children }: { children: React.ReactNode }) {
         setNavOpen(false);
     }, [pathname]);
 
-    if (ready) bootedRef.current = true;
-
-    // Only show full-page loader on the very first boot — never hide sidebar on navigations
-    if (!ready && !bootedRef.current) {
-        return (
-            <div className="min-h-screen flex items-center justify-center app-shell text-[var(--foreground-muted)] relative">
-                <div className="flex flex-col items-center gap-3 relative z-[1]">
-                    <div className="spinner" />
-                    <p className="text-sm">Loading workspace...</p>
-                </div>
-            </div>
-        );
-    }
-
     return (
-        <div className="h-screen flex overflow-hidden app-shell text-[var(--foreground)] relative">
+        <div className="h-screen flex overflow-hidden app-shell text-foreground relative">
             <Sidebar open={navOpen} onClose={closeNav} />
-            <div className="flex-1 min-w-0 min-h-0 flex flex-col relative z-[1]">
-                <header className="lg:hidden shrink-0 flex items-center gap-3 px-3 sm:px-4 py-2.5 border-b border-[var(--border)] bg-gradient-to-r from-white/90 via-teal-50/80 to-cyan-50/70 backdrop-blur-md">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col relative z-1">
+                <header className="lg:hidden shrink-0 flex items-center gap-2.5 px-3 sm:px-4 py-2 border-b border-border bg-linear-to-r from-white/90 via-teal-50/80 to-cyan-50/70 backdrop-blur-md">
                     <button
                         type="button"
                         onClick={() => setNavOpen(true)}
-                        className="btn-ghost rounded-lg p-2.5 min-h-11 min-w-11 flex items-center justify-center"
+                        className="btn-ghost rounded-lg p-2.5 min-h-11 min-w-11 flex items-center justify-center shrink-0"
                         aria-label="Open menu"
                     >
                         <Menu size={20} />
                     </button>
+                    <Link href="/dashboard" className="shrink-0 flex items-center min-h-10">
+                        <Image
+                            src={SiteLogo}
+                            alt="Visibility Docs"
+                            className="h-9 w-auto max-w-29.5 object-contain"
+                            priority
+                            sizes="118px"
+                        />
+                    </Link>
                     <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold tracking-tight truncate">{resolvePageTitle(pathname)}</p>
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-[var(--accent)] font-semibold">
-                            Visibility
+                        <p className="text-sm font-semibold tracking-tight truncate leading-tight">
+                            {resolvePageTitle(pathname)}
                         </p>
                     </div>
                 </header>
                 <main className="flex-1 min-h-0 min-w-0 overflow-y-auto app-main">
                     {teamRouteBlocked ? (
-                        <div className="min-h-[40vh] flex items-center justify-center text-sm text-[var(--foreground-muted)]">
+                        <div className="min-h-[40vh] flex items-center justify-center text-sm text-foreground-muted">
                             Redirecting…
                         </div>
                     ) : (

@@ -19,7 +19,7 @@ export interface IApiKey extends Document {
 const ApiKeySchema = new Schema<IApiKey>(
     {
         keyId: { type: String, required: true, unique: true, index: true },
-        organizationId: { type: String, required: true, index: true },
+        organizationId: { type: String, required: false, default: 'global', index: true },
         provider: { type: String, enum: ['groq', 'openai', 'gemini', 'anthropic', 'custom'], required: true },
         apiKey: { type: String, required: true },
         label: { type: String, required: true },

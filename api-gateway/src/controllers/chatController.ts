@@ -6,6 +6,7 @@ import { buildDocumentFilter, hasPermission } from '../services/accessScope';
 import {
     chatWithAi,
     deleteChatSession,
+    ensureDocumentsInAi,
     extractGroqLimitError,
     formatAiError,
     getChatSession,
@@ -121,8 +122,12 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             });
         }
 
-        const filter = await buildDocumentFilter(req.user, {});
-        const docs = await Document.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+        // Chitchat: skip Mongo document scan — greetings do not need library context.
+        let docs: any[] = [];
+        if (!isChitchat) {
+            const filter = await buildDocumentFilter(req.user, {});
+            docs = await Document.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+        }
 
         if (!docs.length && !isChitchat) {
             return res.json({
@@ -189,16 +194,31 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 // Greetings skip document scope — AI replies without RAG
                 scopedPythonIds = undefined;
             } else if (chatScope === 'selected') {
-                scopedPythonIds = docs
-                    .filter((d) => d.pythonDocumentId && documentIds.includes(d.documentId))
-                    .map((d) => d.pythonDocumentId as string);
+                const selectedMongo = await Document.find({
+                    ...(await buildDocumentFilter(req.user, {})),
+                    documentId: { $in: documentIds },
+                })
+                    .select('documentId pythonDocumentId originalFilename mimeType storagePath')
+                    .lean();
+                const healed = await ensureDocumentsInAi(selectedMongo as any[], orgId, req.user.userId);
+                scopedPythonIds = selectedMongo
+                    .map((d) => healed.get(d.documentId) || d.pythonDocumentId)
+                    .filter(Boolean) as string[];
                 if (!scopedPythonIds.length) {
                     return res.status(400).json({
                         success: false,
-                        message: 'Selected documents are not processed by AI yet',
+                        message:
+                            'Selected documents are not available in the AI index yet. Open Documents → Reprocess (or re-upload) so chat can read their content.',
                     });
                 }
             } else {
+                // All-documents mode: heal library so AI search can see uploaded files
+                const library = await Document.find(await buildDocumentFilter(req.user, {}))
+                    .select('documentId pythonDocumentId originalFilename mimeType storagePath')
+                    .sort({ createdAt: -1 })
+                    .limit(40)
+                    .lean();
+                await ensureDocumentsInAi(library as any[], orgId, req.user.userId);
                 scopedPythonIds = undefined;
             }
 
@@ -216,11 +236,14 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                         : 'No active AI provider configured. Please go to AI Settings and enter your API key.',
                 });
             }
-            await syncProviderToAIBackend(providerConfig);
+            // Chitchat already sends providerConfig in the chat payload — skip extra sync round-trip.
+            if (!isChitchat) {
+                await syncProviderToAIBackend(providerConfig);
+            }
 
             let phase3Agent = phase3AgentRaw;
             let allowedAgents: string[] | undefined;
-            if (req.user.role !== 'superAdmin') {
+            if (!isChitchat && req.user.role !== 'superAdmin') {
                 const { requireAllowedAgent } = await import('../services/planService');
                 const check = await requireAllowedAgent(req.user, phase3AgentRaw);
                 if (!check.ok) {
@@ -281,6 +304,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     model: 'visibility-ai-rag',
                     aiProvider: (result as any).provider || providerConfig?.provider || provider,
                     aiModel: (result as any).model || providerConfig?.model || model,
+                    agentId: phase3Agent || undefined,
                 },
             });
             recordActivityFromReq(req, {
@@ -311,7 +335,10 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             }
             return res.status(502).json({
                 success: false,
-                message: 'AI chat service unavailable',
+                message:
+                    aiError?.code === 'ECONNABORTED' || String(aiError?.message || '').includes('timeout')
+                        ? 'Chat took too long. Narrow document scope or increase AI_CHAT_TIMEOUT_MS on the gateway.'
+                        : 'AI backend (Python) is not reachable. Start it with: cd ai-backend && python run.py (see AI_SERVICE_URL in api-gateway/.env).',
                 error: formatAiError(aiError),
             });
         }
@@ -470,6 +497,56 @@ export const renameChatSessionHandler = async (req: Request, res: Response, next
             metadata: { title },
         });
         res.json({ success: true, message: 'Session renamed', data: { session } });
+    } catch (error) {
+        next(error);
+    }
+};
+
+function generateFeedbackId(): string {
+    return `fb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export const submitFeedback = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { sessionId, messageIndex, type } = req.body || {};
+        if (!sessionId || messageIndex == null || !type) {
+            return res.status(400).json({
+                success: false,
+                message: 'sessionId, messageIndex, and type are required',
+            });
+        }
+        if (!['like', 'dislike'].includes(String(type))) {
+            return res.status(400).json({ success: false, message: 'type must be "like" or "dislike"' });
+        }
+
+        const idx = Number(messageIndex);
+        if (Number.isNaN(idx) || idx < 0) {
+            return res.status(400).json({ success: false, message: 'messageIndex must be a non-negative integer' });
+        }
+
+        const { default: MessageFeedback } = await import('../models/MessageFeedback');
+        const existing = await MessageFeedback.findOne({
+            sessionId,
+            messageIndex: idx,
+            userId: req.user.userId,
+        });
+
+        if (existing) {
+            existing.type = String(type) as 'like' | 'dislike';
+            await existing.save();
+            return res.json({ success: true, data: { feedback: existing, updated: true } });
+        }
+
+        const fb = await MessageFeedback.create({
+            feedbackId: generateFeedbackId(),
+            sessionId,
+            messageIndex: idx,
+            userId: req.user.userId,
+            organizationId: req.user.organizationId || 'personal',
+            type: String(type) as 'like' | 'dislike',
+        });
+
+        res.status(201).json({ success: true, data: { feedback: fb } });
     } catch (error) {
         next(error);
     }

@@ -7,7 +7,7 @@ from .orchestration_logger import get_chat_logger, C
 from .agent_orchestrator import _load_phase3_prompt, _load_prompt, get_phase3_prompt_for_doc, DOCUMENT_TO_PHASE3_AGENT, PHASE3_AGENT_PROMPT_MAP
 from ..utils.agent_allowlist import clamp_agent, parse_allowed_agents
 
-_RESUME_KEYWORDS = ["resume", "cv ", "candidate", "applicant", "hiring", "recruit",
+_RESUME_KEYWORDS = ["resume", r"\bcv\b", "candidate", "applicant", "hiring", "recruit",
                     "top.*resume", "best.*candidate", "rank.*resume", "score.*resume",
                     "sorted.*resume", "highest.*score", "top.*candidate",
                     "give me.*top", "list.*resume", "show.*candidate", "list.*candidate",
@@ -50,6 +50,17 @@ _CROSS_DOC_DROP = {
     "please", "can", "you", "could",
 }
 
+# Reply language — English by default; Urdu only when the user clearly writes in Urdu
+_LANGUAGE_RULE = (
+    "LANGUAGE: Default to English. If the user writes in English, you MUST answer in English only. "
+    "Use Urdu or Roman Urdu only when the user's message is clearly in Urdu (Arabic script or Roman Urdu). "
+    "Do not answer in Urdu because document context contains Urdu text."
+)
+
+_TONE_RULE = (
+    "TONE: Be professional and concise. Do NOT use emojis, emoticons, or decorative symbols in any reply."
+)
+
 
 class ChatService:
     @staticmethod
@@ -72,12 +83,35 @@ class ChatService:
     def _chitchat_reply(self, question: str, session_id: str, is_first: bool,
                         provider: str = None, model: str = None,
                         provider_config: dict | None = None):
+        import re
+        q = (question or "").strip().lower()
+        # Instant templates for common greetings — skip LLM latency.
+        if re.match(r"^(hi|hii+|hello|hey|hy|helo|hola|salam|assalam.?o.?alaikum|aoa|slm)[\s!.]*$", q):
+            answer = (
+                "Hello. How can I help you today? "
+                "Ask about summaries, fields, or anything in your uploaded documents."
+            )
+            return {"answer": answer, "provider": provider, "model": model}
+        if re.match(r"^(thanks?|thank you|thx|ty|shukriya|jazakallah)[\s!.]*$", q):
+            return {
+                "answer": "You're welcome. Let me know if you need anything else from your documents.",
+                "provider": provider,
+                "model": model,
+            }
+        if re.match(r"^(bye|goodbye|see you|take care|tc)[\s!.]*$", q):
+            return {
+                "answer": "Goodbye. Come back anytime you need help with your documents.",
+                "provider": provider,
+                "model": model,
+            }
+
         prompt = (
-            "You are Visibility Docs AI, a friendly document assistant.\n"
+            "You are Visibility Docs AI, a professional document assistant.\n"
             "The user sent a greeting or casual message — NOT a document question.\n"
-            "Reply briefly and warmly in the same language as the user "
-            "(Urdu/Roman Urdu → short Roman Urdu/Urdu; English → English).\n"
-            "Invite them to ask about their uploaded documents.\n"
+            f"{_LANGUAGE_RULE}\n"
+            f"{_TONE_RULE}\n"
+            "Reply in 1–2 short professional sentences.\n"
+            "Match a simple greeting briefly, then offer to help with their uploaded documents.\n"
             "Do NOT say you cannot find information in documents.\n"
             "Do NOT invent document facts."
         )
@@ -279,6 +313,96 @@ class ChatService:
                 break
         return out
 
+    def _build_scoped_document_context(
+        self, document_ids: list, organization_id: str, max_chunks_per_doc: int = 40
+    ) -> str:
+        """Extraction → raw_text → chunk fallback for explicitly selected documents."""
+        if not document_ids:
+            return ""
+        chat_log = get_chat_logger()
+        summary = self._fetch_extraction_summary(document_ids, organization_id)
+        raw = self._fetch_raw_text(document_ids, organization_id)
+        parts = []
+        if summary:
+            parts.append(summary)
+        if raw:
+            parts.append(raw)
+        if parts:
+            return "\n\n".join(parts)
+        chunks = rag_service._fetch_any_chunks(
+            document_ids, organization_id, limit_per_doc=max_chunks_per_doc
+        )
+        if chunks:
+            chat_log.info(
+                f"Scoped chunk fallback: {len(chunks)} chunk(s) from {len(document_ids)} document(s)"
+            )
+            return "\n\n".join(
+                f'<document filename="{c["document_title"]}">\n{c["chunk_text"]}\n</document>'
+                for c in chunks
+            )
+        chat_log.warn(
+            f"No scoped context for document_ids={document_ids[:3]}{'…' if len(document_ids) > 3 else ''} "
+            f"org={organization_id} — check AI processing / pythonDocumentId sync"
+        )
+        return ""
+
+    def _find_related_document_ids(self, question: str, organization_id: str, limit: int = 8) -> list[str]:
+        """Match library docs by title/raw_text keywords when vector search is empty."""
+        import re
+        q = (question or "").lower()
+        drop = {
+            "give", "me", "my", "the", "a", "an", "of", "for", "to", "in", "on", "at", "all",
+            "get", "show", "list", "tell", "what", "which", "from", "with", "who", "best",
+            "that", "this", "rule", "role", "find", "please", "about",
+        }
+        # Keep topic words; also keep known entity-ish tokens even if short
+        words = [w for w in re.sub(r"[^\w\s]", " ", q).split() if len(w) >= 3 and w not in drop]
+        # Always try these high-signal phrases from the question
+        phrases = []
+        for p in (
+            "vendor", "client", "clients", "invoice", "resume", "cv", "pakistan", "bata",
+            "quotation", "purchase", "supplier", "customer", "science", "sceince",
+        ):
+            if p in q:
+                phrases.append(p)
+        needles = list(dict.fromkeys(phrases + words))[:12]
+        if not needles:
+            return []
+        try:
+            result = SupabaseDB.select(
+                "documents",
+                columns="id, title, document_type, raw_text",
+                filters={"organization_id": organization_id},
+                limit=200,
+            )
+            docs = getattr(result, "data", result if isinstance(result, list) else [])
+            if not isinstance(docs, list):
+                docs = []
+        except Exception:
+            return []
+        scored: list[tuple[int, str]] = []
+        for d in docs:
+            if not isinstance(d, dict) or not d.get("id"):
+                continue
+            title = (d.get("title") or "").lower()
+            dtype = (d.get("document_type") or "").lower()
+            blob = f"{title} {dtype}"
+            raw = (d.get("raw_text") or "")[:8000].lower()
+            if raw:
+                blob += " " + raw
+            score = 0
+            for n in needles:
+                if n in title:
+                    score += 8
+                elif n in raw:
+                    score += 4
+                elif n in blob:
+                    score += 2
+            if score:
+                scored.append((score, d["id"]))
+        scored.sort(key=lambda x: -x[0])
+        return [did for _, did in scored[:limit]]
+
     def _build_multi_prompt_for_search_results(self, doc_type_counts: dict, agents: set, allowed_agents: list = None) -> tuple[str, list[str]]:
         """Load and sanitize multiple .md prompt files for top matched document types.
         Strictly enforces user plan entitlements: Only loads skill files for agents allowed in allowed_agents.
@@ -362,50 +486,35 @@ class ChatService:
         if not document_ids:
             return ""
         try:
-            unique_ids = set(document_ids)
-            title_set = set((t or "").lower().strip() for t in (titles or []))
-            result = SupabaseDB.select("documents",
-                columns="id, title, document_type, raw_text",
-                filters={"organization_id": organization_id},
-                limit=200,
-            )
-            data = getattr(result, "data", result if isinstance(result, list) else [])
+            unique_ids = list(set(document_ids))
+            from ..database import _get_supabase, _use_supabase, _local_select_in
+            client = _get_supabase()
+            if _use_supabase and client:
+                r = client.table("documents").select("id, title, document_type, raw_text").in_("id", unique_ids).eq(
+                    "organization_id", organization_id
+                ).execute()
+                data = getattr(r, "data", []) or []
+            else:
+                data = _local_select_in(
+                    "documents",
+                    columns="id, title, document_type, raw_text",
+                    filters={"organization_id": organization_id},
+                    in_column="id",
+                    in_values=unique_ids,
+                )
             parts = []
             total = 0
-            matched_any = False
             for row in (data or []):
                 raw = row.get("raw_text") or ""
                 if not raw:
                     continue
-                doc_id = row.get("id", "")
-                doc_title = (row.get("title") or "").lower().strip()
-                # Match by ID or by title
-                id_match = doc_id in unique_ids
-                title_match = doc_title in title_set if title_set else False
-                if not id_match and not title_match:
-                    continue
-                matched_any = True
-                display = row.get("title") or doc_id
+                display = row.get("title") or row.get("id", "")
                 remaining = max_chars - total
                 if remaining <= 0:
                     break
                 truncated = raw[:remaining]
                 parts.append(f"[Document: {display} (Full Source Text)]:\n{truncated}")
                 total += len(truncated)
-            # Fallback: if no match by ID or title, include ALL org docs with raw_text
-            # This handles ID mismatches between local/remote databases
-            if not matched_any:
-                for row in (data or []):
-                    raw = row.get("raw_text") or ""
-                    if not raw:
-                        continue
-                    display = row.get("title") or row.get("id", "")
-                    remaining = max_chars - total
-                    if remaining <= 0:
-                        break
-                    truncated = raw[:remaining]
-                    parts.append(f"[Document: {display} (Full Source Text)]:\n{truncated}")
-                    total += len(truncated)
             return "\n\n".join(parts) if parts else ""
         except Exception:
             return ""
@@ -425,11 +534,21 @@ class ChatService:
                     .eq("organization_id", organization_id) \
                     .execute()
                 rows = getattr(r, "data", [])
+                if not rows:
+                    r = client.table("document_extractions") \
+                        .select("document_id, extraction_type, extracted_data, confidence") \
+                        .in_("document_id", unique_ids) \
+                        .execute()
+                    rows = getattr(r, "data", [])
             else:
                 rows = _local_select_in("document_extractions",
                     columns="document_id, extraction_type, extracted_data, confidence",
                     filters={"organization_id": organization_id},
                     in_column="document_id", in_values=unique_ids)
+                if not rows:
+                    rows = _local_select_in("document_extractions",
+                        columns="document_id, extraction_type, extracted_data, confidence",
+                        in_column="document_id", in_values=unique_ids)
             if not rows:
                 return ""
 
@@ -534,6 +653,12 @@ class ChatService:
             session_id, organization_id, document_ids, user_id=user_id
         )
 
+        preloaded_scoped_context = ""
+        if resolved_ids:
+            preloaded_scoped_context = self._build_scoped_document_context(
+                resolved_ids, organization_id
+            )
+
         # ── Focused Q&A on a selected excerpt (ChatGPT-style "ask about this") ──
         if selected_text and selected_text.strip():
             return self._answer_on_excerpt(
@@ -601,6 +726,105 @@ class ChatService:
         if not resolved_ids:
             cross_doc, agg_field_terms = self._detect_cross_doc_intent(question)
 
+        q_lower = question.lower()
+        is_finance_query = (
+            document_type in ("invoice", "purchase_order", "quotation", "rfq")
+            or phase3_agent in ("finance_agent", "procurement_agent")
+            or any(term in q_lower for term in [
+                "invoice", "subtotal", "amount due", "grand total", "due date",
+                "payment terms", "vendor", "customer", "bill to", "ship to",
+                "tax", "vat", "gst", "line item", "line items", "invoice number",
+                "purchase order", "po number", "quotation", "rfq", "supplier",
+            ])
+        )
+
+        # Scoped docs: use preloaded text immediately (skips slow vector search)
+        if resolved_ids and preloaded_scoped_context and not cross_doc:
+            chat_log.info(
+                f"Using preloaded scoped context ({len(preloaded_scoped_context)} chars) for {len(resolved_ids)} doc(s)"
+            )
+            scoped_prompt = (
+                "You are Visibility Docs AI. Answer using ONLY the document context below.\n"
+                "If the answer is not in the context, say clearly that it is not in the selected documents.\n"
+                "Do not invent facts.\n"
+            )
+            chat_log.llm_call(model or "default", len(preloaded_scoped_context), len(question), len(resolved_ids), provider=provider)
+            llm_t0 = time.time()
+            res_dict = conversation_service.chat(
+                question,
+                preloaded_scoped_context,
+                session_id=sid,
+                system_prompt=scoped_prompt,
+                is_followup=not is_first,
+                provider=provider,
+                model=model,
+                provider_config=provider_config,
+            )
+            answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+            res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+            res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+            chat_log.llm_response(time.time() - llm_t0, len(answer))
+            self._save_exchange(sid, question, answer, [], is_first)
+            total = time.time() - t_start
+            chat_log.chat_end(total, 0)
+            return {
+                "answer": answer,
+                "sources": [],
+                "document_id": resolved_ids[0] if resolved_ids else "",
+                "history": conversation_service.get_history(sid),
+                "session_id": sid,
+                "provider": res_provider,
+                "model": res_model,
+            }
+
+        # All-library mode: if we can match related files by title/content, answer from them
+        # instead of spending ~40s on empty Pinecone/vector search.
+        if not resolved_ids and not cross_doc:
+            related_early = self._find_related_document_ids(question, organization_id)
+            if related_early:
+                related_early = related_early[:2]
+                early_ctx = self._build_scoped_document_context(related_early, organization_id)
+                if early_ctx and len(early_ctx) > 200:
+                    chat_log.info(
+                        f"Related-document fast path: {len(related_early)} file(s), {len(early_ctx)} chars (skip vector search)"
+                    )
+                    prompt = (
+                        "You are Visibility Docs AI.\n\n"
+                        "Use ONLY the provided document context to answer the user's question.\n"
+                        "If the user asks for vendor/client lists, invoices, or CVs, extract the matching rows/fields from the context.\n"
+                        "If the answer is missing, say clearly what is not in the documents.\n"
+                        "Do not invent numbers, dates, or names.\n"
+                    )
+                    chat_log.llm_call(model or "default", len(early_ctx), len(question), len(related_early), provider=provider)
+                    llm_t0 = time.time()
+                    res_dict = conversation_service.chat(
+                        question,
+                        early_ctx,
+                        session_id=sid,
+                        system_prompt=prompt,
+                        is_followup=not is_first,
+                        provider=provider,
+                        model=model,
+                        provider_config=provider_config,
+                    )
+                    answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
+                    res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
+                    res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
+                    chat_log.llm_response(time.time() - llm_t0, len(answer))
+                    sources = [{"document_id": did, "document_title": "", "score": 1.0} for did in related_early]
+                    self._save_exchange(sid, question, answer, sources, is_first)
+                    total = time.time() - t_start
+                    chat_log.chat_end(total, len(sources))
+                    return {
+                        "answer": answer,
+                        "sources": sources,
+                        "document_id": related_early[0],
+                        "history": conversation_service.get_history(sid),
+                        "session_id": sid,
+                        "provider": res_provider,
+                        "model": res_model,
+                    }
+
         hybrid_kwargs = dict(
             query=search_query,
             organization_id=organization_id,
@@ -638,35 +862,57 @@ class ChatService:
             chat_log.info("[SEARCH-FIRST ROUTING] No document types in results — will use fallback")
 
         q_lower = question.lower()
+        import re as _re
         is_resume_query = any(
-            __import__("re").search(kw, q_lower) for kw in _RESUME_KEYWORDS
-        )
-        is_finance_query = (
-            document_type in ("invoice", "purchase_order", "quotation", "rfq")
-            or phase3_agent in ("finance_agent", "procurement_agent")
-            or any(term in q_lower for term in [
-                "invoice", "subtotal", "amount due", "grand total", "due date",
-                "payment terms", "vendor", "customer", "bill to", "ship to",
-                "tax", "vat", "gst", "line item", "line items", "invoice number",
-                "purchase order", "po number", "quotation", "rfq", "supplier",
-            ])
+            _re.search(kw, q_lower) for kw in _RESUME_KEYWORDS
         )
 
         if not search_results and not is_resume_query and document_type:
-            chat_log.warn(f"No results with document_type={document_type} — retrying without type filter")
+            chat_log.warn(f"No results with document_type={document_type} — light retry without type filter")
             retry_kwargs = {k: v for k, v in hybrid_kwargs.items() if k != "document_type"}
-            search_results = rag_service.hybrid_search(**retry_kwargs)
+            search_results = rag_service.hybrid_search(**retry_kwargs, light=True)
 
         if not search_results:
             resumes = []
             if is_resume_query:
                 try:
-                    resumes = document_service.list_documents(organization_id)
+                    import json
+                    import re
+                    resumes = document_service.list_documents(organization_id, limit=200)
                     if resolved_ids:
                         resolved_set = set(resolved_ids)
                         resumes = [r for r in resumes if r["id"] in resolved_set]
                     document_service._batch_attach_extractions(resumes, organization_id)
-                    resumes = [r for r in resumes if r.get("cv_score") is not None]
+                    # Keep resume-type docs even without CV score (user may ask for CV text, not ranking)
+                    resume_like = [
+                        r for r in resumes
+                        if (r.get("document_type") or "").lower() == "resume"
+                        or r.get("cv_score") is not None
+                        or "resume" in (r.get("title") or "").lower()
+                        or "cv" in (r.get("title") or "").lower()
+                    ]
+                    if resume_like:
+                        resumes = resume_like
+                    # Match role/topic words (e.g. data science / sceince typo)
+                    topic_words = [
+                        w for w in re.sub(r"[^\w\s]", " ", q_lower).split()
+                        if len(w) >= 3 and w not in ("give", "show", "list", "resume", "curriculum")
+                    ]
+                    if topic_words:
+                        def _resume_hits(r: dict) -> bool:
+                            title = (r.get("title") or "").lower()
+                            blob = title
+                            ext = r.get("extracted_data") or r.get("extraction") or {}
+                            if isinstance(ext, dict):
+                                blob += " " + json.dumps(ext).lower()
+                            return any(w in blob for w in topic_words)
+
+                        narrowed = [r for r in resumes if _resume_hits(r)]
+                        if narrowed:
+                            resumes = narrowed
+                    scored = [r for r in resumes if r.get("cv_score") is not None]
+                    if scored:
+                        resumes = scored
                     resumes.sort(key=lambda x: x.get("cv_score", 0) or 0, reverse=True)
                 except Exception:
                     resumes = []
@@ -686,20 +932,41 @@ class ChatService:
                     })
                 resume_context = "\n".join(lines)
 
+            if is_resume_query and resumes and not resume_context.strip():
+                resume_ids = [r["id"] for r in resumes[:8]]
+                body = self._build_scoped_document_context(resume_ids, organization_id, max_chunks_per_doc=50)
+                if body:
+                    resume_context = (
+                        "[Resume documents in your library]\n"
+                        + "\n".join(f"- {r.get('title', r['id'])}" for r in resumes[:8])
+                        + "\n\n"
+                        + body
+                    )
+
             # If search returned nothing but we are clearly in finance/invoice mode,
             # answer directly from structured extraction data when available.
             finance_context = ""
-            if is_finance_query and resolved_ids:
-                finance_context = self._fetch_extraction_summary(resolved_ids, organization_id)
-                raw_text_block = self._fetch_raw_text(resolved_ids, organization_id)
-                if raw_text_block:
-                    finance_context = (finance_context + "\n\n" + raw_text_block) if finance_context else raw_text_block
+            related_ids = list(resolved_ids) if resolved_ids else []
+            if not related_ids:
+                related_ids = self._find_related_document_ids(question, organization_id)
+                if related_ids:
+                    chat_log.info(
+                        f"Related-document fallback matched {len(related_ids)} library file(s) by title/content"
+                    )
+                    # Prefer the strongest matches so resumes don't drown vendor/client tables
+                    related_ids = related_ids[:2]
+            if related_ids:
+                finance_context = self._build_scoped_document_context(related_ids, organization_id)
             if finance_context:
-                chat_log.search_strategy("Structured Extraction Fallback", "no vector matches, using invoice metadata")
+                chat_log.search_strategy(
+                    "Related document fallback",
+                    "no vector matches; answering from matched library documents",
+                )
                 finance_prompt = (
-                    "You are a Finance Agent for Visibility Docs AI.\n\n"
-                    "Use the provided structured extraction summary to answer the question exactly.\n"
-                    "If the answer is missing, say you cannot find it in the documents.\n"
+                    "You are Visibility Docs AI.\n\n"
+                    "Use ONLY the provided document context to answer the user's question.\n"
+                    "If the user asks for vendor/client lists, invoices, or CVs, extract the matching rows/fields from the context.\n"
+                    "If the answer is missing, say clearly what is not in the documents.\n"
                     "Do not invent numbers, dates, or names.\n"
                 )
                 chat_log.llm_call("llama-3.3-70b-versatile", len(finance_context), len(question), 1, provider=provider)
@@ -717,8 +984,11 @@ class ChatService:
                 chat_log.chat_end(total, 0)
                 return {
                     "answer": answer,
-                    "sources": [],
-                    "document_id": resolved_ids[0] if resolved_ids else "",
+                    "sources": [
+                        {"document_id": did, "document_title": "", "score": 1.0}
+                        for did in related_ids[:5]
+                    ],
+                    "document_id": related_ids[0] if related_ids else "",
                     "history": conversation_service.get_history(sid),
                     "session_id": sid,
                     "provider": res_provider,
@@ -727,22 +997,86 @@ class ChatService:
 
             chat_log.search_strategy("Context Building", "no results found")
             chat_log.warn("No relevant documents found in search")
-            chat_log.llm_call("llama-3.3-70b-versatile", 0, len(question), 0, provider=provider)
-            system_prompt = ""
-            if resume_context:
-                system_prompt = "You are a Resume Screening assistant. Use the [Resume Rankings] block to answer ranking/comparison questions. Do not make up information."
+
+            # Last resort: answer from the strongest related library files, or list what exists
+            if not resume_context:
+                library_ids = self._find_related_document_ids(question, organization_id, limit=5)
+                if not library_ids:
+                    try:
+                        catalog = document_service.list_documents(organization_id, limit=30)
+                        library_ids = [
+                            d["id"] for d in catalog
+                            if isinstance(d, dict) and d.get("id")
+                        ][:3]
+                    except Exception:
+                        library_ids = []
+                if library_ids:
+                    resume_context = self._build_scoped_document_context(
+                        library_ids, organization_id, max_chunks_per_doc=30
+                    )
+                    if resume_context:
+                        chat_log.info(
+                            f"Library last-resort context: {len(library_ids)} doc(s), {len(resume_context)} chars"
+                        )
+
+            if not (resume_context or "").strip():
+                try:
+                    catalog = document_service.list_documents(organization_id, limit=40)
+                    titles = [
+                        d.get("title") or d.get("id")
+                        for d in catalog
+                        if isinstance(d, dict)
+                    ]
+                except Exception:
+                    titles = []
+                if titles:
+                    answer = (
+                        "I could not load searchable text for your question yet. "
+                        "These documents are in your library — open Documents and click Reprocess "
+                        "(or re-upload) so chat can read them, then ask again:\n\n- "
+                        + "\n- ".join(titles[:20])
+                    )
+                else:
+                    answer = (
+                        "No processed document text is available for chat yet. "
+                        "Upload a file on Documents and wait until processing finishes, then ask again."
+                    )
+                self._save_exchange(sid, question, answer, [], is_first)
+                total = time.time() - t_start
+                chat_log.chat_end(total, 0)
+                return {
+                    "answer": answer,
+                    "sources": [],
+                    "document_id": resolved_ids[0] if resolved_ids else "",
+                    "history": conversation_service.get_history(sid),
+                    "session_id": sid,
+                    "provider": provider,
+                    "model": model,
+                }
+
+            chat_log.llm_call(model or "default", len(resume_context), len(question), 1, provider=provider)
+            system_prompt = (
+                "You are Visibility Docs AI. Use the document context below to answer the user. "
+                "Extract the closest matching facts (lists, tables, CV fields). "
+                "If something is missing, say what is missing and what documents you used."
+            )
+            if is_resume_query:
+                system_prompt = (
+                    "You are a Resume Screening assistant. Use the resume document context below. "
+                    "Summarize or extract what the user asked for (e.g. CV details, skills, experience). "
+                    "If the topic is not in the documents, say which resumes you have and what is missing."
+                )
             llm_t0 = time.time()
-            if is_first:
-                res_dict = conversation_service.chat(
-                    question, resume_context, session_id=sid,
-                    system_prompt=system_prompt, provider=provider, model=model,
-                    provider_config=provider_config,
-                )
-            else:
-                res_dict = conversation_service.chat(
-                    question, resume_context, session_id=sid, is_followup=True,
-                    provider=provider, model=model, provider_config=provider_config,
-                )
+            res_dict = conversation_service.chat(
+                question,
+                resume_context,
+                session_id=sid,
+                system_prompt=system_prompt,
+                is_followup=not is_first,
+                provider=provider,
+                model=model,
+                provider_config=provider_config,
+            )
             answer = res_dict.get("answer", "") if isinstance(res_dict, dict) else str(res_dict)
             res_provider = res_dict.get("provider", provider) if isinstance(res_dict, dict) else provider
             res_model = res_dict.get("model", model) if isinstance(res_dict, dict) else model
@@ -973,7 +1307,7 @@ class ChatService:
                         qa_prompt = cleaned_prompt
                         qa_prompt += (
                             "\n\nRules:\n"
-                            "0. Always answer in the same language as the user's question — Urdu/Saraiki question → Urdu answer, English question → English answer.\n"
+                            f"0. {_LANGUAGE_RULE} {_TONE_RULE}\n"
                             "1. Answer concisely and directly using the context.\n"
                             "2. If the context contains image/vision descriptions, use them to answer.\n"
                             "3. If the answer is NOT in the context, say \"I cannot find this information in the documents.\"\n"
@@ -997,6 +1331,7 @@ class ChatService:
                     "You are a Finance Agent for Visibility Docs AI.\n\n"
                     "Answer only from the provided context and structured summary.\n\n"
                     "Rules:\n"
+                    f"0. {_LANGUAGE_RULE} {_TONE_RULE}\n"
                     "1. Be exact about amounts, dates, and names.\n"
                     "2. Keep currency symbols and percentages intact.\n"
                     "3. If the answer is missing, say you cannot find it in the documents.\n"
@@ -1012,6 +1347,7 @@ class ChatService:
                     f"You are the {agent_label} - a document Q&A assistant for Visibility Docs AI.\n\n"
                     "Your job is to answer the user's question based ONLY on the provided document context below.\n\n"
                     "Rules:\n"
+                    f"0. {_LANGUAGE_RULE} {_TONE_RULE}\n"
                     "1. Answer concisely and directly using the context.\n"
                     "2. If the context contains image/vision descriptions, use them to answer.\n"
                     "3. If the answer is NOT in the context, say \"I cannot find this information in the documents.\"\n"
@@ -1101,7 +1437,7 @@ class ChatService:
             "Base every claim on the excerpt — quote or reference the relevant part when useful. "
             "If the excerpt does not contain the information needed, say so naturally and "
             "ask one short clarifying question about what they would like to know instead. "
-            "Keep the answer concise. Reply in the same language as the user's question. "
+            f"Keep the answer concise. {_LANGUAGE_RULE} {_TONE_RULE} "
             "Do not invent facts.\n"
         )
         chat_log.info(f"Focused excerpt Q&A — excerpt {len(selected_text)} chars, question {len(question)} chars")

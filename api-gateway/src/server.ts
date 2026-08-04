@@ -3,12 +3,15 @@ import app from './app';
 import dbConnect from './config/db';
 import logger from './utils/logger';
 import { seedPlansOnBoot } from './services/planSeed';
-import { runDueGoogleDriveSyncs } from './services/integrationSyncService';
-import { runDueEmailReports } from './services/emailReportService';
 
 dotenv.config();
 
 const PORT = parseInt(process.env.PORT || '5100', 10);
+const BACKGROUND_TICK_MS = Math.max(
+    60_000,
+    Number(process.env.BACKGROUND_TICK_MS || 120_000)
+);
+const BACKGROUND_JOBS_ENABLED = process.env.DISABLE_BACKGROUND_JOBS !== 'true';
 
 async function start() {
     await dbConnect();
@@ -16,21 +19,35 @@ async function start() {
     app.listen(PORT, () => {
         logger.info(`Visibility Docs AI API listening on http://localhost:${PORT}`);
         logger.info(`OpenRemote enabled: ${process.env.OPENREMOTE_ENABLED !== 'false'}`);
+        if (!BACKGROUND_JOBS_ENABLED) {
+            logger.info('Background jobs disabled (DISABLE_BACKGROUND_JOBS=true)');
+        }
     });
 
-    // Auto-sync Google Drive + due email reports (interval / daily / weekly)
-    const tickMs = 60 * 1000;
-    const runTicks = () => {
-        runDueGoogleDriveSyncs().catch((err) => {
+    if (!BACKGROUND_JOBS_ENABLED) return;
+
+    // Lazy-import heavy Drive/email modules only when ticks run (keeps idle RAM lower)
+    const runTicks = async () => {
+        try {
+            const { runDueGoogleDriveSyncs } = await import('./services/integrationSyncService');
+            await runDueGoogleDriveSyncs();
+        } catch (err: any) {
             logger.warn(`[integrations] auto-sync tick failed: ${err?.message || err}`);
-        });
-        runDueEmailReports().catch((err) => {
+        }
+        try {
+            const { runDueEmailReports } = await import('./services/emailReportService');
+            await runDueEmailReports();
+        } catch (err: any) {
             logger.warn(`[email-reports] tick failed: ${err?.message || err}`);
-        });
+        }
     };
-    setInterval(runTicks, tickMs);
-    // First tick shortly after boot
-    setTimeout(runTicks, 15_000);
+
+    setInterval(() => {
+        void runTicks();
+    }, BACKGROUND_TICK_MS);
+    setTimeout(() => {
+        void runTicks();
+    }, 30_000);
 }
 
 start().catch((err) => {

@@ -56,6 +56,8 @@ type PlanRequest = {
     quotedPrice: number;
     message?: string;
     status: string;
+    requestType?: string;
+    previousAgentIds?: string[];
     createdAt?: string;
     organization?: { organizationName?: string; contactEmail?: string } | null;
     requester?: { fullName?: string; email?: string } | null;
@@ -99,6 +101,9 @@ export default function SuperAdminPlansPage() {
     const [pricing, setPricing] = useState<Pricing | null>(null);
     const [plans, setPlans] = useState<Plan[]>([]);
     const [requests, setRequests] = useState<PlanRequest[]>([]);
+    const [requestForm, setRequestForm] = useState<
+        Record<string, { agentIds: string[]; storageGb: number }>
+    >({});
     const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
     const [orgs, setOrgs] = useState<OrgOption[]>([]);
 
@@ -153,7 +158,20 @@ export default function SuperAdminPlansPage() {
             ]);
             setPricing(pricingRes?.data?.pricing || null);
             setPlans(plansRes?.data?.plans || []);
-            setRequests(reqRes?.data?.requests || []);
+            const loadedRequests: PlanRequest[] = reqRes?.data?.requests || [];
+            setRequests(loadedRequests);
+            setRequestForm((prev) => {
+                const next = { ...prev };
+                for (const r of loadedRequests) {
+                    if (r.status === "pending" && !next[r.requestId]) {
+                        next[r.requestId] = {
+                            agentIds: [...(r.agentIds || [])],
+                            storageGb: r.storageGb ?? 10,
+                        };
+                    }
+                }
+                return next;
+            });
             setSubscriptions(subRes?.data?.subscriptions || []);
             setOrgs(
                 (orgRes?.data?.organizations || []).map((o: any) => ({
@@ -289,13 +307,68 @@ export default function SuperAdminPlansPage() {
         }
     };
 
+    const quoteSelection = (
+        agentIds: string[],
+        storageGb: number,
+        cycle: "monthly" | "yearly"
+    ) => {
+        if (!pricing) return 0;
+        const set = new Set(agentIds);
+        let total = 0;
+        for (const a of pricing.agents) {
+            if (set.has(a.agentId) && a.enabled) {
+                total += cycle === "yearly" ? a.yearlyPrice : a.monthlyPrice;
+            }
+        }
+        const perGb = cycle === "yearly" ? pricing.pricePerGbYearly : pricing.pricePerGbMonthly;
+        total += Math.max(0, storageGb) * perGb;
+        return Math.round(total * 100) / 100;
+    };
+
+    const updateRequestForm = (
+        id: string,
+        patch: Partial<{ agentIds: string[]; storageGb: number }>
+    ) => {
+        setRequestForm((prev) => ({
+            ...prev,
+            [id]: {
+                ...(prev[id] || { agentIds: [], storageGb: 10 }),
+                ...patch,
+            },
+        }));
+    };
+
+    const toggleRequestAgent = (id: string, agentId: string) => {
+        setRequestForm((prev) => {
+            const base = prev[id] || { agentIds: [], storageGb: 10 };
+            const on = base.agentIds.includes(agentId);
+            return {
+                ...prev,
+                [id]: {
+                    ...base,
+                    agentIds: on
+                        ? base.agentIds.filter((x) => x !== agentId)
+                        : [...base.agentIds, agentId],
+                },
+            };
+        });
+    };
+
     const approveRequest = async (id: string) => {
-        if (!confirm("Approve and activate this plan for the organization?")) return;
+        const form = requestForm[id];
+        if (!form || !form.agentIds.length) {
+            setError("Select at least one agent module to grant");
+            return;
+        }
+        if (!confirm("Approve and activate with the selected agent modules?")) return;
         setSaving(true);
         try {
             await apiRequest(`/docs/super-admin/plan-requests/${id}/approve`, {
                 method: "POST",
-                body: JSON.stringify({}),
+                body: JSON.stringify({
+                    agentIds: form.agentIds,
+                    storageGb: form.storageGb,
+                }),
             });
             setToast("Request approved — subscription activated");
             await load();
@@ -776,6 +849,11 @@ export default function SuperAdminPlansPage() {
                                         <h3 className="font-semibold text-slate-900 text-sm truncate">
                                             {r.organization?.organizationName || r.organizationId}
                                         </h3>
+                                        {r.requestType === "change" && (
+                                            <span className="rounded bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide shrink-0">
+                                                Change
+                                            </span>
+                                        )}
                                         <Badge
                                             variant={
                                                 r.status === "pending"
@@ -801,6 +879,12 @@ export default function SuperAdminPlansPage() {
                                     {r.storageGb} GB
                                     <span className="text-slate-300 mx-1.5">·</span>
                                     {r.agentIds.map(agentLabel).join(", ")}
+                                    {r.requestType === "change" && r.previousAgentIds?.length && (
+                                        <span className="text-slate-400">
+                                            {" "}
+                                            (from: {r.previousAgentIds.map(agentLabel).join(", ")})
+                                        </span>
+                                    )}
                                 </p>
                                 {r.message && (
                                     <p className="text-xs text-slate-500 italic border-l-2 border-slate-200 pl-2">
@@ -812,23 +896,98 @@ export default function SuperAdminPlansPage() {
                                     {r.createdAt ? ` · ${new Date(r.createdAt).toLocaleString()}` : ""}
                                 </p>
                                 {r.status === "pending" && (
-                                    <div className="flex gap-2 pt-1">
-                                        <button
-                                            type="button"
-                                            disabled={saving}
-                                            onClick={() => approveRequest(r.requestId)}
-                                            className="rounded-lg px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white inline-flex items-center gap-1 hover:bg-emerald-700"
-                                        >
-                                            <Check size={13} /> Approve
-                                        </button>
-                                        <button
-                                            type="button"
-                                            disabled={saving}
-                                            onClick={() => rejectRequest(r.requestId)}
-                                            className="rounded-lg px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 inline-flex items-center gap-1"
-                                        >
-                                            <XCircle size={13} /> Reject
-                                        </button>
+                                    <div className="space-y-2.5 pt-1">
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-2">
+                                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                                    Agent modules to grant
+                                                </p>
+                                                <span className="text-xs font-semibold text-slate-700 tabular-nums">
+                                                    {money(
+                                                        quoteSelection(
+                                                            requestForm[r.requestId]?.agentIds ||
+                                                                r.agentIds ||
+                                                                [],
+                                                            requestForm[r.requestId]?.storageGb ??
+                                                                r.storageGb ??
+                                                                10,
+                                                            r.billingCycle
+                                                        ),
+                                                        pricing?.currency
+                                                    )}
+                                                    <span className="text-slate-400 font-normal text-[10px] ml-1 capitalize">
+                                                        / {r.billingCycle}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {AGENT_CHOICES.map((a) => {
+                                                    const on = (
+                                                        requestForm[r.requestId]?.agentIds ||
+                                                        r.agentIds ||
+                                                        []
+                                                    ).includes(a.value);
+                                                    return (
+                                                        <button
+                                                            key={a.value}
+                                                            type="button"
+                                                            disabled={saving}
+                                                            onClick={() =>
+                                                                toggleRequestAgent(r.requestId, a.value)
+                                                            }
+                                                            className={`rounded-lg border px-2.5 py-1 text-xs font-medium inline-flex items-center gap-1 transition-colors ${
+                                                                on
+                                                                    ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                                                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                                                            }`}
+                                                        >
+                                                            {on && <Check size={11} />}
+                                                            {a.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <label className="text-[11px] font-medium text-slate-500">
+                                                    Storage
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    disabled={saving}
+                                                    value={
+                                                        requestForm[r.requestId]?.storageGb ??
+                                                        r.storageGb ??
+                                                        10
+                                                    }
+                                                    onChange={(e) =>
+                                                        updateRequestForm(r.requestId, {
+                                                            storageGb: Number(e.target.value) || 0,
+                                                        })
+                                                    }
+                                                    className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+                                                />
+                                                <span className="text-[11px] text-slate-400">GB</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                disabled={saving}
+                                                onClick={() => approveRequest(r.requestId)}
+                                                className="rounded-lg px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white inline-flex items-center gap-1 hover:bg-emerald-700"
+                                            >
+                                                <Check size={13} /> Approve
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={saving}
+                                                onClick={() => rejectRequest(r.requestId)}
+                                                className="rounded-lg px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 inline-flex items-center gap-1"
+                                            >
+                                                <XCircle size={13} /> Reject
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>

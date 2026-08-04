@@ -74,6 +74,10 @@ const CATEGORY_LABELS: Record<IntegrationCategory, string> = {
     generic: "Generic",
 };
 
+type ConnectionsCache = { connections: Connection[]; providerIds: string[]; at: number };
+let connectionsCache: ConnectionsCache | null = null;
+const CONNECTIONS_CACHE_MS = 60_000;
+
 function DirectionBadge({ directions }: { directions: IntegrationCatalogItem["directions"] }) {
     if (directions === "both") {
         return (
@@ -133,12 +137,23 @@ function IntegrationsContent() {
         }
     }, []);
 
-    const loadConnections = useCallback(async () => {
+    const loadConnections = useCallback(async (opts?: { force?: boolean }) => {
+        const fresh = connectionsCache && Date.now() - connectionsCache.at < CONNECTIONS_CACHE_MS;
+        if (!opts?.force && fresh && connectionsCache) {
+            setConnections(connectionsCache.connections);
+            setError(null);
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
             const res = await apiRequest("/docs/integrations");
             setConnections(res?.data?.connections || []);
+            connectionsCache = {
+                connections: res?.data?.connections || [],
+                providerIds: res?.data?.providerIds || [],
+                at: Date.now(),
+            };
         } catch (e: any) {
             setError(e.message || "Failed to load integrations");
             setConnections([]);
@@ -152,10 +167,12 @@ function IntegrationsContent() {
         loadPlan();
     }, [ready, loadPlan]);
 
+    // Load connections in parallel with the plan check — the render gate below
+    // still decides between the connections UI and the upsell screen.
     useEffect(() => {
-        if (!ready || !canAccessPage("integrations") || hasActivePlan !== true) return;
+        if (!ready || !canAccessPage("integrations")) return;
         loadConnections();
-    }, [ready, canAccessPage, hasActivePlan, loadConnections]);
+    }, [ready, canAccessPage, loadConnections]);
 
     const byProvider = useMemo(() => {
         const map = new Map<string, Connection>();
@@ -400,7 +417,7 @@ function IntegrationsContent() {
             const key = res?.data?.connection?.ingestApiKey;
             if (key) setFreshIngestKey(key);
             setSuccess("New ingest key generated — copy it now");
-            await loadConnections();
+            await loadConnections({ force: true });
         } catch (e: any) {
             setError(e.message || "Failed to rotate key");
         } finally {

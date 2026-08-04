@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3124",
+    "dev": "env -u MallocStackLogging -u MallocStackLoggingNoCompact -u MallocStackLoggingLite -u MallocNanoZone next dev -p 3124",
     "build": "next build",
     "start": "next start -p 3124",
     "lint": "eslint"

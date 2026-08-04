@@ -5,14 +5,15 @@
   "main": "dist/server.js",
   "scripts": {
     "start": "node dist/server.js",
-    "dev": "nodemon src/server.ts",
+    "dev": "tsx watch --clear-screen=false src/server.ts",
+    "dev:legacy": "nodemon src/server.ts",
     "build": "tsc",
-    "test:role-permissions": "ts-node --files src/scripts/testRolePermissions.ts",
-    "test:supervision": "ts-node --files src/scripts/testSupervision.ts",
-    "test:integration-duplicates": "ts-node --files src/scripts/testIntegrationDuplicates.ts",
-    "seed:admin": "ts-node src/scripts/seedAdmin.ts",
-    "seed:plans": "ts-node src/scripts/seedPlans.ts",
-    "seed": "ts-node src/scripts/seedAdmin.ts"
+    "test:role-permissions": "tsx --tsconfig tsconfig.json src/scripts/testRolePermissions.ts",
+    "test:supervision": "tsx --tsconfig tsconfig.json src/scripts/testSupervision.ts",
+    "test:integration-duplicates": "tsx --tsconfig tsconfig.json src/scripts/testIntegrationDuplicates.ts",
+    "seed:admin": "tsx src/scripts/seedAdmin.ts",
+    "seed:plans": "tsx src/scripts/seedPlans.ts",
+    "seed": "tsx src/scripts/seedAdmin.ts"
   },
   "license": "ISC",
   "type": "commonjs",
@@ -49,6 +50,7 @@
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "tsx": "^4.23.5",
+    "typescript": "^6.0.3"
   }
 }

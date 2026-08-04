@@ -1,4 +1,3 @@
-import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -18,6 +17,18 @@ type Creds = {
     clientEmail: string;
     privateKey: string;
 };
+
+type GoogleApis = typeof import('googleapis').google;
+
+let googleApi: GoogleApis | null = null;
+
+async function getGoogle(): Promise<GoogleApis> {
+    if (!googleApi) {
+        const mod = await import('googleapis');
+        googleApi = mod.google;
+    }
+    return googleApi;
+}
 
 const GOOGLE_EXPORT: Record<string, { mimeType: string; ext: string }> = {
     'application/vnd.google-apps.document': {
@@ -162,7 +173,8 @@ export function parseCredentials(serviceAccountEmail: string, privateKeyRaw: str
     return { clientEmail: email, privateKey: key };
 }
 
-function driveClient(creds: Creds, write = false) {
+async function driveClient(creds: Creds, write = false) {
+    const google = await getGoogle();
     const scopes = write
         ? ['https://www.googleapis.com/auth/drive']
         : ['https://www.googleapis.com/auth/drive.readonly'];
@@ -182,7 +194,7 @@ export async function findChildFolderByName(params: {
 }): Promise<string | null> {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
-        const drive = driveClient(creds, true);
+        const drive = await driveClient(creds, true);
         const parentId = normalizeFolderId(params.parentFolderId);
         const safeName = String(params.name || '').replace(/'/g, "\\'");
         const res = await drive.files.list({
@@ -207,7 +219,7 @@ export async function createFolder(params: {
 }): Promise<string> {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
-        const drive = driveClient(creds, true);
+        const drive = await driveClient(creds, true);
         const parentId = normalizeFolderId(params.parentFolderId);
         const res = await drive.files.create({
             requestBody: {
@@ -233,7 +245,7 @@ export async function driveFolderExists(params: {
 }): Promise<boolean> {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
-        const drive = driveClient(creds, true);
+        const drive = await driveClient(creds, true);
         const folderId = normalizeFolderId(params.folderId);
         if (!folderId) return false;
         await drive.files.get({
@@ -271,7 +283,7 @@ export async function uploadFileToDrive(params: {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
         clientEmail = creds.clientEmail;
-        const drive = driveClient(creds, true);
+        const drive = await driveClient(creds, true);
         const parentId = normalizeFolderId(params.parentFolderId);
         if (!parentId) {
             throw new Error('Drive folder ID is missing. Edit the connection and paste the folder ID or URL again.');
@@ -312,8 +324,8 @@ export async function testGoogleDriveAccess(params: {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
         clientEmail = creds.clientEmail;
-        const driveRead = driveClient(creds, false);
-        const driveWrite = driveClient(creds, true);
+        const driveRead = await driveClient(creds, false);
+        const driveWrite = await driveClient(creds, true);
         const folderId = normalizeFolderId(params.folderId);
         if (!folderId) throw new Error('Folder ID is required');
 
@@ -380,7 +392,7 @@ export async function listGoogleDriveFiles(params: {
 }): Promise<DriveRemoteFile[]> {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
-        const drive = driveClient(creds);
+        const drive = await driveClient(creds);
         const folderId = normalizeFolderId(params.folderId);
         if (!folderId) throw new Error('Folder ID is required');
 
@@ -426,7 +438,7 @@ export async function downloadGoogleDriveFile(params: {
 }): Promise<{ tmpPath: string; originalname: string; mimetype: string; size: number }> {
     try {
         const creds = parseCredentials(params.serviceAccountEmail, params.privateKey);
-        const drive = driveClient(creds);
+        const drive = await driveClient(creds);
         const tmpPath = path.join(os.tmpdir(), `gdrive_${uuidv4()}`);
 
         const exportInfo = GOOGLE_EXPORT[params.file.mimeType];

@@ -14,7 +14,6 @@ import { usePermissions } from "@/context/PermissionsContext";
 import { clearAuthState, getStoredUser } from "@/lib/authSession";
 import { apiRequest } from "@/lib/apiClient";
 import LogoDark from "@/assets/Logo/visibility docs dark bg.png";
-import LogoLight from "@/assets/Logo/visibility docs light bg.png";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { cn } from "@/lib/utils";
 
@@ -117,13 +116,37 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
 
     // Until client has hydrated auth, render a stable baseline nav (no permission gates)
     // so server HTML and first client paint match.
-    const visibleNav = (!mounted || !ready
-        ? nav.filter((n) => n.roles.includes("team") && !n.allow)
-        : nav
+    const visibleNav = React.useMemo(() => {
+        if (!mounted || !ready) {
+            return nav.filter((n) => n.roles.includes("team") && !n.allow);
+        }
+        return nav
             .filter((n) => n.roles.includes(role) && (n.allow ? n.allow() : true))
-            .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/plans", "/admin/settings"].includes(n.href))
-    );
+            .filter((n) => !isSuperAdmin || ["/dashboard", "/admin/documents", "/search", "/chat", "/activity", "/admin/admins", "/admin/plans", "/admin/settings"].includes(n.href));
+    }, [mounted, ready, role, isSuperAdmin, canAccessPage, departments]);
+
     const logout = () => { clearAuthState(); router.replace("/login"); };
+
+    // Prefetch workspace routes so first click is not waiting on Turbopack compile.
+    useEffect(() => {
+        if (!mounted || !ready) return;
+        const hrefs = [
+            ...visibleNav.map((item) => item.href),
+            "/profile",
+            "/admin/settings",
+            "/admin/integrations",
+            "/documents",
+            "/chat",
+            "/dashboard",
+        ];
+        for (const href of [...new Set(hrefs)]) {
+            try {
+                router.prefetch(href);
+            } catch {
+                /* ignore */
+            }
+        }
+    }, [mounted, ready, router, visibleNav]);
 
     useEffect(() => {
         if (!open) return;
@@ -140,16 +163,26 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
             />
 
             <aside className={cn(
-                "w-[220px] h-full app-sidebar flex flex-col overflow-hidden",
+                "w-55 h-full app-sidebar flex flex-col overflow-hidden",
                 "shadow-[8px_0_32px_rgba(8,20,30,0.45)] relative",
                 "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out",
                 "lg:static lg:z-10 lg:translate-x-0 lg:shrink-0",
                 open ? "translate-x-0" : "-translate-x-full"
             )}>
                 {/* Logo */}
-                <div className="px-2 py-3 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
-                    <Link href="/dashboard" className="flex-1 flex items-center justify-center py-1">
-                        <Image src={LogoDark} alt="Visibility Docs" className="h-28 w-auto max-w-[190px] object-contain transition-all hover:scale-105" priority />
+                <div className="px-3 py-3 border-b border-white/7 relative z-1 flex items-center gap-2 bg-linear-to-r from-teal-500/8 via-transparent to-cyan-500/5 min-h-19">
+                    <Link
+                        href="/dashboard"
+                        onClick={() => onClose?.()}
+                        className="flex-1 flex items-center justify-center min-w-0 min-h-16"
+                    >
+                        <Image
+                            src={LogoDark}
+                            alt="Visibility Docs"
+                            className="w-full h-auto max-h-16 object-contain object-center"
+                            priority
+                            sizes="220px"
+                        />
                     </Link>
                     <button type="button" onClick={onClose}
                         className="lg:hidden rounded-lg p-2 min-h-9 min-w-9 flex items-center justify-center shrink-0 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
@@ -159,7 +192,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto relative z-[1]">
+                <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto relative z-1">
                     {visibleNav.map(({ href, label }) => {
                         const active = pathname === href || pathname?.startsWith(`${href}/`);
                         const showDeptDropdown = href === "/documents" && canSeeDepts && departments.length > 0;
@@ -168,7 +201,17 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                         return (
                             <div key={href}>
                                 <div className="flex items-center gap-1">
-                                    <Link href={href} onClick={() => onClose?.()}
+                                    <Link
+                                        href={href}
+                                        prefetch
+                                        onClick={() => onClose?.()}
+                                        onMouseEnter={() => {
+                                            try {
+                                                router.prefetch(href);
+                                            } catch {
+                                                /* ignore */
+                                            }
+                                        }}
                                         className={cn("sidebar-nav-item flex-1", active && !pathname?.startsWith("/departments/") ? "active" : "")}>
                                         {label}
                                     </Link>
@@ -188,7 +231,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                     )}
                                 </div>
                                 {showDeptDropdown && deptOpen && (
-                                    <div className="ml-4 pl-3 border-l border-white/[0.06] space-y-0.5 mb-1 mt-0.5">
+                                    <div className="ml-4 pl-3 border-l border-white/6 space-y-0.5 mb-1 mt-0.5">
                                         {departments.map((d) => {
                                             const dActive = pathname === `/departments/${d.departmentId}`;
                                             return (
@@ -230,7 +273,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                 </nav>
 
                 {/* Bottom */}
-                <div className="px-3 py-3 border-t border-white/[0.06] space-y-0.5 relative z-[1]">
+                <div className="px-3 py-3 border-t border-white/6 space-y-0.5 relative z-1">
                     <Link href="/profile" onClick={() => onClose?.()}
                         className={cn("sidebar-nav-item w-full", pathname === "/profile" ? "active" : "")}>
                         <span className={cn("sidebar-icon", pathname === "/profile" ? "active" : "inactive")}>

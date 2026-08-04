@@ -63,6 +63,10 @@ const DEFAULT_SECTIONS: Sections = {
     storage: true,
 };
 
+type ConfigCache = { config: Config | null; adminEmail: string | null; at: number };
+let configCache: ConfigCache | null = null;
+const CONFIG_CACHE_MS = 60_000;
+
 function EmailReportsContent() {
     const { theme } = useTheme();
     const colors = theme.colors;
@@ -76,13 +80,26 @@ function EmailReportsContent() {
     const [recipientsText, setRecipientsText] = useState("");
     const [adminEmail, setAdminEmail] = useState<string | null>(null);
 
-    const load = useCallback(async () => {
-        setLoading(true);
+    const load = useCallback(async (opts?: { silent?: boolean }) => {
+        const fresh = configCache && Date.now() - configCache.at < CONFIG_CACHE_MS;
+        if (!opts?.silent) setLoading(!fresh);
+        if (fresh && configCache) {
+            setConfig(configCache.config);
+            setAdminEmail(configCache.adminEmail);
+            const list = configCache.config?.recipients?.length
+                ? configCache.config.recipients
+                : configCache.adminEmail
+                  ? [configCache.adminEmail]
+                  : [];
+            setRecipientsText(list.join("\n"));
+            return;
+        }
         try {
             const res = await apiRequest("/docs/email-reports");
             const cfg: Config = res?.data?.config;
             setConfig(cfg);
             setAdminEmail(res?.data?.adminEmail || null);
+            configCache = { config: cfg ?? null, adminEmail: res?.data?.adminEmail || null, at: Date.now() };
             const list = cfg?.recipients?.length
                 ? cfg.recipients
                 : res?.data?.adminEmail
@@ -136,6 +153,7 @@ function EmailReportsContent() {
             });
             const cfg = res?.data?.config as Config;
             setConfig(cfg);
+            configCache = null; // invalidate so the next visit refetches
             setRecipientsText((cfg.recipients || []).join("\n"));
             showToast(res?.message || "Saved", "success");
         } catch (e: any) {

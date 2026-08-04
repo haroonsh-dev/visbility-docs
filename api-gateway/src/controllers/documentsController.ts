@@ -154,6 +154,9 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
                 : undefined;
         const classification = ((req.query.classification as string) || (req.query.documentType as string) || '').trim() || undefined;
         const uploadedBy = ((req.query.uploadedBy as string) || '').trim() || undefined;
+        // Duplicate-group aggregation runs over the full matching collection; dashboards
+        // and other list views that don't render dup badges can opt out for speed.
+        const withDuplicates = (req.query.withDuplicates as string) !== 'false';
 
         const extra: Record<string, unknown> = {};
         if (status) extra.status = status;
@@ -279,9 +282,12 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
                 .sort({ [sortBy]: sortOrder })
                 .skip((page - 1) * limit)
                 .limit(limit)
+                .select('-storagePath -contentHash -storedFilename -openRemoteUserId -errorMessage')
                 .lean(),
             Document.countDocuments(filter),
-            getDuplicateGroupSizes(baseFilter),
+            withDuplicates
+                ? getDuplicateGroupSizes(baseFilter)
+                : Promise.resolve(new Map<string, number>()),
         ]);
 
         const documentIds = documents.map((doc) => doc.documentId).filter(Boolean);

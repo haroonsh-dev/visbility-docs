@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 class ProviderUpdateBody(BaseModel):
     provider: str = Field(..., min_length=1)
-    apiKey: str = Field(..., min_length=8)
+    apiKey: Optional[str] = ""
     model: Optional[str] = ""
     baseUrl: Optional[str] = ""
 
@@ -38,19 +38,26 @@ async def update_provider(body: ProviderUpdateBody):
     if body.provider not in valid_providers:
         raise HTTPException(status_code=400, detail=f"Invalid provider. Must be one of: {valid_providers}")
 
-    provider_manager.set_provider(
-        provider=body.provider,
-        api_key=body.apiKey,
-        model=body.model or "",
-        base_url=body.baseUrl or "",
-    )
+    api_key = (body.apiKey or "").strip()
+    if "*" in api_key:
+        existing_cfg = provider_manager.get_provider(body.provider)
+        if existing_cfg:
+            api_key = existing_cfg.api_key
+
+    if api_key:
+        provider_manager.set_provider(
+            provider=body.provider,
+            api_key=api_key,
+            model=body.model or "",
+            base_url=body.baseUrl or "",
+        )
 
     try:
         from ..services.conversation_service import conversation_service
         conversation_service.reconfigure(preferred_provider=body.provider)
-        if body.provider == "groq":
+        if body.provider == "groq" and api_key and "*" not in api_key:
             from ..services.groq_service import groq_service
-            groq_service.reconfigure(body.apiKey)
+            groq_service.reconfigure(api_key)
     except Exception as e:
         print(f"[SETTINGS] Warning reconfiguring Services for {body.provider}: {e}")
 

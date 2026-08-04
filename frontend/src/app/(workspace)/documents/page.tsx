@@ -97,7 +97,7 @@ function StatMini({ icon: Icon, label, value, accent, delay = 0 }: { icon: any; 
             initial={{ opacity: 0, y: 10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ delay, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            className={`stat-card ${accent} p-4 flex-1 min-w-[140px]`}
+            className={`stat-card ${accent} p-4 flex-1 min-w-35`}
         >
             <div className="flex items-center gap-3">
                 <div className={`icon-box ${accent}`} style={{ width: '2.5rem', height: '2.5rem' }}>
@@ -211,6 +211,7 @@ function DocumentsContent() {
     const applySearch = () => { setQ(searchInput); setPage(1); };
 
     const load = useCallback(async () => {
+        // Keep previous rows visible while refreshing — avoids blank flash on navigation.
         setLoading(true); setError(null);
         try {
             const limit = viewMode === "tree" ? 200 : pageLimit;
@@ -534,7 +535,7 @@ function DocumentsContent() {
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}
                     className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all ${
                         dragOver
-                            ? "border-teal-400 bg-gradient-to-br from-teal-50 to-cyan-50 shadow-lg shadow-teal-500/10"
+                            ? "border-teal-400 bg-linear-to-br from-teal-50 to-cyan-50 shadow-lg shadow-teal-500/10"
                             : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/30"
                     }`}
                 >
@@ -546,7 +547,7 @@ function DocumentsContent() {
                         <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all ${
                             dragOver
                                 ? "bg-teal-500 text-white shadow-lg shadow-teal-500/30 scale-110"
-                                : "bg-gradient-to-br from-teal-50 to-cyan-50 text-teal-600 border border-teal-200"
+                                : "bg-linear-to-br from-teal-50 to-cyan-50 text-teal-600 border border-teal-200"
                         }`}>
                             <Upload size={26} />
                         </div>
@@ -596,14 +597,14 @@ function DocumentsContent() {
                         </div>
                     </div>
                     {pendingFiles.length > 0 && (
-                        <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-teal-50/40">
+                        <div className="px-5 py-4 border-b border-slate-100 bg-linear-to-r from-slate-50 via-white to-teal-50/40">
                             <div className={`grid gap-3 ${configuredProviders.length > 0 ? "sm:grid-cols-2" : ""}`}>
                                 {configuredProviders.length > 0 && (
                                     <FilterSelect
                                         variant="card"
                                         label="AI model"
                                         icon={Brain}
-                                        iconClassName="border-amber-200/80 bg-gradient-to-br from-amber-50 to-orange-100/70 text-amber-500"
+                                        iconClassName="border-amber-200/80 bg-linear-to-br from-amber-50 to-orange-100/70 text-amber-500"
                                         value={selectedProvider}
                                         onChange={setSelectedProvider}
                                         options={configuredProviders.map((p) => ({ value: p.provider, label: p.label || p.provider.toUpperCase() }))}
@@ -614,7 +615,7 @@ function DocumentsContent() {
                                     label="Extraction agent"
                                     labelHint="optional"
                                     icon={Sparkles}
-                                    iconClassName="border-teal-200/80 bg-gradient-to-br from-teal-50 to-cyan-100/70 text-teal-500"
+                                    iconClassName="border-teal-200/80 bg-linear-to-br from-teal-50 to-cyan-100/70 text-teal-500"
                                     value={preferredAgent}
                                     onChange={setPreferredAgent}
                                     options={preferredAgentOptions}
@@ -648,7 +649,7 @@ function DocumentsContent() {
                 <div className="surface-card">
                     <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20">
+                            <div className="w-9 h-9 rounded-xl bg-linear-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20">
                                 <FileText size={16} className="text-white" />
                             </div>
                             <div>
@@ -701,11 +702,11 @@ function DocumentsContent() {
                             <div className="flex flex-col sm:flex-row gap-2 sm:items-stretch">
                                 <div className="relative flex-1 min-w-0">
                                     <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
-                                    <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applySearch()} placeholder="Search by filename…" className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-[44px]" />
+                                    <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applySearch()} placeholder="Search by filename…" className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-11" />
                                 </div>
-                                <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-[44px] shrink-0 sm:w-auto w-full">Search</button>
+                                <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-11 shrink-0 sm:w-auto w-full">Search</button>
                                 <button type="button" onClick={() => setFiltersOpen((v) => !v)}
-                                    className={`rounded-xl px-4 text-sm font-medium h-[44px] shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-teal-50 border-teal-200 text-teal-700" : "btn-secondary"}`}
+                                    className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-teal-50 border-teal-200 text-teal-700" : "btn-secondary"}`}
                                     aria-expanded={filtersOpen}>
                                     <Filter size={15} /> Filters
                                     {hasActiveFilters && <span className="h-5 min-w-5 px-1 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center">{[scoreFilter, agentFilter, scopeFilter, typeFilter, sortPreset !== "newest"].filter(Boolean).length}</span>}
@@ -783,10 +784,10 @@ function DocumentsContent() {
                                             documentId={doc.documentId}
                                             ready={!!doc.pythonDocumentId}
                                         />
-                                        {allowView && <Link href={`/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-[36px]"><Info size={13} /> Details</Link>}
-                                        {allowView && <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-[36px]"><Eye size={13} /> Preview</Link>}
-                                        {allowDelete && <button type="button" onClick={() => remove(doc.documentId, doc.originalFilename)} className="btn-ghost rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 text-rose-500 min-h-[36px] hover:bg-rose-50"><Trash2 size={13} /></button>}
-                                        {allowView && doc.uploadedBy === me?.userId && <button type="button" onClick={() => setSharingDoc({ documentId: doc.documentId, filename: doc.originalFilename })} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-[36px]"><Share2 size={13} /></button>}
+                                        {allowView && <Link href={`/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"><Info size={13} /> Details</Link>}
+                                        {allowView && <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"><Eye size={13} /> Preview</Link>}
+                                        {allowDelete && <button type="button" onClick={() => remove(doc.documentId, doc.originalFilename)} className="btn-ghost rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 text-rose-500 min-h-9 hover:bg-rose-50"><Trash2 size={13} /></button>}
+                                        {allowView && doc.uploadedBy === me?.userId && <button type="button" onClick={() => setSharingDoc({ documentId: doc.documentId, filename: doc.originalFilename })} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"><Share2 size={13} /></button>}
                                     </div>
                                 </li>
                             );})}
@@ -802,7 +803,7 @@ function DocumentsContent() {
             {sharingDoc && <ShareModal documentId={sharingDoc.documentId} filename={sharingDoc.filename} open={true} onClose={() => setSharingDoc(null)} onShared={() => load()} />}
 
             {mounted && bulkOpen && createPortal(
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
                     <button type="button" className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]" aria-label="Close" onClick={() => !bulkBusy && setBulkOpen(false)} />
                     <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
                         <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">

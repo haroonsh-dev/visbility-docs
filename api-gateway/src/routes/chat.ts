@@ -7,6 +7,7 @@ import {
     listChatModelsHandler,
     listChatSessionsHandler,
     renameChatSessionHandler,
+    submitFeedback,
 } from '../controllers/chatController';
 
 const router = Router();
@@ -17,5 +18,6 @@ router.get('/sessions/:id', authenticate, getChatSessionHandler);
 router.patch('/sessions/:id', authenticate, renameChatSessionHandler);
 router.delete('/sessions/:id', authenticate, deleteChatSessionHandler);
 router.post('/', authenticate, chatWithDocuments);
+router.post('/feedback', authenticate, submitFeedback);
 
 export default router;

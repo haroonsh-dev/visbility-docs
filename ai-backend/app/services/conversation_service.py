@@ -18,8 +18,14 @@ SYSTEM_PROMPT = (
     "1. Answer questions DIRECTLY using ONLY the provided Document Context.\n"
     "2. DO NOT provide general background info, textbook definitions, introductory essays, or domain explanations.\n"
     "3. DO NOT use external world knowledge. DO NOT hallucinate, guess, or invent details.\n"
-    "4. Support queries in English, Urdu (اردو), and Roman Urdu. Reply in the EXACT same language and script as the user's question.\n"
-    "5. If the answer is not in the context, say 'I cannot find this information in the document.' and STOP immediately."
+    "4. LANGUAGE: Default to English. If the user writes in English, answer in English only. "
+    "Use Urdu or Roman Urdu only when the user's message is clearly in Urdu — do not reply in Urdu "
+    "because document context contains Urdu text.\n"
+    "5. TONE: Be professional and concise. Do NOT use emojis, emoticons, or decorative symbols.\n"
+    "6. Prefer answering with the closest matching facts from the Document Context "
+    "(summarize tables, list fields, quote relevant rows). "
+    "Only if the context is empty or clearly unrelated may you say the information is not in the uploaded documents — "
+    "and then briefly name what documents/sections you do have."
 )
 
 AGENT_SYSTEM_PROMPT = (
@@ -28,8 +34,11 @@ AGENT_SYSTEM_PROMPT = (
     "1. Answer DIRECTLY using ONLY the provided Document Context.\n"
     "2. DO NOT include general background info, textbook definitions, or domain explanations.\n"
     "3. DO NOT use external world knowledge. DO NOT hallucinate, guess, or invent details.\n"
-    "4. Answer in the same language and script as the user's question (e.g. reply in Roman Urdu if asked in Roman Urdu).\n"
-    "5. If the exact answer is not in the context, state that it is not available in the documents."
+    "4. LANGUAGE: Default to English. If the user writes in English, answer in English only. "
+    "Use Urdu or Roman Urdu only when the user's message is clearly in Urdu.\n"
+    "5. TONE: Be professional and concise. Do NOT use emojis, emoticons, or decorative symbols.\n"
+    "6. Prefer answering with the closest matching facts from the Document Context. "
+    "Only if nothing relevant is present may you say it is not available in the documents."
 )
 
 
@@ -109,13 +118,24 @@ def create_llm_from_config(provider_cfg):
 
     try:
         if p_name == "groq":
-            from langchain_groq import ChatGroq
-            return ChatGroq(
-                api_key=key,
-                model=model_name or "llama-3.3-70b-versatile",
-                temperature=0.0,
-                max_tokens=4096,
-            ), "groq"
+            try:
+                from langchain_groq import ChatGroq
+                return ChatGroq(
+                    api_key=key,
+                    model=model_name or "llama-3.3-70b-versatile",
+                    temperature=0.0,
+                    max_tokens=4096,
+                ), "groq"
+            except Exception as e:
+                _logger.warning(f"ChatGroq import failed ({e}), using ChatOpenAI with Groq endpoint")
+                from langchain_openai import ChatOpenAI
+                return ChatOpenAI(
+                    api_key=key,
+                    base_url="https://api.groq.com/openai/v1",
+                    model=model_name or "llama-3.3-70b-versatile",
+                    temperature=0.0,
+                    max_tokens=4096,
+                ), "groq"
         elif p_name == "openai":
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(

@@ -25,6 +25,15 @@ type ApiKeyRecord = {
 
 type ProviderDefaults = Record<Provider, { label: string; model: string; baseUrl?: string }>;
 
+type SettingsCache = {
+    keys: ApiKeyRecord[];
+    defaults: ProviderDefaults | null;
+    at: number;
+};
+
+let settingsCache: SettingsCache | null = null;
+const SETTINGS_CACHE_MS = 60_000;
+
 const PROVIDER_CONFIG: Record<Provider, { icon: React.ReactNode; color: string; bgColor: string; borderColor: string; description: string }> = {
     groq: {
         icon: <Zap size={20} />,
@@ -67,9 +76,9 @@ function SettingsContent() {
     const { theme } = useTheme();
     const colors = theme.colors;
 
-    const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
-    const [defaults, setDefaults] = useState<ProviderDefaults | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [keys, setKeys] = useState<ApiKeyRecord[]>(() => settingsCache?.keys || []);
+    const [defaults, setDefaults] = useState<ProviderDefaults | null>(() => settingsCache?.defaults || null);
+    const [loading, setLoading] = useState(() => !settingsCache);
     const [error, setError] = useState<string | null>(null);
 
     // Form state per provider
@@ -82,13 +91,17 @@ function SettingsContent() {
     const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
 
-    const loadKeys = useCallback(async () => {
-        setLoading(true);
+    const loadKeys = useCallback(async (opts?: { silent?: boolean }) => {
+        const useSilent = opts?.silent || Boolean(settingsCache && Date.now() - settingsCache.at < SETTINGS_CACHE_MS);
+        if (!useSilent) setLoading(true);
         setError(null);
         try {
             const res = await apiRequest("/docs/settings/api-keys");
-            setKeys(res?.data?.keys || []);
-            setDefaults(res?.data?.providerDefaults || null);
+            const nextKeys = res?.data?.keys || [];
+            const nextDefaults = res?.data?.providerDefaults || null;
+            setKeys(nextKeys);
+            setDefaults(nextDefaults);
+            settingsCache = { keys: nextKeys, defaults: nextDefaults, at: Date.now() };
         } catch (e: any) {
             setError(e.message || "Failed to load API keys");
         } finally {
@@ -97,7 +110,8 @@ function SettingsContent() {
     }, []);
 
     useEffect(() => {
-        loadKeys();
+        const fresh = settingsCache && Date.now() - settingsCache.at < SETTINGS_CACHE_MS;
+        void loadKeys({ silent: Boolean(fresh || settingsCache) });
     }, [loadKeys]);
 
     const getKeyForProvider = (provider: Provider): ApiKeyRecord | undefined => {
@@ -218,10 +232,16 @@ function SettingsContent() {
         }
     };
 
-    if (loading) {
+    if (loading && keys.length === 0 && !defaults) {
         return (
-            <div className="flex justify-center py-20">
-                <Loader2 className="h-8 w-8 animate-spin" style={{ color: colors.primary }} />
+            <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
+                <PageHeader
+                    title="AI Provider Settings"
+                    subtitle="Manage API keys for AI providers. Keys are used for document processing, vision models, chat, and search."
+                />
+                <div className="flex justify-center py-16">
+                    <Loader2 className="h-8 w-8 animate-spin" style={{ color: colors.primary }} />
+                </div>
             </div>
         );
     }
@@ -232,7 +252,12 @@ function SettingsContent() {
                 title="AI Provider Settings"
                 subtitle="Manage API keys for AI providers. Keys are used for document processing, vision models, chat, and search."
             />
-
+            {loading && (
+                <div className="flex items-center gap-2 text-sm text-foreground-muted">
+                    <Loader2 className="h-4 w-4 animate-spin" style={{ color: colors.primary }} />
+                    Refreshing…
+                </div>
+            )}
             {error && (
                 <div className="rounded-xl border border-red-500/30 bg-red-500/10 text-red-300 px-4 py-3 text-sm flex items-center gap-2">
                     <AlertTriangle size={16} />
@@ -247,24 +272,24 @@ function SettingsContent() {
             )}
 
             {/* Active Provider Selector Card */}
-            <div className="surface-card border border-[var(--border)] rounded-2xl p-5 space-y-3 bg-gradient-to-r from-[var(--surface-2)]/60 to-[var(--surface-1)]">
+            <div className="surface-card border border-border rounded-2xl p-5 space-y-3 bg-linear-to-r from-surface-2/60 to-surface">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                         <div className="flex items-center gap-2">
                             <Brain size={18} className="text-amber-400" />
-                            <h3 className="text-sm font-bold text-[var(--foreground)]">Active AI & Vision Provider</h3>
+                            <h3 className="text-sm font-bold text-foreground">Active AI & Vision Provider</h3>
                         </div>
-                        <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                        <p className="text-xs text-foreground-muted mt-1">
                             Select which uploaded API key to use for Vision, OCR, and AI processing. Only configured keys are shown below.
                         </p>
                     </div>
 
-                    <div className="flex items-center gap-2 min-w-[240px]">
+                    <div className="flex items-center gap-2 min-w-60">
                         <select
                             value={keys.find((k) => k.isActive)?.provider || ""}
                             onChange={(e) => handleSetPrimary(e.target.value as Provider)}
                             disabled={settingPrimary || configuredKeys.length === 0}
-                            className="w-full premium-input rounded-xl px-4 py-2.5 text-sm font-medium border border-[var(--border)] bg-[var(--surface-1)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] cursor-pointer"
+                            className="w-full premium-input rounded-xl px-4 py-2.5 text-sm font-medium border border-border bg-surface text-foreground focus:ring-2 focus:ring-accent cursor-pointer"
                         >
                             {configuredKeys.length === 0 ? (
                                 <option value="">No Configured API Keys Found</option>
@@ -276,7 +301,7 @@ function SettingsContent() {
                                 ))
                             )}
                         </select>
-                        {settingPrimary && <Loader2 size={16} className="animate-spin text-[var(--accent)] shrink-0" />}
+                        {settingPrimary && <Loader2 size={16} className="animate-spin text-accent shrink-0" />}
                     </div>
                 </div>
             </div>
@@ -293,7 +318,7 @@ function SettingsContent() {
                         <div
                             key={provider}
                             className={`surface-card border transition-all ${
-                                isEditing ? "border-[var(--accent)]" : hasKey ? config.borderColor : "border-[var(--border)]"
+                                isEditing ? "border-accent" : hasKey ? config.borderColor : "border-border"
                             }`}
                         >
                             {/* Header */}
@@ -304,7 +329,7 @@ function SettingsContent() {
                                     </div>
                                     <div>
                                         <div className="flex items-center gap-2">
-                                            <h3 className="text-sm font-bold text-[var(--foreground)]">{existing?.label || config.description.split(".")[0]}</h3>
+                                            <h3 className="text-sm font-bold text-foreground">{existing?.label || config.description.split(".")[0]}</h3>
                                             {hasKey && existing?.isActive && (
                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
                                                     Active
@@ -316,18 +341,18 @@ function SettingsContent() {
                                                 </span>
                                             )}
                                             {!hasKey && (
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/5 text-[var(--foreground-muted)] border border-[var(--border)]">
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/5 text-foreground-muted border border-border">
                                                     Not configured
                                                 </span>
                                             )}
                                         </div>
-                                        <p className="text-xs text-[var(--foreground-muted)] mt-0.5">{config.description}</p>
+                                        <p className="text-xs text-foreground-muted mt-0.5">{config.description}</p>
                                     </div>
                                 </div>
 
                                 <div className="flex items-center gap-2">
                                     {hasKey && existing?.model && (
-                                        <span className="text-[11px] text-[var(--foreground-muted)] hidden sm:block">
+                                        <span className="text-[11px] text-foreground-muted hidden sm:block">
                                             Model: {existing.model}
                                         </span>
                                     )}
@@ -360,22 +385,22 @@ function SettingsContent() {
                             {/* Existing Key Display */}
                             {hasKey && !isEditing && (
                                 <div className="px-5 pb-4">
-                                    <div className="flex items-center gap-2 rounded-xl bg-[var(--surface-2)]/60 border border-[var(--border)] px-4 py-2.5">
-                                        <Key size={13} className="text-[var(--foreground-muted)] shrink-0" />
-                                        <span className="text-xs font-mono text-[var(--foreground-muted)] flex-1 min-w-0 truncate">
+                                    <div className="flex items-center gap-2 rounded-xl bg-surface-2/60 border border-border px-4 py-2.5">
+                                        <Key size={13} className="text-foreground-muted shrink-0" />
+                                        <span className="text-xs font-mono text-foreground-muted flex-1 min-w-0 truncate">
                                             {showKeys[existing!.keyId] ? existing!.apiKey : "****" + existing!.apiKey.slice(-4)}
                                         </span>
                                         <button
                                             type="button"
                                             onClick={() => toggleShowKey(existing!.keyId)}
-                                            className="text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
+                                            className="text-foreground-muted hover:text-foreground transition-colors"
                                         >
                                             {showKeys[existing!.keyId] ? <EyeOff size={13} /> : <Eye size={13} />}
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => deleteKey(existing!.keyId, existing!.label)}
-                                            className="text-[var(--foreground-muted)] hover:text-red-400 transition-colors"
+                                            className="text-foreground-muted hover:text-red-400 transition-colors"
                                         >
                                             <Trash2 size={13} />
                                         </button>
@@ -385,9 +410,9 @@ function SettingsContent() {
 
                             {/* Edit Form */}
                             {isEditing && (
-                                <div className="px-5 pb-5 space-y-3 border-t border-[var(--border)] pt-4">
+                                <div className="px-5 pb-5 space-y-3 border-t border-border pt-4">
                                     <div>
-                                        <label className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)] block mb-1.5">
+                                        <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
                                             API Key *
                                         </label>
                                         <input
@@ -401,7 +426,7 @@ function SettingsContent() {
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         <div>
-                                            <label className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)] block mb-1.5">
+                                            <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
                                                 Model
                                             </label>
                                             <input
@@ -413,7 +438,7 @@ function SettingsContent() {
                                             />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)] block mb-1.5">
+                                            <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
                                                 Label
                                             </label>
                                             <input
@@ -427,7 +452,7 @@ function SettingsContent() {
                                     </div>
                                     {provider === "custom" && (
                                         <div>
-                                            <label className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)] block mb-1.5">
+                                            <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
                                                 Base URL
                                             </label>
                                             <input
@@ -465,9 +490,9 @@ function SettingsContent() {
             </div>
 
             {/* Info box */}
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/40 p-5 space-y-2">
-                <h3 className="text-sm font-semibold text-[var(--foreground)]">How Provider Fallback Works</h3>
-                <ul className="text-xs text-[var(--foreground-muted)] space-y-1 list-disc list-inside">
+            <div className="rounded-xl border border-border bg-surface-2/40 p-5 space-y-2">
+                <h3 className="text-sm font-semibold text-foreground">How Provider Fallback Works</h3>
+                <ul className="text-xs text-foreground-muted space-y-1 list-disc list-inside">
                     <li>The system uses the <strong>Groq</strong> provider by default.</li>
                     <li>If Groq hits a rate limit, it automatically falls back to the next configured provider.</li>
                     <li>Priority order: Groq → OpenAI → Gemini → Anthropic → Custom.</li>

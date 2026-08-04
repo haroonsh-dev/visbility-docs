@@ -16,6 +16,7 @@ import {
     canRefreshSession,
     hasValidAccessToken,
 } from "@/lib/authSession";
+import { getRequestErrorMessage } from "@/lib/apiErrors";
 import { Button } from "@/components/ui";
 
 function LoginForm() {
@@ -58,8 +59,15 @@ function LoginForm() {
                 headers: { "Content-Type": "application/json" },
             });
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Login failed");
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(
+                    (data as { error?: string }).error ||
+                        (res.status >= 500
+                            ? "Cannot reach the API. From the repo root run: npm install && npm run dev"
+                            : "Login failed")
+                );
+            }
 
             if (data.data?.accessToken) setAuthValue("accessToken", data.data.accessToken);
             if (data.data?.refreshToken) setAuthValue("refreshToken", data.data.refreshToken);
@@ -77,11 +85,12 @@ function LoginForm() {
                 redirectPath = await resolvePostLoginPath(normalizedUser);
             }
 
+            // Client-side navigation — avoids a full page reload flash after login.
             setTimeout(() => {
-                window.location.href = redirectPath;
+                router.replace(redirectPath);
             }, 600);
-        } catch (error: any) {
-            showToast(error.message || "Invalid credentials", "error");
+        } catch (error: unknown) {
+            showToast(getRequestErrorMessage(error, "Invalid credentials"), "error");
         } finally {
             setIsLoading(false);
         }
@@ -91,23 +100,23 @@ function LoginForm() {
         <AuthLayout>
             <div className="space-y-6">
                 <div className="space-y-1.5">
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--foreground)]">
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
                         Welcome back
                     </h1>
-                    <p className="text-sm text-[var(--foreground-muted)] leading-relaxed">
+                    <p className="text-sm text-foreground-muted leading-relaxed">
                         Sign in to your Visibility Docs AI workspace.
                     </p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="space-y-1.5">
-                        <label className="text-[10px] font-semibold text-[var(--foreground-muted)] ml-0.5 uppercase tracking-wider">
+                        <label className="text-[10px] font-semibold text-foreground-muted ml-0.5 uppercase tracking-wider">
                             Email or Username
                         </label>
                         <div className="relative">
                             <User
                                 className={`absolute left-3.5 top-1/2 -translate-y-1/2 transition-colors ${
-                                    identifierFocused ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"
+                                    identifierFocused ? "text-accent" : "text-foreground-muted"
                                 }`}
                                 size={16}
                             />
@@ -125,13 +134,13 @@ function LoginForm() {
                     </div>
 
                     <div className="space-y-1.5">
-                        <label className="text-[10px] font-semibold text-[var(--foreground-muted)] ml-0.5 uppercase tracking-wider">
+                        <label className="text-[10px] font-semibold text-foreground-muted ml-0.5 uppercase tracking-wider">
                             Password
                         </label>
                         <div className="relative">
                             <Lock
                                 className={`absolute left-3.5 top-1/2 -translate-y-1/2 transition-colors ${
-                                    passwordFocused ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"
+                                    passwordFocused ? "text-accent" : "text-foreground-muted"
                                 }`}
                                 size={16}
                             />
@@ -148,7 +157,7 @@ function LoginForm() {
                             <button
                                 type="button"
                                 onClick={() => setShowPassword((v) => !v)}
-                                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)] hover:text-[var(--accent)] transition-colors"
+                                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-accent transition-colors"
                             >
                                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                             </button>

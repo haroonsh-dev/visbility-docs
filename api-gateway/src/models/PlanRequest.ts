@@ -4,6 +4,8 @@ export interface IPlanRequest extends Document {
     requestId: string;
     organizationId: string;
     requestedBy: string;
+    requestType: 'new' | 'change';
+    previousAgentIds?: string[];
     planId?: string | null;
     planName?: string | null;
     agentIds: string[];
@@ -23,6 +25,8 @@ const PlanRequestSchema = new Schema<IPlanRequest>(
         requestId: { type: String, required: true, unique: true, index: true },
         organizationId: { type: String, required: true, index: true },
         requestedBy: { type: String, required: true },
+        requestType: { type: String, enum: ['new', 'change'], default: 'new', index: true },
+        previousAgentIds: { type: [String], default: [] },
         planId: { type: String, default: null },
         planName: { type: String, default: null },
         agentIds: { type: [String], default: [] },

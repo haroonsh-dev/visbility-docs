@@ -73,50 +73,45 @@ export const saveApiKey = async (req: Request, res: Response, next: NextFunction
         const finalModel = model || defaults.model;
         const finalBaseUrl = baseUrl || defaults.baseUrl || null;
 
+        // Org-scope the key only when the caller belongs to an org (super admin keys are org-agnostic)
+        const orgFilter = orgId ? { organizationId: orgId } : {};
+
+        // Check if incoming key is masked (contains asterisks)
+        const isMasked = apiKey.includes('*');
+
         let keyDoc;
         if (keyId) {
-            // Update existing key
-            keyDoc = await ApiKey.findOne({ keyId, organizationId: orgId || undefined });
-            if (!keyDoc) {
-                return res.status(404).json({ success: false, message: 'API key not found' });
-            }
-            keyDoc.apiKey = apiKey.trim();
+            keyDoc = await ApiKey.findOne({ keyId, ...orgFilter });
+        }
+        if (!keyDoc) {
+            keyDoc = await ApiKey.findOne({ provider, ...orgFilter });
+        }
+
+        const finalApiKey = (isMasked && keyDoc) ? keyDoc.apiKey : apiKey.trim();
+
+        if (keyDoc) {
+            keyDoc.apiKey = finalApiKey;
             keyDoc.label = finalLabel;
             keyDoc.aiModel = finalModel;
             keyDoc.baseUrl = finalBaseUrl;
             keyDoc.isActive = true;
             await keyDoc.save();
         } else {
-            // Check if provider key already exists - update it
-            const existing = await ApiKey.findOne({
-                organizationId: orgId || undefined,
+            keyDoc = await ApiKey.create({
+                keyId: `key_${uuidv4()}`,
+                organizationId: orgId || 'global',
                 provider,
+                apiKey: finalApiKey,
+                label: finalLabel,
+                aiModel: finalModel,
+                baseUrl: finalBaseUrl,
+                isActive: true,
+                createdBy: req.user.userId,
             });
-            if (existing) {
-                existing.apiKey = apiKey.trim();
-                existing.label = finalLabel;
-                existing.aiModel = finalModel;
-                existing.baseUrl = finalBaseUrl;
-                existing.isActive = true;
-                keyDoc = await existing.save();
-            } else {
-                // Create new
-                keyDoc = await ApiKey.create({
-                    keyId: `key_${uuidv4()}`,
-                    organizationId: orgId || '',
-                    provider,
-                    apiKey: apiKey.trim(),
-                    label: finalLabel,
-                    aiModel: finalModel,
-                    baseUrl: finalBaseUrl,
-                    isActive: true,
-                    createdBy: req.user.userId,
-                });
-            }
         }
 
         // Sync to AI backend
-        await syncKeyToAIBackend(provider, apiKey.trim(), finalModel, finalBaseUrl);
+        await syncKeyToAIBackend(provider, finalApiKey, finalModel, finalBaseUrl);
 
         recordActivityFromReq(req, {
             action: 'settings.api_key.save',
@@ -151,7 +146,10 @@ export const toggleApiKey = async (req: Request, res: Response, next: NextFuncti
         }
 
         const orgId = requireOrg(req);
-        const key = await ApiKey.findOne({ keyId: req.params.keyId, organizationId: orgId || undefined });
+        const key = await ApiKey.findOne({
+            keyId: req.params.keyId,
+            ...(orgId ? { organizationId: orgId } : {}),
+        });
         if (!key) return res.status(404).json({ success: false, message: 'API key not found' });
 
         key.isActive = !key.isActive;
@@ -171,7 +169,10 @@ export const deleteApiKey = async (req: Request, res: Response, next: NextFuncti
         }
 
         const orgId = requireOrg(req);
-        const key = await ApiKey.findOne({ keyId: req.params.keyId, organizationId: orgId || undefined });
+        const key = await ApiKey.findOne({
+            keyId: req.params.keyId,
+            ...(orgId ? { organizationId: orgId } : {}),
+        });
         if (!key) return res.status(404).json({ success: false, message: 'API key not found' });
 
         const provider = key.provider;
@@ -303,7 +304,7 @@ function maskKey(key: string): string {
 
 async function syncKeyToAIBackend(provider: string, apiKey: string, model: string, baseUrl: string | null) {
     try {
-        const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8001';
+        const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
         await fetch(`${aiUrl}/api/v1/settings/providers`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

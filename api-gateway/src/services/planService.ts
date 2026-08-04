@@ -121,8 +121,11 @@ export type OrgEntitlement = {
 export async function getOrgEntitlement(
     organizationId: string | null | undefined
 ): Promise<OrgEntitlement> {
-    const pricing = await getOrCreatePricing();
-    const sub = await getActiveSubscription(organizationId);
+    // Independent lookups — parallelize to cut Atlas round-trip latency.
+    const [pricing, sub] = await Promise.all([
+        getOrCreatePricing(),
+        getActiveSubscription(organizationId),
+    ]);
     if (sub) {
         return {
             agentIds: sub.agentIds?.length ? sub.agentIds : [...pricing.freeAgentIds],

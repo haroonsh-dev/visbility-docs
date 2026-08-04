@@ -40,8 +40,9 @@ app.use(
 );
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(morgan('dev'));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Keep JSON small — large files use multipart/multer (disk), not JSON bodies
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use(cookieParser());
 
 app.get('/', (_req, res) => {

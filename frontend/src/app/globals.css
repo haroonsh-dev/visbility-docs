@@ -1,5 +1,22 @@
 @import "tailwindcss";
-@variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-foreground: var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-accent: var(--accent);
+  --color-accent-muted: var(--accent-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-canvas: var(--canvas);
+  --color-error: var(--error);
+  --color-error-muted: var(--error-muted);
+}
+
 @source "..//";
 
 /* =========================
@@ -519,29 +536,26 @@ body::after {
   }
 
   .btn-gradient {
-    background: linear-gradient(135deg, #14b8a6 0%, #0d9488 50%, #0f766e 100%);
+    background: #0d9488;
     color: #ffffff;
     font-weight: 600;
     letter-spacing: -0.01em;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: none;
     border-radius: var(--radius-md);
-    transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.15s ease;
     cursor: pointer;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
   }
 
   .btn-gradient::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%);
-    pointer-events: none;
+    display: none;
   }
 
   .btn-gradient:hover {
-    filter: brightness(1.08);
-    box-shadow: 0 6px 20px rgba(13, 148, 136, 0.3);
+    background: #0f766e;
+    box-shadow: 0 6px 20px rgba(13, 148, 136, 0.4);
     transform: translateY(-1px);
   }
 

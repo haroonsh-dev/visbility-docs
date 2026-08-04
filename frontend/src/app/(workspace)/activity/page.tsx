@@ -25,6 +25,10 @@ const CATEGORIES = [
     { value: "team", label: "Team", accent: "amber", icon: Users },
 ];
 
+type ActivityCache = { logs: ActivityItem[]; total: number; actors: ActorOption[]; at: number };
+let activityCache: ActivityCache | null = null;
+const ACTIVITY_CACHE_MS = 30_000;
+
 function ActivityContent() {
     const { theme } = useTheme();
     const colors = theme.colors;
@@ -47,8 +51,17 @@ function ActivityContent() {
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const canFilterActors = role === "admin" || role === "superAdmin" || actors.length > 1;
 
-    const load = useCallback(async () => {
-        setLoading(true); setError(null);
+    const load = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
+        const isDefaultView = !category && !actorUserId && !q && page === 1;
+        const fresh = !opts?.force && activityCache && Date.now() - activityCache.at < ACTIVITY_CACHE_MS;
+        if (!opts?.silent) setLoading(!(isDefaultView && fresh));
+        setError(null);
+        if (isDefaultView && fresh && activityCache) {
+            setLogs(activityCache.logs);
+            setTotal(activityCache.total);
+            setActors(activityCache.actors);
+            return;
+        }
         try {
             const params = new URLSearchParams({ page: String(page), limit: String(limit) });
             if (category) params.set("category", category);
@@ -57,13 +70,29 @@ function ActivityContent() {
             const data = await apiRequest(`/docs/activity?${params.toString()}`);
             setLogs(data?.data?.logs || []);
             setTotal(data?.data?.total || 0);
+            if (isDefaultView) {
+                activityCache = {
+                    logs: data?.data?.logs || [],
+                    total: data?.data?.total || 0,
+                    actors: activityCache?.actors || [],
+                    at: Date.now(),
+                };
+            }
         } catch (e: any) { setError(e.message || "Failed to load activity"); setLogs([]); }
         finally { setLoading(false); }
     }, [page, limit, category, actorUserId, q]);
 
     const loadActors = useCallback(async () => {
-        try { const data = await apiRequest("/docs/activity/actors"); setActors(data?.data?.actors || []); }
-        catch { setActors([]); }
+        try {
+            const prev = activityCache;
+            if (prev) {
+                setActors(prev.actors);
+                return;
+            }
+            const data = await apiRequest("/docs/activity/actors");
+            setActors(data?.data?.actors || []);
+            activityCache = { logs: [], total: 0, actors: data?.data?.actors || [], at: Date.now() };
+        } catch { setActors([]); }
     }, []);
 
     useEffect(() => { load(); }, [load]);
@@ -81,7 +110,7 @@ function ActivityContent() {
         <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-5">
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
                 <PageHeader title="Activity" subtitle={subtitle}
-                    actions={<button type="button" onClick={load} className="btn-secondary rounded-xl px-4 py-2.5 text-sm inline-flex items-center gap-2"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh</button>}
+                    actions={<button type="button" onClick={() => load({ force: true })} className="btn-secondary rounded-xl px-4 py-2.5 text-sm inline-flex items-center gap-2"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh</button>}
                 />
             </motion.div>
 

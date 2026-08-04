@@ -137,29 +137,29 @@ export default function DriveSyncInbox() {
 
     return (
         <div
-            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-80 flex items-center justify-center bg-black/55 backdrop-blur-sm p-4"
             onClick={() => !busy && dismiss()}
         >
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="drive-sync-title"
-                className="w-full max-w-[420px] surface-card border border-[var(--border)] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
+                className="w-full max-w-105 surface-card border border-border shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)] bg-gradient-to-r from-[var(--accent-muted)] to-transparent">
-                    <div className="h-10 w-10 rounded-xl bg-[var(--accent)] text-white flex items-center justify-center shrink-0 shadow-sm shadow-teal-900/15">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-border bg-linear-to-r from-accent-muted to-transparent">
+                    <div className="h-10 w-10 rounded-xl bg-accent text-white flex items-center justify-center shrink-0 shadow-sm shadow-teal-900/15">
                         <HardDrive size={18} />
                     </div>
                     <div className="min-w-0 flex-1">
                         <h2
                             id="drive-sync-title"
-                            className="text-[15px] font-bold tracking-tight text-[var(--foreground)]"
+                            className="text-[15px] font-bold tracking-tight text-foreground"
                         >
                             New Drive files ready
                         </h2>
-                        <p className="text-xs text-[var(--foreground-muted)] mt-0.5 truncate">
+                        <p className="text-xs text-foreground-muted mt-0.5 truncate">
                             {prompt.label || "Google Drive"} · {count} new file
                             {count === 1 ? "" : "s"}
                         </p>
@@ -167,7 +167,7 @@ export default function DriveSyncInbox() {
                     <button
                         type="button"
                         onClick={() => !busy && dismiss()}
-                        className="btn-ghost rounded-lg p-2 text-[var(--foreground-muted)] hover:text-[var(--foreground)] shrink-0"
+                        className="btn-ghost rounded-lg p-2 text-foreground-muted hover:text-foreground shrink-0"
                         aria-label="Close"
                         disabled={busy}
                     >
@@ -177,12 +177,12 @@ export default function DriveSyncInbox() {
 
                 {/* Body */}
                 <div className="px-5 py-4 space-y-4 overflow-y-auto">
-                    <p className="text-sm text-[var(--foreground-muted)] leading-relaxed">
+                    <p className="text-sm text-foreground-muted leading-relaxed">
                         Interval check found files that are not in your library yet. Upload them
                         now, or skip for this round.
                     </p>
 
-                    <ul className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] overflow-hidden divide-y divide-[var(--border)] max-h-48 overflow-y-auto">
+                    <ul className="rounded-xl border border-border bg-surface-2 overflow-hidden divide-y divide-border max-h-48 overflow-y-auto">
                         {shown.map((f) => {
                             const sizeLabel = formatSize(f.size);
                             return (
@@ -191,15 +191,15 @@ export default function DriveSyncInbox() {
                                     className="flex items-center gap-3 px-3.5 py-2.5 min-w-0"
                                     title={f.name}
                                 >
-                                    <div className="h-8 w-8 rounded-lg bg-white dark:bg-[var(--surface)] border border-[var(--border)] flex items-center justify-center shrink-0 text-[var(--accent)]">
+                                    <div className="h-8 w-8 rounded-lg bg-white dark:bg-surface border border-border flex items-center justify-center shrink-0 text-accent">
                                         <FileText size={15} />
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                        <p className="text-[13px] font-medium text-[var(--foreground)] truncate leading-snug">
+                                        <p className="text-[13px] font-medium text-foreground truncate leading-snug">
                                             {f.name}
                                         </p>
                                         {sizeLabel && (
-                                            <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">
+                                            <p className="text-[11px] text-foreground-muted mt-0.5">
                                                 {sizeLabel}
                                             </p>
                                         )}
@@ -208,7 +208,7 @@ export default function DriveSyncInbox() {
                             );
                         })}
                         {extra > 0 && (
-                            <li className="px-3.5 py-2 text-xs font-medium text-[var(--foreground-muted)]">
+                            <li className="px-3.5 py-2 text-xs font-medium text-foreground-muted">
                                 +{extra} more file{extra === 1 ? "" : "s"}
                             </li>
                         )}
@@ -220,27 +220,27 @@ export default function DriveSyncInbox() {
                         disabled={busy}
                         className={`w-full text-left rounded-xl border px-3.5 py-3 transition-colors ${
                             enableAuto
-                                ? "border-[var(--accent)] bg-[var(--accent-muted)]"
-                                : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-2)]"
+                                ? "border-accent bg-accent-muted"
+                                : "border-border bg-surface hover:bg-surface-2"
                         }`}
                     >
                         <div className="flex items-start gap-3">
                             <span
                                 className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 ${
                                     enableAuto
-                                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                                        : "border-[var(--border-strong,var(--border))] bg-white dark:bg-[var(--surface)]"
+                                        ? "border-accent bg-accent text-white"
+                                        : "border-border-strong bg-white dark:bg-surface"
                                 }`}
                                 aria-hidden
                             >
                                 {enableAuto ? <Check size={11} strokeWidth={3} /> : null}
                             </span>
                             <span className="min-w-0">
-                                <span className="flex items-center gap-1.5 text-sm font-semibold text-[var(--foreground)]">
-                                    <Zap size={14} className="text-[var(--accent)] shrink-0" />
+                                <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                                    <Zap size={14} className="text-accent shrink-0" />
                                     Auto-upload next intervals
                                 </span>
-                                <span className="block text-[11px] leading-relaxed text-[var(--foreground-muted)] mt-1">
+                                <span className="block text-[11px] leading-relaxed text-foreground-muted mt-1">
                                     Skip this dialog later — new files upload automatically. Change
                                     anytime in Integrations.
                                 </span>
@@ -250,12 +250,12 @@ export default function DriveSyncInbox() {
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center gap-2.5 px-5 py-4 border-t border-[var(--border)] bg-[var(--surface-2)]/70">
+                <div className="flex items-center gap-2.5 px-5 py-4 border-t border-border bg-surface-2/70">
                     <button
                         type="button"
                         onClick={dismiss}
                         disabled={busy}
-                        className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm font-semibold text-[var(--foreground)] hover:bg-[var(--surface-3)] disabled:opacity-50 transition-colors"
+                        className="flex-1 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm font-semibold text-foreground hover:bg-surface-3 disabled:opacity-50 transition-colors"
                     >
                         Not now
                     </button>

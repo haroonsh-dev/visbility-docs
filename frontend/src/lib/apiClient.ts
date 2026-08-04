@@ -1,6 +1,8 @@
 import { clearAuthState, getAuthValue, setAuthValue } from "./authSession";
+import { API_UNAVAILABLE_MESSAGE, isNetworkFetchError } from "./apiErrors";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5100/api";
+/** Same-origin /api rewrite in dev; override with NEXT_PUBLIC_API_URL if needed. */
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 
 export type GroqLimitPayload = {
     code: "GROQ_RATE_LIMIT";
@@ -49,32 +51,86 @@ function maybeNotifyGroqLimit(status: number, data: any) {
     groqLimitHandler?.(payload);
 }
 
+function buildApiUrl(endpoint: string): string {
+    if (endpoint.startsWith("http")) return endpoint;
+    const path = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    return `${API_BASE}${path}`;
+}
+
+async function networkSafeFetch(url: string, options: RequestInit): Promise<Response> {
+    try {
+        const timeoutMs = 12_000;
+        const signal =
+            options.signal ||
+            (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+                ? AbortSignal.timeout(timeoutMs)
+                : undefined);
+        return await fetch(url, signal ? { ...options, signal } : options);
+    } catch (error) {
+        if (isNetworkFetchError(error)) {
+            throw new ApiError(API_UNAVAILABLE_MESSAGE, 0, { code: "NETWORK_ERROR" });
+        }
+        if (error instanceof DOMException && error.name === "TimeoutError") {
+            throw new ApiError("Request timed out. Check that api-gateway is running.", 0, {
+                code: "TIMEOUT",
+            });
+        }
+        throw error;
+    }
+}
+
+/** Guard against parallel 401s each triggering a full page reload. */
+let lastRedirectAt = 0;
+
+function redirectToLoginIfNeeded() {
+    if (typeof window === "undefined") return;
+    if (window.location.pathname.startsWith("/login")) return;
+    // Parallel requests may all 401 at once — only redirect once per window,
+    // otherwise the page gets hammered with full reloads.
+    const now = Date.now();
+    if (now - lastRedirectAt < 5_000) return;
+    lastRedirectAt = now;
+    window.location.replace("/login");
+}
+
+/** Shared so N parallel 401s trigger exactly one refresh round trip. */
+let refreshInFlight: Promise<string | null> | null = null;
+
 async function refreshAccessToken(): Promise<string | null> {
     const refreshToken = getAuthValue("refreshToken") || getAuthValue("refresh_token");
     if (!refreshToken) return null;
+    if (refreshInFlight) return refreshInFlight;
 
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const accessToken = data?.data?.accessToken;
-    if (accessToken) {
-        setAuthValue("accessToken", accessToken);
-        if (data?.data?.refreshToken) setAuthValue("refreshToken", data.data.refreshToken);
-    }
-    return accessToken;
+    refreshInFlight = (async () => {
+        try {
+            const res = await networkSafeFetch(`${API_BASE}/auth/refresh`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ refreshToken }),
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            const accessToken = data?.data?.accessToken;
+            if (accessToken) {
+                setAuthValue("accessToken", accessToken);
+                if (data?.data?.refreshToken) setAuthValue("refreshToken", data.data.refreshToken);
+            }
+            return accessToken;
+        } catch {
+            return null;
+        } finally {
+            refreshInFlight = null;
+        }
+    })();
+
+    return refreshInFlight;
 }
 
 export async function apiRequest<T = any>(
     endpoint: string,
     options: RequestInit = {}
 ): Promise<T> {
-    const url = endpoint.startsWith("http")
-        ? endpoint
-        : `${API_BASE}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+    const url = buildApiUrl(endpoint);
 
     let token = getAuthValue("accessToken") || getAuthValue("token");
 
@@ -84,7 +140,7 @@ export async function apiRequest<T = any>(
             headers.set("Content-Type", "application/json");
         }
         if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-        return fetch(url, { ...options, headers });
+        return networkSafeFetch(url, { ...options, headers });
     };
 
     let res = await doFetch(token);
@@ -94,13 +150,22 @@ export async function apiRequest<T = any>(
             res = await doFetch(next);
         } else {
             clearAuthState();
+            redirectToLoginIfNeeded();
         }
     }
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+        if (res.status === 401) {
+            clearAuthState();
+            redirectToLoginIfNeeded();
+        }
         maybeNotifyGroqLimit(res.status, data);
-        throw new ApiError(data.message || data.error || data.detail || `Request failed (${res.status})`, res.status, data);
+        const gatewayDown = res.status === 502 || res.status === 503 || res.status === 504;
+        const message = gatewayDown
+            ? API_UNAVAILABLE_MESSAGE
+            : data.message || data.error || data.detail || `Request failed (${res.status})`;
+        throw new ApiError(message, res.status, data);
     }
     return data as T;
 }
@@ -109,16 +174,14 @@ export async function apiFetchBlob(
     endpoint: string,
     options: RequestInit = {}
 ): Promise<Blob> {
-    const url = endpoint.startsWith("http")
-        ? endpoint
-        : `${API_BASE}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+    const url = buildApiUrl(endpoint);
 
     let token = getAuthValue("accessToken") || getAuthValue("token");
 
     const doFetch = async (accessToken: string | null) => {
         const headers = new Headers(options.headers || {});
         if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-        return fetch(url, { ...options, headers });
+        return networkSafeFetch(url, { ...options, headers });
     };
 
     let res = await doFetch(token);
@@ -128,13 +191,24 @@ export async function apiFetchBlob(
             res = await doFetch(next);
         } else {
             clearAuthState();
+            redirectToLoginIfNeeded();
         }
     }
 
     if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+            clearAuthState();
+            redirectToLoginIfNeeded();
+        }
         maybeNotifyGroqLimit(res.status, data);
-        throw new ApiError(data.message || `Request failed (${res.status})`, res.status, data);
+        const gatewayDown = res.status === 502 || res.status === 503 || res.status === 504;
+        const message = gatewayDown
+            ? API_UNAVAILABLE_MESSAGE
+            : data.message || `Request failed (${res.status})`;
+        throw new ApiError(message, res.status, data);
     }
     return res.blob();
 }
+
+export { API_UNAVAILABLE_MESSAGE, getRequestErrorMessage } from "./apiErrors";

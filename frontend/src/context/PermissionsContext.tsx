@@ -1,7 +1,8 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/apiClient";
+import { apiRequest, ApiError } from "@/lib/apiClient";
+import { isNetworkFetchError } from "@/lib/apiErrors";
 import { getAuthValue, getStoredUser, setAuthValue } from "@/lib/authSession";
 import {
     DEFAULT_TEAM_PERMS,
@@ -19,6 +20,8 @@ type PermissionsContextValue = {
     permissions: Record<string, boolean>;
     role: string;
     ready: boolean;
+    /** Latest /auth/me user (seeded from localStorage, refreshed in background). */
+    user: Record<string, unknown> | null;
     reload: () => Promise<void>;
     hasPermission: (key: string) => boolean;
     canAccessPage: (page: PageAccessKey) => boolean;
@@ -38,6 +41,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     // SSR-safe defaults — localStorage is only read after mount to avoid hydration mismatch
     const [permissions, setPermissions] = useState<Record<string, boolean>>({});
     const [role, setRole] = useState("team");
+    const [user, setUser] = useState<Record<string, unknown> | null>(null);
     const [ready, setReady] = useState(false);
 
     const reload = useCallback(async () => {
@@ -48,22 +52,27 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
                 const stored = getStoredUser<Record<string, unknown>>() || {};
                 const merged = { ...stored, ...fresh };
                 setAuthValue("user", JSON.stringify(merged));
+                setUser(merged);
                 const perms = fresh.permissions || {};
                 setPermissions(perms);
                 setRole(fresh.role || "team");
                 setAuthValue("permissions", JSON.stringify(perms));
             }
-        } catch {
+        } catch (err) {
+            if (isNetworkFetchError(err) || (err instanceof ApiError && err.status === 0)) {
+                return;
+            }
             const token = getAuthValue("accessToken") || getAuthValue("token");
             if (!token) {
                 setPermissions({});
                 setRole("");
-                if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-                    window.location.replace("/login");
-                }
+                setUser(null);
+                // No hard reload here: apiClient already redirects to /login on 401,
+                // and Shell's ensureAuthed covers the client-side redirect.
             } else {
                 setPermissions(getUserPermissions());
                 setRole(getUserRole());
+                setUser(getStoredUser<Record<string, unknown>>() || null);
             }
         } finally {
             setReady(true);
@@ -71,23 +80,33 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     }, []);
 
     useEffect(() => {
+        // Seed from cache synchronously so the UI renders immediately; reload() refreshes in the background.
+        const cachedUser = getStoredUser<Record<string, unknown>>() || null;
+        setUser(cachedUser);
         setPermissions(getUserPermissions());
         setRole(getUserRole());
-        setReady(Boolean(getUserRole() || Object.keys(getUserPermissions()).length));
+        setReady(Boolean(getAuthValue("accessToken") || getAuthValue("token")) || Boolean(getUserRole() || Object.keys(getUserPermissions()).length));
         reload();
     }, [reload]);
 
     useEffect(() => {
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const scheduleReload = () => {
+            if (typeof window !== "undefined" && window.location.pathname.startsWith("/login")) return;
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => void reload(), 1000);
+        };
+
         const onVisible = () => {
-            if (document.visibilityState === "visible") void reload();
+            if (document.visibilityState === "visible") scheduleReload();
         };
-        const onFocus = () => {
-            void reload();
-        };
-        window.addEventListener("focus", onFocus);
+
+        window.addEventListener("focus", scheduleReload);
         document.addEventListener("visibilitychange", onVisible);
         return () => {
-            window.removeEventListener("focus", onFocus);
+            if (debounceTimer) clearTimeout(debounceTimer);
+            window.removeEventListener("focus", scheduleReload);
             document.removeEventListener("visibilitychange", onVisible);
         };
     }, [reload]);
@@ -132,6 +151,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
             permissions,
             role,
             ready,
+            user,
             reload,
             hasPermission,
             canAccessPage: canAccessPageFn,
@@ -144,7 +164,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
             canManageDepartments: () => hasPermission(PERMS.DEPT_MANAGE),
             firstAllowedPath: () => firstAllowedPath(permissions, role),
         }),
-        [permissions, role, ready, reload, hasPermission, canAccessPageFn]
+        [permissions, role, ready, user, reload, hasPermission, canAccessPageFn]
     );
 
     return <PermissionsContext.Provider value={value}>{children}</PermissionsContext.Provider>;
@@ -157,6 +177,7 @@ export function usePermissions() {
             permissions: getUserPermissions(),
             role: getUserRole(),
             ready: true,
+            user: getStoredUser<Record<string, unknown>>() || null,
             reload: async () => {},
             hasPermission: checkPermission,
             canAccessPage: checkPage,

@@ -1415,11 +1415,51 @@ class RAGService:
             pass
         return titles
 
+    def _fetch_chunks_by_ids(self, chunk_ids: list[str], organization_id: str) -> list[dict]:
+        """Load chunk rows by primary key (fixes LIKE search missing rows due to arbitrary limit scans)."""
+        if not chunk_ids or not organization_id:
+            return []
+        unique = list(dict.fromkeys(chunk_ids))[:200]
+        try:
+            from ..database import _get_supabase, _use_supabase, _local_select_in
+            client = _get_supabase()
+            if _use_supabase and client:
+                r = client.table("document_chunks").select(
+                    "id, document_id, organization_id, page_id, chunk_index, content, metadata"
+                ).in_("id", unique).eq("organization_id", organization_id).execute()
+                rows = getattr(r, "data", []) or []
+            else:
+                rows = _local_select_in(
+                    "document_chunks",
+                    columns="id, document_id, organization_id, page_id, chunk_index, content, metadata",
+                    filters={"organization_id": organization_id},
+                    in_column="id",
+                    in_values=unique,
+                )
+            rows = [row for row in rows if isinstance(row, dict)]
+            if rows:
+                return rows
+            if _use_supabase and client:
+                r = client.table("document_chunks").select(
+                    "id, document_id, organization_id, page_id, chunk_index, content, metadata"
+                ).in_("id", unique).execute()
+                rows = getattr(r, "data", []) or []
+            else:
+                rows = _local_select_in(
+                    "document_chunks",
+                    columns="id, document_id, organization_id, page_id, chunk_index, content, metadata",
+                    in_column="id",
+                    in_values=unique,
+                )
+            return [row for row in rows if isinstance(row, dict)]
+        except Exception:
+            return []
+
     def hybrid_search(self, query: str, organization_id: str, document_type: str = None,
                       phase3_agent: str = None, status: str = None,
                       date_from: str = None, date_to: str = None,
                       document_ids: list = None, limit: int = 20, offset: int = 0,
-                      aggregate: bool = False) -> list[dict]:
+                      aggregate: bool = False, light: bool = False) -> list[dict]:
         from .orchestration_logger import get_chat_logger
         chat_log = get_chat_logger()
 
@@ -1427,32 +1467,48 @@ class RAGService:
         # This lets the search span ALL documents in the org (e.g. when no doc is selected).
         effective_status = status
 
-        # Resolve doc-level filters into document_ids
-        filter_doc_ids = self._resolve_doc_filters(
-            organization_id=organization_id,
-            document_type=document_type,
-            phase3_agent=phase3_agent,
-            status=effective_status,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        if filter_doc_ids is not None:
-            if document_ids:
-                merged_set = set(document_ids) & set(filter_doc_ids)
-                document_ids = list(merged_set) if merged_set else []
-            else:
+        # When the user explicitly scoped documents in chat, trust that selection.
+        # Metadata filters (invoice type, finance_agent) often disagree with Mongo/gateway labels
+        # and would zero out scoped ids → empty RAG context.
+        explicit_scope = document_ids is not None and len(document_ids) > 0
+        if not explicit_scope:
+            filter_doc_ids = self._resolve_doc_filters(
+                organization_id=organization_id,
+                document_type=document_type,
+                phase3_agent=phase3_agent,
+                status=effective_status,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            if filter_doc_ids is not None:
                 document_ids = filter_doc_ids
+        else:
+            print(f"[SEARCH] Using explicit document scope ({len(document_ids)} ids); skipping metadata doc-id filter")
 
         print(f"\n[SEARCH] Query: '{query}' | org={organization_id} | type={document_type or 'all'} | agent={phase3_agent or 'all'} | status={status or 'all'} | docs={len(document_ids) if document_ids else 'all'} | limit={limit}")
         query_embedding = embedding_service.embed_query(query)
         import re
-        query_words = [w for w in re.sub(r'[^\w\s]', ' ', query).lower().split() if len(w) >= 2]
+        _drop_like = {
+            "give", "me", "my", "the", "a", "an", "of", "for", "to", "in", "on", "at",
+            "all", "get", "show", "list", "tell", "what", "which", "from", "with",
+        }
+        query_words = [
+            w for w in re.sub(r"[^\w\s]", " ", query).lower().split()
+            if len(w) >= 2 and w not in _drop_like
+        ]
 
-        # ── Query expansion: generate alternative phrasings for better recall ──
-        alt_queries = self._expand_query(query)
-        alt_queries.extend(self._expand_finance_query(query))
-        alt_queries.extend(self._expand_general_query(query))
-        # Preserve order while dropping duplicates
+        scoped_docs = document_ids is not None and len(document_ids) > 0
+
+        # ── Query expansion: skip slow LLM expansion when scoped or light retry ──
+        alt_queries: list[str] = []
+        if not light:
+            if scoped_docs and len(document_ids) <= 50:
+                alt_queries.extend(self._expand_finance_query(query))
+                alt_queries.extend(self._expand_general_query(query))
+            else:
+                alt_queries = self._expand_query(query)
+                alt_queries.extend(self._expand_finance_query(query))
+                alt_queries.extend(self._expand_general_query(query))
         deduped_alt = []
         seen_alt = set()
         for aq in alt_queries:
@@ -1460,18 +1516,28 @@ class RAGService:
             if key and key not in seen_alt:
                 seen_alt.add(key)
                 deduped_alt.append(aq)
-        alt_queries = deduped_alt[:4]
+        max_alt = 0 if light else (1 if scoped_docs else 4)
+        alt_queries = deduped_alt[:max_alt]
         alt_embeddings = []
-        for aq in alt_queries:
-            ae = embedding_service.embed_query(aq)
-            alt_embeddings.append(ae)
-        all_embeddings = [query_embedding] + alt_embeddings
+        if not light and not scoped_docs:
+            for aq in alt_queries:
+                ae = embedding_service.embed_query(aq)
+                alt_embeddings.append(ae)
+        if light:
+            all_embeddings = []
+        elif scoped_docs:
+            all_embeddings = [query_embedding]
+        else:
+            all_embeddings = [query_embedding] + alt_embeddings
         if alt_queries:
             chat_log.info(f"Query expansion: {len(alt_queries)} alternatives")
 
         # Build filter for Pinecone
         def _pinecone_filter():
             f = {"organization_id": organization_id}
+            if scoped_docs:
+                f["document_id"] = {"$in": document_ids}
+                return f
             if document_type:
                 f["document_type"] = document_type
             if phase3_agent:
@@ -1483,13 +1549,16 @@ class RAGService:
         per_strategy = []  # list of lists for RRF fusion
 
         # ──── 1. Pinecone vector search (with query expansion) ────
-        chat_log.search_strategy("Pinecone Vector Search", f"queries={len(all_embeddings)}, top_k={limit + 10}")
+        if all_embeddings:
+            chat_log.search_strategy("Pinecone Vector Search", f"queries={len(all_embeddings)}, top_k={limit + 10}")
         pinecone_all = []
         pinecone_seen_ids = set()
-        if pinecone_service.available:
+        if all_embeddings and pinecone_service.available:
             pf = _pinecone_filter()
             # When searching ALL documents (no doc selected), scan many more chunks for recall
             pinecone_top_k = (limit * 4 + 20) if not document_ids else (limit + 10)
+            if scoped_docs:
+                pinecone_top_k = min(pinecone_top_k, 50)
             print(f"[SEARCH] Querying Pinecone (ns='{organization_id}') with {len(all_embeddings)} embeddings, top_k={pinecone_top_k}...")
             for ei, emb in enumerate(all_embeddings):
                 tag = f"alt{ei}" if ei > 0 else "orig"
@@ -1536,7 +1605,10 @@ class RAGService:
                 chat_log.search_result("Pinecone", 0, 0, "no results")
                 print(f"[SEARCH] Pinecone returned no results")
         else:
-            chat_log.search_result("Pinecone", 0, 0, "unavailable")
+            if not all_embeddings:
+                chat_log.search_result("Pinecone", 0, 0, "skipped (light/scoped)")
+            else:
+                chat_log.search_result("Pinecone", 0, 0, "unavailable")
 
         # ──── 2. FTS5 keyword search ────
         chat_log.search_strategy("FTS5 Keyword Search", f"words: {len(query_words)}")
@@ -1583,102 +1655,104 @@ class RAGService:
         chat_log.search_strategy("Per-word LIKE Search (typo-tolerant)", f"{len(query_words)} words: {query_words[:5]}")
         like_res = []
         try:
-            like_ids = set()
-            seen_like = set()
+            like_rows: dict[str, dict] = {}
             for word in query_words:
                 wr = SupabaseDB.select(
                     "document_chunks",
                     columns="id, document_id, organization_id, page_id, chunk_index, content, metadata",
+                    filters={"organization_id": organization_id},
                     like={"content": word},
                     limit=limit,
                 )
                 wdata = getattr(wr, "data", wr if isinstance(wr, list) else [])
                 if isinstance(wdata, list):
                     for item in wdata:
-                        if isinstance(item, dict) and item.get("id") not in seen_like:
-                            seen_like.add(item.get("id"))
-                            like_ids.add(item.get("id"))
-            if like_ids:
-                all_like = SupabaseDB.select(
-                    "document_chunks",
-                    columns="id, document_id, organization_id, page_id, chunk_index, content, metadata",
-                    filters={"organization_id": organization_id} if organization_id else None,
-                    limit=limit * 3,
-                )
-                ldata = getattr(all_like, "data", all_like if isinstance(all_like, list) else [])
-                if isinstance(ldata, list):
-                    doc_ids = list(set(r.get("document_id", "") for r in ldata if isinstance(r, dict) and r.get("id") in like_ids))
-                    title_map = self._fetch_doc_titles(doc_ids, organization_id)
-                    for item in ldata:
-                        if not isinstance(item, dict) or item.get("id") not in like_ids:
-                            continue
-                        did = item.get("document_id", "")
-                        title, dtype, p3a = title_map.get(did, ("", "", ""))
-                        if document_type and dtype != document_type:
-                            continue
-                        like_res.append({
-                            "document_id": did,
-                            "document_title": title,
-                            "document_type": dtype,
-                            "phase3_agent": p3a,
-                            "chunk_text": item.get("content", "")[:32000],
-                            "page_number": item.get("page_id"),
-                            "heading": item.get("heading"),
-                            "section": item.get("section"),
-                            "section_number": item.get("section_number"),
-                            "machine_id": item.get("machine_id"),
-                            "filename": item.get("filename"),
-                            "chunk_index": item.get("chunk_index"),
-                            "score": 0.7,
-                            "metadata": item.get("metadata"),
-                        })
-                chat_log.search_result("LIKE", len(like_ids), len(like_res))
-            else:
+                        if isinstance(item, dict) and item.get("id"):
+                            like_rows[item["id"]] = item
+            if not like_rows:
                 chat_log.search_result("LIKE", 0, 0, "no matches")
+            else:
+                ldata = list(like_rows.values())
+                if len(ldata) < len(like_rows):
+                    missing = [cid for cid in like_rows if cid not in {r.get("id") for r in ldata}]
+                    if missing:
+                        extra = self._fetch_chunks_by_ids(missing, organization_id)
+                        by_id = {r.get("id"): r for r in ldata}
+                        for row in extra:
+                            if row.get("id"):
+                                by_id[row["id"]] = row
+                        ldata = list(by_id.values())
+                doc_ids = list(set(r.get("document_id", "") for r in ldata if r.get("document_id")))
+                title_map = self._fetch_doc_titles(doc_ids, organization_id)
+                for item in ldata:
+                    did = item.get("document_id", "")
+                    title, dtype, p3a = title_map.get(did, ("", "", ""))
+                    if document_type and dtype != document_type:
+                        continue
+                    like_res.append({
+                        "document_id": did,
+                        "document_title": title,
+                        "document_type": dtype,
+                        "phase3_agent": p3a,
+                        "chunk_text": item.get("content", "")[:32000],
+                        "page_number": item.get("page_id"),
+                        "heading": item.get("heading"),
+                        "section": item.get("section"),
+                        "section_number": item.get("section_number"),
+                        "machine_id": item.get("machine_id"),
+                        "filename": item.get("filename"),
+                        "chunk_index": item.get("chunk_index"),
+                        "score": 0.7,
+                        "metadata": item.get("metadata"),
+                    })
+                chat_log.search_result("LIKE", len(like_rows), len(like_res))
         except Exception as e:
             chat_log.search_result("LIKE", 0, 0, f"error: {e}")
         per_strategy.append(like_res)
 
         # ──── 4. Supabase vector search ────
-        chat_log.search_strategy("Supabase Vector Search", f"threshold=0.2, top_k={limit * 2}")
         sqs_res = []
-        try:
-            vector_results = SupabaseDB.search_vector(
-                "document_chunks",
-                query_embedding,
-                match_threshold=0.2,
-                match_count=limit * 2,
-                filter_org_id=organization_id,
-            )
-            vector_count = len(getattr(vector_results, "data", vector_results if isinstance(vector_results, list) else []))
-        except Exception:
-            vector_results = {"data": []}
-            vector_count = 0
-        vec_doc_ids = list(set(chunk.get("document_id", "") for chunk in (getattr(vector_results, "data", vector_results if isinstance(vector_results, list) else []) if isinstance(vector_results, (list, dict)) else [])))
-        vec_title_map = self._fetch_doc_titles(vec_doc_ids, organization_id) if vec_doc_ids else {}
-        for item in getattr(vector_results, "data", vector_results if isinstance(vector_results, list) else []):
-            chunk = item if isinstance(item, dict) else {}
-            did = chunk.get("document_id", "")
-            title, dtype, p3a = vec_title_map.get(did, ("", "", ""))
-            if document_type and dtype != document_type:
-                continue
-            sqs_res.append({
-                "document_id": did,
-                "document_title": title or chunk.get("document_title", ""),
-                "document_type": dtype or chunk.get("document_type"),
-                "phase3_agent": p3a,
-                "chunk_text": chunk.get("content", chunk.get("chunk_text", "")),
-                "page_number": chunk.get("page_number", chunk.get("page_id")),
-                "heading": chunk.get("heading"),
-                "section": chunk.get("section"),
-                "section_number": chunk.get("section_number"),
-                "machine_id": chunk.get("machine_id"),
-                "filename": chunk.get("filename"),
-                "chunk_index": chunk.get("chunk_index"),
-                "score": chunk.get("similarity", chunk.get("score", 0)),
-                "metadata": chunk.get("metadata"),
-            })
-        chat_log.search_result("Supabase Vector", vector_count, len(sqs_res))
+        if not light:
+            chat_log.search_strategy("Supabase Vector Search", f"threshold=0.2, top_k={limit * 2}")
+            try:
+                vector_results = SupabaseDB.search_vector(
+                    "document_chunks",
+                    query_embedding,
+                    match_threshold=0.2,
+                    match_count=limit * 2,
+                    filter_org_id=organization_id,
+                )
+                vector_count = len(getattr(vector_results, "data", vector_results if isinstance(vector_results, list) else []))
+            except Exception:
+                vector_results = {"data": []}
+                vector_count = 0
+            vec_doc_ids = list(set(chunk.get("document_id", "") for chunk in (getattr(vector_results, "data", vector_results if isinstance(vector_results, list) else []) if isinstance(vector_results, (list, dict)) else [])))
+            vec_title_map = self._fetch_doc_titles(vec_doc_ids, organization_id) if vec_doc_ids else {}
+            for item in getattr(vector_results, "data", vector_results if isinstance(vector_results, list) else []):
+                chunk = item if isinstance(item, dict) else {}
+                did = chunk.get("document_id", "")
+                title, dtype, p3a = vec_title_map.get(did, ("", "", ""))
+                if document_type and dtype != document_type:
+                    continue
+                sqs_res.append({
+                    "document_id": did,
+                    "document_title": title or chunk.get("document_title", ""),
+                    "document_type": dtype or chunk.get("document_type"),
+                    "phase3_agent": p3a,
+                    "chunk_text": chunk.get("content", chunk.get("chunk_text", "")),
+                    "page_number": chunk.get("page_number", chunk.get("page_id")),
+                    "heading": chunk.get("heading"),
+                    "section": chunk.get("section"),
+                    "section_number": chunk.get("section_number"),
+                    "machine_id": chunk.get("machine_id"),
+                    "filename": chunk.get("filename"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "score": chunk.get("similarity", chunk.get("score", 0)),
+                    "metadata": chunk.get("metadata"),
+                })
+            chat_log.search_result("Supabase Vector", vector_count, len(sqs_res))
+        else:
+            chat_log.search_result("Supabase Vector", 0, 0, "skipped (light)")
         per_strategy.append(sqs_res)
 
         # ──── RRF Fusion ────
@@ -1862,12 +1936,21 @@ class RAGService:
         results = []
         try:
             for did in document_ids:
-                rows = SupabaseDB.select("document_chunks",
+                rows = SupabaseDB.select(
+                    "document_chunks",
                     columns="id, document_id, content, chunk_index, page_id",
                     filters={"document_id": did, "organization_id": org_id},
                     limit=limit_per_doc,
                 )
                 data = getattr(rows, "data", rows if isinstance(rows, list) else [])
+                if not isinstance(data, list) or not data:
+                    rows = SupabaseDB.select(
+                        "document_chunks",
+                        columns="id, document_id, content, chunk_index, page_id",
+                        filters={"document_id": did},
+                        limit=limit_per_doc,
+                    )
+                    data = getattr(rows, "data", rows if isinstance(rows, list) else [])
                 if isinstance(data, list):
                     for row in data[:limit_per_doc]:
                         if isinstance(row, dict):

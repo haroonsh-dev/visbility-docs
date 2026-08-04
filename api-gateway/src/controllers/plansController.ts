@@ -244,23 +244,47 @@ export const approvePlanRequest = async (req: Request, res: Response, next: Next
             return res.status(400).json({ success: false, message: `Request is already ${request.status}` });
         }
 
-        const priceOverride = req.body?.price != null ? asNumber(req.body.price, request.quotedPrice) : request.quotedPrice;
+        // Super admin may selectively adjust which agent modules get granted.
+        const body = req.body || {};
+        let agentIds = request.agentIds;
+        let storageGb = request.storageGb;
+        if (body.agentIds != null) {
+            const agents = normalizeAgentIds(body.agentIds);
+            if (!agents.length) {
+                return res.status(400).json({ success: false, message: 'Select at least one agent to grant' });
+            }
+            agentIds = agents;
+        }
+        if (body.storageGb != null) {
+            storageGb = Math.max(0, asNumber(body.storageGb, request.storageGb));
+        }
+
+        let price = body.price != null ? asNumber(body.price, request.quotedPrice) : request.quotedPrice;
+        if (body.price == null && (body.agentIds != null || body.storageGb != null)) {
+            // Recompute the quote from the adjusted agent/storage selection
+            const pricing = await getOrCreatePricing();
+            price = quoteFromPricing(pricing, agentIds, storageGb, request.billingCycle);
+        }
 
         const sub = await activateSubscription({
             organizationId: request.organizationId,
             planId: request.planId,
             planName: request.planName || 'Custom',
-            agentIds: request.agentIds,
-            storageGb: request.storageGb,
+            agentIds,
+            storageGb,
             billingCycle: request.billingCycle,
-            price: priceOverride,
+            price,
             activatedBy: req.user.userId,
             requestId: request.requestId,
         });
 
+        // Persist what was actually granted so the request record mirrors the subscription
+        request.agentIds = agentIds;
+        request.storageGb = storageGb;
+        request.quotedPrice = price;
         request.status = 'approved';
         request.reviewedBy = req.user.userId;
-        request.reviewNote = req.body?.note ? String(req.body.note) : null;
+        request.reviewNote = body.note ? String(body.note) : null;
         await request.save();
 
         recordActivityFromReq(req, {
@@ -621,7 +645,8 @@ export const createPlanRequest = async (req: Request, res: Response, next: NextF
             });
         }
 
-        const { planId, agentIds, storageGb, billingCycle, message } = req.body || {};
+        const { planId, agentIds, storageGb, billingCycle, message, requestType } = req.body || {};
+        const isChange = String(requestType || '').toLowerCase() === 'change';
         const pricing = await getOrCreatePricing();
 
         let agents = normalizeAgentIds(agentIds);
@@ -631,8 +656,27 @@ export const createPlanRequest = async (req: Request, res: Response, next: NextF
         let planName: string | null = null;
         let resolvedPlanId: string | null = null;
         let quotedPrice = 0;
+        let previousAgentIds: string[] = [];
 
-        if (planId) {
+        if (isChange) {
+            // Swap the agent modules on the org's current subscription
+            const current = await getActiveSubscription(organizationId);
+            if (!current) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No active subscription to change — request a plan first.',
+                });
+            }
+            if (!agents.length) {
+                return res.status(400).json({ success: false, message: 'Select at least one agent' });
+            }
+            planName = current.planName || 'Custom';
+            resolvedPlanId = current.planId || null;
+            gb = current.storageGb;
+            cycle = current.billingCycle;
+            previousAgentIds = current.agentIds || [];
+            quotedPrice = quoteFromPricing(pricing, agents, gb, cycle);
+        } else if (planId) {
             const plan = await Plan.findOne({ planId, status: 'active' });
             if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
             agents = plan.agentIds;
@@ -656,6 +700,8 @@ export const createPlanRequest = async (req: Request, res: Response, next: NextF
             requestId: generateRequestId(),
             organizationId,
             requestedBy: req.user.userId,
+            requestType: isChange ? 'change' : 'new',
+            previousAgentIds,
             planId: resolvedPlanId,
             planName,
             agentIds: agents,
@@ -671,7 +717,7 @@ export const createPlanRequest = async (req: Request, res: Response, next: NextF
             category: 'admin',
             resourceType: 'plan_request',
             resourceId: request.requestId,
-            message: `Requested plan ${planName}`,
+            message: `Requested ${isChange ? 'agent change for' : 'plan'} ${planName}`,
         });
 
         res.status(201).json({ success: true, data: { request } });
@@ -711,8 +757,10 @@ export const getMySubscription = async (req: Request, res: Response, next: NextF
                 },
             });
         }
-        const entitlement = await getOrgEntitlement(organizationId);
-        const storageUsedBytes = await getOrgStorageUsedBytes(organizationId);
+        const [entitlement, storageUsedBytes] = await Promise.all([
+            getOrgEntitlement(organizationId),
+            getOrgStorageUsedBytes(organizationId),
+        ]);
         res.json({
             success: true,
             data: {

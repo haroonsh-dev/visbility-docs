@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Send } from "lucide-react";
+import { Check, Loader2, RefreshCw, Send } from "lucide-react";
 import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { apiRequest } from "@/lib/apiClient";
 import { AGENT_OPTIONS } from "@/lib/documentAgents";
@@ -53,10 +53,24 @@ type PlanRequest = {
     billingCycle: string;
     storageGb: number;
     agentIds: string[];
+    requestType?: string;
+    previousAgentIds?: string[];
     createdAt?: string;
 };
 
 const AGENT_CHOICES = AGENT_OPTIONS.filter((o) => o.value);
+
+type PlansCache = {
+    plans: Plan[];
+    pricing: Pricing | null;
+    entitlement: Entitlement | null;
+    storageUsedBytes: number;
+    requests: PlanRequest[];
+    at: number;
+};
+
+let plansCache: PlansCache | null = null;
+const PLANS_CACHE_MS = 60_000;
 
 function agentLabel(id: string) {
     return AGENT_CHOICES.find((a) => a.value === id)?.label || id.replace(/_agent$/, "").replace(/_/g, " ");
@@ -74,24 +88,28 @@ function statusVariant(status: string): "warning" | "success" | "error" | "muted
 }
 
 export default function AdminPlansPage() {
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !plansCache);
     const [sending, setSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [toast, setToast] = useState<string | null>(null);
 
-    const [plans, setPlans] = useState<Plan[]>([]);
-    const [pricing, setPricing] = useState<Pricing | null>(null);
-    const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
-    const [storageUsedBytes, setStorageUsedBytes] = useState(0);
-    const [requests, setRequests] = useState<PlanRequest[]>([]);
+    const [plans, setPlans] = useState<Plan[]>(() => plansCache?.plans || []);
+    const [pricing, setPricing] = useState<Pricing | null>(() => plansCache?.pricing || null);
+    const [entitlement, setEntitlement] = useState<Entitlement | null>(() => plansCache?.entitlement || null);
+    const [storageUsedBytes, setStorageUsedBytes] = useState(() => plansCache?.storageUsedBytes || 0);
+    const [requests, setRequests] = useState<PlanRequest[]>(() => plansCache?.requests || []);
 
     const [cycle, setCycle] = useState<"monthly" | "yearly">("monthly");
     const [selectedAgents, setSelectedAgents] = useState<string[]>(["other_agent"]);
+    const [changeAgents, setChangeAgents] = useState<string[]>(() => plansCache?.entitlement?.agentIds || []);
     const [storageGb, setStorageGb] = useState(5);
     const [message, setMessage] = useState("");
 
-    const load = useCallback(async () => {
-        setLoading(true);
+    const load = useCallback(async (opts?: { silent?: boolean }) => {
+        const hasCache = Boolean(plansCache);
+        const fresh = plansCache && Date.now() - plansCache.at < PLANS_CACHE_MS;
+        const silent = opts?.silent ?? Boolean(fresh || hasCache);
+        if (!silent) setLoading(true);
         setError(null);
         try {
             const [catalog, sub, mine] = await Promise.all([
@@ -99,11 +117,25 @@ export default function AdminPlansPage() {
                 apiRequest("/docs/plans/subscription"),
                 apiRequest("/docs/plans/requests/mine"),
             ]);
-            setPlans(catalog?.data?.plans || []);
-            setPricing(catalog?.data?.pricing || null);
-            setEntitlement(sub?.data?.entitlement || null);
-            setStorageUsedBytes(sub?.data?.storageUsedBytes || 0);
-            setRequests(mine?.data?.requests || []);
+            const nextPlans = catalog?.data?.plans || [];
+            const nextPricing = catalog?.data?.pricing || null;
+            const nextEntitlement = sub?.data?.entitlement || null;
+            const nextStorage = sub?.data?.storageUsedBytes || 0;
+            const nextRequests = mine?.data?.requests || [];
+            setPlans(nextPlans);
+            setPricing(nextPricing);
+            setEntitlement(nextEntitlement);
+            setChangeAgents(nextEntitlement?.agentIds || []);
+            setStorageUsedBytes(nextStorage);
+            setRequests(nextRequests);
+            plansCache = {
+                plans: nextPlans,
+                pricing: nextPricing,
+                entitlement: nextEntitlement,
+                storageUsedBytes: nextStorage,
+                requests: nextRequests,
+                at: Date.now(),
+            };
         } catch (e: any) {
             setError(e.message || "Failed to load plans");
         } finally {
@@ -112,7 +144,7 @@ export default function AdminPlansPage() {
     }, []);
 
     useEffect(() => {
-        load();
+        void load({ silent: Boolean(plansCache) });
     }, [load]);
 
     useEffect(() => {
@@ -133,6 +165,51 @@ export default function AdminPlansPage() {
             storageGb * (cycle === "yearly" ? pricing.pricePerGbYearly : pricing.pricePerGbMonthly);
         return Math.round(total * 100) / 100;
     }, [pricing, selectedAgents, storageGb, cycle]);
+
+    const changeCycle = (entitlement?.subscription?.billingCycle || "monthly") as
+        | "monthly"
+        | "yearly";
+    const changeEstimate = useMemo(() => {
+        if (!pricing) return 0;
+        let total = 0;
+        for (const id of changeAgents) {
+            const row = pricing.agents.find((a) => a.agentId === id);
+            if (!row) continue;
+            total += changeCycle === "yearly" ? row.yearlyPrice : row.monthlyPrice;
+        }
+        total +=
+            (entitlement?.storageGb ?? 0) *
+            (changeCycle === "yearly" ? pricing.pricePerGbYearly : pricing.pricePerGbMonthly);
+        return Math.round(total * 100) / 100;
+    }, [pricing, changeAgents, changeCycle, entitlement?.storageGb]);
+
+    const requestChange = async () => {
+        if (!changeAgents.length) {
+            setError("Select at least one agent");
+            return;
+        }
+        if (!confirm("Request to change the agent modules on your current plan? Super Admin will review."))
+            return;
+        setSending(true);
+        setError(null);
+        try {
+            await apiRequest("/docs/plans/requests", {
+                method: "POST",
+                body: JSON.stringify({
+                    requestType: "change",
+                    agentIds: changeAgents,
+                    message: message || "Agent module change request",
+                }),
+            });
+            setToast("Change request sent");
+            setMessage("");
+            await load();
+        } catch (e: any) {
+            setError(e.message || "Request failed");
+        } finally {
+            setSending(false);
+        }
+    };
 
     const usedGb = storageUsedBytes / (1024 * 1024 * 1024);
     const limitGb = Math.max(entitlement?.storageGb ?? 1, 0.01);
@@ -228,12 +305,17 @@ export default function AdminPlansPage() {
                 <div className="rounded-xl bg-rose-50 text-rose-700 px-4 py-3 text-sm">{error}</div>
             )}
 
-            {loading ? (
+            {loading && plans.length === 0 && !entitlement ? (
                 <div className="py-16 flex justify-center text-slate-400 text-sm gap-2">
                     <Loader2 size={16} className="animate-spin" /> Loading…
                 </div>
             ) : (
                 <>
+                    {loading && (
+                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                            <Loader2 size={14} className="animate-spin" /> Refreshing…
+                        </div>
+                    )}
                     {/* Current plan */}
                     <section className="rounded-2xl border border-slate-200 bg-white p-6">
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -278,11 +360,88 @@ export default function AdminPlansPage() {
                                 Ends {new Date(entitlement.subscription.endsAt).toLocaleDateString()}
                             </p>
                         )}
+
+                        {hasActiveSub && (
+                            <div className="mt-6 pt-5 border-t border-slate-100">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <div>
+                                        <h3 className="text-sm font-bold text-slate-900">
+                                            Change agent modules
+                                        </h3>
+                                        <p className="text-xs text-slate-500 mt-0.5">
+                                            Swap which agents your plan includes — Super Admin
+                                            reviews the change.
+                                        </p>
+                                    </div>
+                                    <span className="text-xs font-semibold text-slate-700 tabular-nums">
+                                        {money(changeEstimate, currency)}
+                                        <span className="text-slate-400 font-normal text-[10px] ml-1 capitalize">
+                                            / {changeCycle}
+                                        </span>
+                                    </span>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                    {AGENT_CHOICES.map((a) => {
+                                        const on = changeAgents.includes(a.value);
+                                        return (
+                                            <button
+                                                key={a.value}
+                                                type="button"
+                                                disabled={sending || !!pending}
+                                                onClick={() =>
+                                                    setChangeAgents((prev) =>
+                                                        on
+                                                            ? prev.filter((x) => x !== a.value)
+                                                            : [...prev, a.value]
+                                                    )
+                                                }
+                                                className={`rounded-lg border px-2.5 py-1 text-xs font-medium inline-flex items-center gap-1 transition-colors ${
+                                                    on
+                                                        ? "border-teal-300 bg-teal-50 text-teal-700"
+                                                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                                                }`}
+                                            >
+                                                {on && <Check size={11} />}
+                                                {a.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <p className="text-xs text-slate-400">
+                                        Storage stays at {entitlement?.storageGb ?? 0} GB ·{" "}
+                                        {changeCycle}
+                                        {entitlement?.agentIds?.length ? (
+                                            <>
+                                                {" "}
+                                                · currently:{" "}
+                                                {entitlement.agentIds.map(agentLabel).join(", ")}
+                                            </>
+                                        ) : null}
+                                    </p>
+                                    <button
+                                        type="button"
+                                        disabled={sending || !!pending}
+                                        onClick={requestChange}
+                                        className="rounded-lg px-3.5 py-2 text-xs font-semibold bg-slate-900 text-white inline-flex items-center gap-1.5 hover:bg-slate-800 disabled:opacity-40"
+                                    >
+                                        {sending ? (
+                                            <Loader2 size={13} className="animate-spin" />
+                                        ) : (
+                                            <RefreshCw size={13} />
+                                        )}
+                                        Request change
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </section>
 
                     {pending && (
                         <div className="rounded-2xl border border-amber-100 bg-amber-50/80 px-5 py-4 text-sm text-amber-900">
-                            <span className="font-semibold">Pending:</span> {pending.planName || "Custom"}{" "}
+                            <span className="font-semibold">Pending:</span>{" "}
+                            {pending.requestType === "change" ? "Agent change · " : ""}
+                            {pending.planName || "Custom"}{" "}
                             · {money(pending.quotedPrice, currency)} / {pending.billingCycle}. Awaiting Super
                             Admin.
                         </div>
@@ -501,10 +660,17 @@ export default function AdminPlansPage() {
                                     >
                                         <div className="min-w-0">
                                             <p className="text-sm font-medium text-slate-800 truncate">
+                                                {r.requestType === "change" ? "Agent change · " : ""}
                                                 {r.planName || "Custom"} ·{" "}
                                                 {money(r.quotedPrice, currency)}
                                             </p>
                                             <p className="text-xs text-slate-400 mt-0.5 truncate">
+                                                {r.requestType === "change" &&
+                                                r.previousAgentIds?.length
+                                                    ? `From: ${r.previousAgentIds
+                                                          .map(agentLabel)
+                                                          .join(", ")} → `
+                                                    : ""}
                                                 {r.storageGb} GB · {r.billingCycle}
                                                 {r.createdAt
                                                     ? ` · ${new Date(r.createdAt).toLocaleDateString()}`

@@ -2,10 +2,12 @@ import axios, { AxiosError } from 'axios';
 import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
+import Document from '../models/Document';
 import logger from '../utils/logger';
 
 const BASE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8001').replace(/\/$/, '');
-const TIMEOUT = parseInt(process.env.AI_SERVICE_TIMEOUT_MS || '120000', 10);
+const TIMEOUT = parseInt(process.env.AI_SERVICE_TIMEOUT_MS || '300000', 10);
+const CHAT_TIMEOUT = parseInt(process.env.AI_CHAT_TIMEOUT_MS || '300000', 10);
 const ENABLED = process.env.AI_SERVICE_ENABLED !== 'false';
 
 export function isAiServiceEnabled(): boolean {
@@ -207,7 +209,7 @@ export async function chatWithAi(params: {
         params.documentIds?.length || params.phase3Agent || params.documentType
             ? '/api/v1/chat'
             : '/api/v1/chat/all';
-    const res = await client().post(path, body);
+    const res = await client().post(path, body, { timeout: CHAT_TIMEOUT });
 
     throwIfAiFailed(res, 'AI chat failed');
 
@@ -467,6 +469,137 @@ export async function streamAiAsset(path: string): Promise<{ data: NodeJS.Readab
     return { data: res.data, contentType };
 }
 
+export async function listAiDocuments(
+    organizationId: string,
+    limit = 200
+): Promise<Array<{ id: string; title?: string; status?: string; document_type?: string }>> {
+    if (!ENABLED || !organizationId) return [];
+    try {
+        const res = await client().get('/api/v1/documents', {
+            params: { organization_id: organizationId, limit },
+            timeout: 30_000,
+        });
+        if (res.status >= 400) return [];
+        const data = res.data;
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data?.documents)) return data.documents;
+        if (Array.isArray(data?.data)) return data.data;
+        return [];
+    } catch (e: any) {
+        logger.warn(`AI list documents failed: ${e.message}`);
+        return [];
+    }
+}
+
+function normalizeDocName(name: string): string {
+    return String(name || '')
+        .toLowerCase()
+        .replace(/\(\d+\)/g, '')
+        .replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Make sure Mongo docs are reachable in the AI backend before chat.
+ * - Re-upload from local disk when the python id is missing
+ * - Otherwise rematch by filename to an existing AI document
+ */
+export async function ensureDocumentsInAi(
+    docs: Array<{
+        documentId: string;
+        originalFilename?: string;
+        mimeType?: string;
+        storagePath?: string;
+        pythonDocumentId?: string | null;
+    }>,
+    organizationId: string,
+    uploadedBy?: string
+): Promise<Map<string, string>> {
+    const resolved = new Map<string, string>();
+    if (!ENABLED || !docs.length) return resolved;
+
+    let aiList: Array<{ id: string; title?: string }> | null = null;
+    const getAiList = async () => {
+        if (!aiList) aiList = await listAiDocuments(organizationId);
+        return aiList;
+    };
+
+    for (const doc of docs) {
+        const existingId = doc.pythonDocumentId || '';
+        if (existingId) {
+            const aiDoc = await getAiDocument(existingId, organizationId);
+            if (aiDoc) {
+                resolved.set(doc.documentId, existingId);
+                continue;
+            }
+        }
+
+        // Re-ingest if the file is available on this machine
+        if (doc.storagePath && fs.existsSync(doc.storagePath)) {
+            try {
+                const uploaded = await uploadDocumentToAi({
+                    filePath: doc.storagePath,
+                    originalFilename: doc.originalFilename || path.basename(doc.storagePath),
+                    mimeType: doc.mimeType || 'application/octet-stream',
+                    organizationId,
+                    title: doc.originalFilename,
+                    uploadedBy,
+                });
+                if (uploaded?.id) {
+                    await Document.updateOne(
+                        { documentId: doc.documentId },
+                        {
+                            $set: {
+                                pythonDocumentId: uploaded.id,
+                                status: 'processing',
+                                aiProcessingStatus: uploaded.status || 'processing',
+                                'metadata.aiOrgId': organizationId,
+                                'metadata.aiSynced': true,
+                            },
+                        }
+                    );
+                    resolved.set(doc.documentId, uploaded.id);
+                    logger.info(
+                        `Re-indexed ${doc.originalFilename} → AI id ${uploaded.id} (was missing from AI DB)`
+                    );
+                    continue;
+                }
+            } catch (e: any) {
+                logger.warn(`Re-index failed for ${doc.documentId}: ${e?.message || e}`);
+            }
+        }
+
+        // Fallback: match by filename against AI library already on this machine
+        try {
+            const list = await getAiList();
+            const key = normalizeDocName(doc.originalFilename || '');
+            const match = list.find((a) => {
+                const t = normalizeDocName(a.title || '');
+                return key && t && (key === t || key.includes(t) || t.includes(key));
+            });
+            if (match?.id) {
+                await Document.updateOne(
+                    { documentId: doc.documentId },
+                    {
+                        $set: {
+                            pythonDocumentId: match.id,
+                            'metadata.aiOrgId': organizationId,
+                            'metadata.aiSynced': true,
+                        },
+                    }
+                );
+                resolved.set(doc.documentId, match.id);
+                logger.info(
+                    `Rematched ${doc.originalFilename} → existing AI id ${match.id}`
+                );
+            }
+        } catch (e: any) {
+            logger.warn(`AI rematch failed for ${doc.documentId}: ${e?.message || e}`);
+        }
+    }
+
+    return resolved;
+}
+
 export async function listAiValidations(
     organizationId: string,
     documentId?: string
@@ -577,7 +710,8 @@ export async function getGroqStatus(): Promise<GroqLimitStatus> {
     if (!ENABLED) {
         return { limited: false, configured: false, retry_after_seconds: 0 };
     }
-    const res = await client().get('/api/v1/groq/status');
+    // Status must never hang behind the 120s AI default — the frontend polls this.
+    const res = await client().get('/api/v1/groq/status', { timeout: 5_000 });
     if (res.status >= 400) {
         return { limited: false, configured: false, retry_after_seconds: 0 };
     }
@@ -651,6 +785,12 @@ export function extractGroqLimitError(error: unknown): GroqLimitErrorInfo | null
 
 export function formatAiError(error: unknown): string {
     if (error instanceof AxiosError) {
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+            return `AI backend took too long (limit ${CHAT_TIMEOUT / 1000}s). Try a narrower document scope or increase AI_CHAT_TIMEOUT_MS.`;
+        }
+        if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
+            return 'AI backend connection dropped. Ensure python run.py is running and stable.';
+        }
         const d = error.response?.data;
         if (d?.message) return d.message;
         if (typeof d?.detail === 'string') return d.detail;

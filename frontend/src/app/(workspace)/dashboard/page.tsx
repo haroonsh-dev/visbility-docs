@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -44,6 +44,11 @@ type DashboardData = {
 
 type TeamIdentity = {
     fullName?: string;
+    organization?: {
+        organizationId?: string;
+        organizationName?: string;
+        status?: string;
+    } | null;
     department?: {
         departmentId: string;
         name: string;
@@ -72,7 +77,7 @@ const fadeUp = {
 };
 
 function DashboardContent() {
-    const { role, ready, canAccessPage } = usePermissions();
+    const { role, ready, canAccessPage, user: contextUser } = usePermissions();
     const storedUser = getStoredUser<{ userId?: string; fullName?: string }>();
     const isAdminView = role === "admin" || role === "superAdmin";
     const [data, setData] = useState<DashboardData>({
@@ -92,7 +97,19 @@ function DashboardContent() {
     const [showCompanyModal, setShowCompanyModal] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [teamIdentity, setTeamIdentity] = useState<TeamIdentity | null>(null);
+
+    // Identity comes from PermissionsContext (already cached + refreshed in background) —
+    // no second /auth/me round trip on the dashboard critical path.
+    const teamIdentity = useMemo<TeamIdentity | null>(() => {
+        if (isAdminView) return null;
+        if (!contextUser) return null;
+        return {
+            fullName: typeof contextUser.fullName === "string" ? contextUser.fullName : undefined,
+            organization: (contextUser.organization as TeamIdentity["organization"]) || null,
+            department: (contextUser.department as TeamIdentity["department"]) || null,
+            orgRole: (contextUser.orgRole as TeamIdentity["orgRole"]) || null,
+        };
+    }, [isAdminView, contextUser]);
 
     const buildData = useCallback((
         docs: any[],
@@ -165,9 +182,10 @@ function DashboardContent() {
         try {
             const params = new URLSearchParams({
                 page: "1",
-                limit: "500",
+                limit: "100",
                 sortBy: "createdAt",
                 sortOrder: "desc",
+                withDuplicates: "false",
             });
             if (!isAdminView && storedUser?.userId) {
                 params.set("uploadedBy", storedUser.userId);
@@ -292,6 +310,12 @@ function DashboardContent() {
                         </div>
                     }
                 />
+                {!isAdminView && teamIdentity?.organization?.organizationName && (
+                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50/80 px-3 py-1 text-xs font-medium text-teal-800">
+                        <Building2 size={13} />
+                        {teamIdentity.organization.organizationName}
+                    </div>
+                )}
             </motion.div>
 
             {error && (

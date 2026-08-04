@@ -396,38 +396,57 @@ export const me = async (req: Request, res: Response) => {
         return;
     }
 
-    let department: Record<string, unknown> | null = null;
-    let orgRole: Record<string, unknown> | null = null;
-    try {
-        const { default: DepartmentMember } = await import('../models/DepartmentMember');
-        const { default: Department } = await import('../models/Department');
-        const { default: OrgRole } = await import('../models/OrgRole');
-        const membership = await DepartmentMember.findOne({ userId: user.userId }).lean();
-        if (membership) {
+    // Run all enrichment lookups in parallel — sequential Atlas round trips
+    // were the dominant cost of this endpoint (~2s observed).
+    const [orgResult, memberResult] = await Promise.allSettled([
+        (async () => {
+            if (!user.organizationId) return null;
+            const { default: Organization } = await import('../models/Organization');
+            const org = await Organization.findOne({ organizationId: user.organizationId }).lean();
+            if (!org) return null;
+            return {
+                organizationId: org.organizationId,
+                organizationName: org.organizationName,
+                status: org.status,
+            };
+        })(),
+        (async () => {
+            const { default: DepartmentMember } = await import('../models/DepartmentMember');
+            const membership = await DepartmentMember.findOne({ userId: user.userId }).lean();
+            if (!membership) return null;
+            const { default: Department } = await import('../models/Department');
+            const { default: OrgRole } = await import('../models/OrgRole');
             const [dept, role] = await Promise.all([
                 Department.findOne({ departmentId: membership.departmentId }).lean(),
                 OrgRole.findOne({ roleId: membership.orgRoleId }).lean(),
             ]);
-            if (dept) {
-                department = {
-                    departmentId: dept.departmentId,
-                    name: dept.name,
-                    slug: dept.slug,
-                    allowedDocumentTypes: dept.allowedDocumentTypes,
-                };
-            }
-            if (role) {
-                orgRole = {
-                    roleId: role.roleId,
-                    name: role.name,
-                    isLeader: role.isLeader,
-                    rank: typeof role.rank === 'number' ? role.rank : 1,
-                };
-            }
-        }
-    } catch {
-        /* ignore enrichment errors */
-    }
+            return {
+                department: dept
+                    ? {
+                          departmentId: dept.departmentId,
+                          name: dept.name,
+                          slug: dept.slug,
+                          allowedDocumentTypes: dept.allowedDocumentTypes,
+                      }
+                    : null,
+                orgRole: role
+                    ? {
+                          roleId: role.roleId,
+                          name: role.name,
+                          isLeader: role.isLeader,
+                          rank: typeof role.rank === 'number' ? role.rank : 1,
+                      }
+                    : null,
+            };
+        })(),
+    ]);
+
+    const organization =
+        orgResult.status === 'fulfilled' ? orgResult.value : null;
+    const memberData =
+        memberResult.status === 'fulfilled' ? memberResult.value : null;
+    const department = memberData?.department || null;
+    const orgRole = memberData?.orgRole || null;
 
     res.json({
         success: true,
@@ -437,6 +456,7 @@ export const me = async (req: Request, res: Response) => {
                 permissions: userPermissionsForResponse(user),
                 department,
                 orgRole,
+                organization,
             },
         },
     });
