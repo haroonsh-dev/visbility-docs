@@ -13,7 +13,8 @@ import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
 import { clearAuthState, getStoredUser } from "@/lib/authSession";
 import { apiRequest } from "@/lib/apiClient";
-import SiteLogo from "@/assets/Logo/visibility_docs_logo.png";
+import LogoDark from "@/assets/Logo/visibility docs dark bg.png";
+import LogoLight from "@/assets/Logo/visibility docs light bg.png";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { cn } from "@/lib/utils";
 
@@ -88,7 +89,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
             roles: ["superAdmin", "admin", "team", "service_account"],
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("documents"),
         },
-        { href: "/admin/documents", label: "All Documents", roles: ["superAdmin"] },
+        { href: "/admin/documents", label: "Document Vault", roles: ["superAdmin"] },
         {
             href: "/chat",
             label: "AI Assistant",
@@ -146,9 +147,9 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                 open ? "translate-x-0" : "-translate-x-full"
             )}>
                 {/* Logo */}
-                <div className="px-2 py-2 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
-                    <Link href="/dashboard" className="flex-1 flex items-center justify-center py-1.5 px-1">
-                        <Image src={SiteLogo} alt="Visibility Docs" className="h-16 w-auto object-contain bg-white/95 rounded-xl px-3 py-1.5 shadow-md border border-white/20" priority />
+                <div className="px-2 py-3 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
+                    <Link href="/dashboard" className="flex-1 flex items-center justify-center py-1">
+                        <Image src={LogoDark} alt="Visibility Docs" className="h-28 w-auto max-w-[190px] object-contain transition-all hover:scale-105" priority />
                     </Link>
                     <button type="button" onClick={onClose}
                         className="lg:hidden rounded-lg p-2 min-h-9 min-w-9 flex items-center justify-center shrink-0 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"

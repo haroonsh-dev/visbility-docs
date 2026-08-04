@@ -109,7 +109,7 @@ function DocumentPreviewContent() {
                     extension === "csv"
                 ) {
                     const workbook = XLSX.read(await blob.arrayBuffer(), { type: "array" });
-                    const sheets = workbook.SheetNames.map((name) => ({
+                    const sheets = workbook.SheetNames.map((name: string) => ({
                         name,
                         html: XLSX.utils.sheet_to_html(workbook.Sheets[name]),
                     }));

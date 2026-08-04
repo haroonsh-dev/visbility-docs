@@ -58,7 +58,7 @@ export const listAdmins = async (req: Request, res: Response, next: NextFunction
             ...new Set(admins.map((a) => a.organizationId).filter(Boolean) as string[]),
         ];
 
-        const [orgs, teamMembers] = await Promise.all([
+        const [orgs, teamMembers, docCounts] = await Promise.all([
             orgIds.length
                 ? Organization.find({ organizationId: { $in: orgIds } }).lean()
                 : Promise.resolve([]),
@@ -71,9 +71,16 @@ export const listAdmins = async (req: Request, res: Response, next: NextFunction
                       .sort({ fullName: 1 })
                       .lean()
                 : Promise.resolve([]),
+            orgIds.length
+                ? Document.aggregate([
+                      { $match: { organizationId: { $in: orgIds } } },
+                      { $group: { _id: '$organizationId', totalDocs: { $sum: 1 } } },
+                  ])
+                : Promise.resolve([]),
         ]);
 
         const orgMap = new Map(orgs.map((o) => [o.organizationId, o]));
+        const docCountMap = new Map(docCounts.map((d) => [d._id, d.totalDocs]));
         const membersByOrg = new Map<string, typeof teamMembers>();
         for (const m of teamMembers) {
             const key = m.organizationId || '';
@@ -88,6 +95,7 @@ export const listAdmins = async (req: Request, res: Response, next: NextFunction
             const members = admin.organizationId
                 ? membersByOrg.get(admin.organizationId) || []
                 : [];
+            const documentCount = admin.organizationId ? docCountMap.get(admin.organizationId) || 0 : 0;
             return {
                 ...admin,
                 organization: org
@@ -101,6 +109,7 @@ export const listAdmins = async (req: Request, res: Response, next: NextFunction
                     : null,
                 teamMembers: members,
                 teamMemberCount: members.length,
+                documentCount,
             };
         });
 

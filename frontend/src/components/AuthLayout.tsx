@@ -4,7 +4,8 @@ import React from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import SiteLogo from "@/assets/Logo/visibility_docs_logo.png";
+import LogoLight from "@/assets/Logo/visibility docs light bg.png";
+import LogoDark from "@/assets/Logo/visibility docs dark bg.png";
 
 interface AuthLayoutProps {
     children: React.ReactNode;
@@ -74,9 +75,9 @@ export default function AuthLayout({ children, onBack, showBack = false, wide = 
                 >
                     <div className="flex justify-center mb-2 sm:mb-3">
                         <Image
-                            src={SiteLogo}
+                            src={LogoLight}
                             alt="Visibility Docs"
-                            className="h-20 sm:h-24 w-auto object-contain mx-auto"
+                            className="h-28 sm:h-32 w-auto object-contain mx-auto"
                             priority
                         />
                     </div>

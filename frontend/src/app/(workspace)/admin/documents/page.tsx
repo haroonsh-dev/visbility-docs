@@ -182,7 +182,7 @@ function AdminDocumentsContent() {
 
     return (
         <div className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-6 animate-fade-in-up">
-            <PageHeader title="All Documents" subtitle="Platform-wide document library" />
+            <PageHeader title="Document Vault" subtitle="Platform-wide document library" />
 
             <div className="surface-card">
                 <div className={`px-5 py-4 border-b ${colors.borderPrimary} flex flex-wrap items-center justify-between gap-3`}>

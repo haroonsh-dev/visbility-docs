@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     Activity,
     ArrowRight,
@@ -13,6 +13,15 @@ import {
     MessageSquare,
     RefreshCw,
     ShieldCheck,
+    CreditCard,
+    Users,
+    X,
+    Phone,
+    Mail,
+    Calendar,
+    User,
+    ExternalLink,
+    Filter,
 } from "lucide-react";
 import DashboardStats from "@/components/DashboardStats";
 import DashboardCharts from "@/components/DashboardCharts";
@@ -75,6 +84,12 @@ function DashboardContent() {
         recentActivity: [],
         departmentNames: {},
     });
+    const [adminsData, setAdminsData] = useState<any[]>([]);
+    const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
+    const [rawAllDocs, setRawAllDocs] = useState<any[]>([]);
+    const [rawActivity, setRawActivity] = useState<any[]>([]);
+    const [departmentNamesState, setDepartmentNamesState] = useState<Record<string, string>>({});
+    const [showCompanyModal, setShowCompanyModal] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [teamIdentity, setTeamIdentity] = useState<TeamIdentity | null>(null);
@@ -162,15 +177,23 @@ function DashboardContent() {
                 activityParams.set("actorUserId", storedUser.userId);
             }
 
-            const [docsRes, deptRes, activityRes, meRes] = await Promise.all([
+            const isSuperAdmin = role === "superAdmin";
+
+            const [docsRes, deptRes, activityRes, meRes, superAdminRes] = await Promise.all([
                 apiRequest(`/docs/documents?${params}`),
                 isAdminView ? apiRequest(`/docs/departments`).catch(() => null) : Promise.resolve(null),
                 apiRequest(`/docs/activity?${activityParams}`).catch(() => null),
                 !isAdminView ? apiRequest("/auth/me").catch(() => null) : Promise.resolve(null),
+                isSuperAdmin ? apiRequest("/docs/super-admin/admins").catch(() => null) : Promise.resolve(null),
             ]);
             const docs = docsRes?.data?.documents || [];
             const departments = deptRes?.data?.departments || deptRes?.data || [];
             const recentActivity = activityRes?.data?.logs || [];
+
+            if (isSuperAdmin && superAdminRes?.data?.admins) {
+                setAdminsData(superAdminRes.data.admins);
+            }
+
             if (!isAdminView) {
                 const freshUser = meRes?.data?.user;
                 setTeamIdentity(
@@ -193,13 +216,32 @@ function DashboardContent() {
                     if (id && name) departmentNames[id] = name;
                 }
             }
+
+            setRawAllDocs(docs);
+            setRawActivity(recentActivity);
+            setDepartmentNamesState(departmentNames);
+
             buildData(docs, departmentNames, recentActivity);
         } catch (e: any) {
             setError(e.message || "Failed to load dashboard");
         } finally {
             setLoading(false);
         }
-    }, [ready, isAdminView, storedUser?.userId, buildData]);
+    }, [ready, isAdminView, role, storedUser?.userId, buildData]);
+
+    useEffect(() => {
+        if (!ready || loading) return;
+        if (selectedCompany) {
+            const orgId = selectedCompany.organizationId || selectedCompany.organization?.organizationId;
+            const filteredDocs = rawAllDocs.filter((d: any) => d.organizationId === orgId);
+            const filteredActivity = rawActivity.filter(
+                (a: any) => a.metadata?.organizationId === orgId || a.organizationId === orgId
+            );
+            buildData(filteredDocs, departmentNamesState, filteredActivity);
+        } else {
+            buildData(rawAllDocs, departmentNamesState, rawActivity);
+        }
+    }, [selectedCompany, rawAllDocs, rawActivity, departmentNamesState, ready, buildData]);
 
     useEffect(() => {
         loadDashboard();
@@ -264,6 +306,296 @@ function DashboardContent() {
                     {error}
                 </motion.div>
             )}
+
+            {role === "superAdmin" && ready && !loading && (
+                <motion.section
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.05, duration: 0.4 }}
+                    className="surface-card overflow-hidden border border-teal-500/20 shadow-xl"
+                >
+                    <div className="p-5 sm:p-6 border-b border-white/[0.08] bg-gradient-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-md">
+                                <Building2 size={22} />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                                        Tenant & Company Directory
+                                    </h2>
+                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-500/15 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                                        {adminsData.length} {adminsData.length === 1 ? "Company" : "Companies"}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    Real-time overview of tenant organizations, active plans, uploaded documents, and admin management.
+                                </p>
+                            </div>
+                        </div>
+                        <Link
+                            href="/admin/admins"
+                            className="btn-secondary rounded-xl px-3.5 py-2 text-xs font-semibold inline-flex items-center gap-1.5"
+                        >
+                            Manage Admins <ArrowRight size={13} />
+                        </Link>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-500/5 text-slate-500 dark:text-slate-400 uppercase text-[10px] tracking-wider font-semibold border-b border-slate-200/50 dark:border-white/5">
+                                <tr>
+                                    <th className="py-3 px-4">Company / Org</th>
+                                    <th className="py-3 px-4">Admin Contact</th>
+                                    <th className="py-3 px-4">Subscription Plan</th>
+                                    <th className="py-3 px-4">Uploaded Docs</th>
+                                    <th className="py-3 px-4">Team Size</th>
+                                    <th className="py-3 px-4">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200/50 dark:divide-white/5 text-slate-700 dark:text-slate-300 font-medium">
+                                {adminsData.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                                            No tenant organizations registered yet.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    adminsData.map((admin: any) => {
+                                        const orgName = admin.organization?.organizationName || "No Org Name";
+                                        const rawPlan = admin.organization?.subscriptionPlan || "free";
+                                        const plan = rawPlan.toUpperCase();
+                                        const docCount = admin.documentCount || 0;
+                                        const memberCount = admin.teamMemberCount || 0;
+                                        const status = admin.status || "active";
+                                        const isSelected = selectedCompany?._id === admin._id || selectedCompany?.userId === admin.userId;
+
+                                        return (
+                                            <tr
+                                                key={admin._id || admin.userId}
+                                                onClick={() => setSelectedCompany(admin)}
+                                                className={`cursor-pointer transition-all ${
+                                                    isSelected
+                                                        ? "bg-teal-500/15 dark:bg-teal-500/20 font-semibold"
+                                                        : "hover:bg-teal-500/[0.06]"
+                                                }`}
+                                                title="Click to view company details"
+                                            >
+                                                <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white">
+                                                    <div className="flex items-center gap-2.5">
+                                                        <div className="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/20">
+                                                            <Building2 size={15} />
+                                                        </div>
+                                                        <div>
+                                                            <p className="truncate text-xs font-bold text-teal-700 dark:text-teal-300 hover:underline">
+                                                                {orgName}
+                                                            </p>
+                                                            <p className="text-[10px] text-slate-400 font-normal">ID: {admin.organizationId || "N/A"}</p>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <div>
+                                                        <p className="font-semibold text-slate-800 dark:text-slate-200">{admin.fullName || "Admin"}</p>
+                                                        <p className="text-[10px] text-slate-400 truncate">{admin.email}</p>
+                                                    </div>
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border ${
+                                                        plan.includes("PRO") || plan.includes("ENTERPRISE")
+                                                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
+                                                            : "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20"
+                                                    }`}>
+                                                        <CreditCard size={12} />
+                                                        {plan}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                                                        <FileText size={12} />
+                                                        {docCount} {docCount === 1 ? "doc" : "docs"}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                                                        <Users size={12} className="text-slate-400" />
+                                                        {memberCount} members
+                                                    </span>
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <Badge variant={status === "active" ? "success" : "error"}>
+                                                        {status}
+                                                    </Badge>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </motion.section>
+            )}
+
+            {/* Company Details Modal */}
+            <AnimatePresence>
+                {showCompanyModal && selectedCompany && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                            className="bg-slate-900 border border-teal-500/30 text-slate-100 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden relative"
+                        >
+                            {/* Modal Header */}
+                            <div className="p-5 border-b border-white/10 bg-gradient-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-lg font-bold">
+                                        <Building2 size={24} />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <h3 className="text-lg font-bold text-white">
+                                                {selectedCompany.organization?.organizationName || "Company Details"}
+                                            </h3>
+                                            <Badge variant={selectedCompany.status === "active" ? "success" : "error"}>
+                                                {selectedCompany.status || "active"}
+                                            </Badge>
+                                        </div>
+                                        <p className="text-xs text-slate-400 font-mono">
+                                            Org ID: {selectedCompany.organizationId || selectedCompany.organization?.organizationId || "N/A"}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCompanyModal(false)}
+                                    className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            {/* Modal Body */}
+                            <div className="p-6 space-y-6 overflow-y-auto">
+                                {/* Grid Info Cards */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
+                                        <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
+                                            <CreditCard size={12} className="text-teal-400" /> Subscription Plan
+                                        </p>
+                                        <p className="text-sm font-extrabold text-teal-300 mt-1 uppercase">
+                                            {selectedCompany.organization?.subscriptionPlan || "FREE"}
+                                        </p>
+                                    </div>
+                                    <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
+                                        <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
+                                            <FileText size={12} className="text-cyan-400" /> Uploaded Documents
+                                        </p>
+                                        <p className="text-sm font-extrabold text-cyan-300 mt-1">
+                                            {selectedCompany.documentCount || 0} Files
+                                        </p>
+                                    </div>
+                                    <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
+                                        <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
+                                            <Users size={12} className="text-purple-400" /> Team Members
+                                        </p>
+                                        <p className="text-sm font-extrabold text-purple-300 mt-1">
+                                            {selectedCompany.teamMemberCount || 0} Members
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Admin Details */}
+                                <div className="p-4 rounded-xl bg-slate-800/60 border border-white/5 space-y-3">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-teal-400 flex items-center gap-1.5">
+                                        <User size={14} /> Organization Admin Contact
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div>
+                                            <span className="text-slate-400 block text-[10px]">Full Name</span>
+                                            <span className="font-semibold text-slate-200">{selectedCompany.fullName || "N/A"}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-slate-400 block text-[10px]">Email Address</span>
+                                            <span className="font-semibold text-slate-200">{selectedCompany.email || "N/A"}</span>
+                                        </div>
+                                        {selectedCompany.contactNumber && (
+                                            <div>
+                                                <span className="text-slate-400 block text-[10px]">Contact Phone</span>
+                                                <span className="font-semibold text-slate-200">{selectedCompany.contactNumber}</span>
+                                            </div>
+                                        )}
+                                        {selectedCompany.createdAt && (
+                                            <div>
+                                                <span className="text-slate-400 block text-[10px]">Registered On</span>
+                                                <span className="font-semibold text-slate-200">
+                                                    {new Date(selectedCompany.createdAt).toLocaleDateString("en-US", {
+                                                        year: "numeric",
+                                                        month: "short",
+                                                        day: "numeric",
+                                                    })}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Team Members List */}
+                                <div className="space-y-2">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                                        <Users size={14} /> Registered Team Members ({selectedCompany.teamMembers?.length || 0})
+                                    </h4>
+                                    {selectedCompany.teamMembers && selectedCompany.teamMembers.length > 0 ? (
+                                        <div className="border border-white/10 rounded-xl overflow-hidden divide-y divide-white/5 bg-slate-800/40 max-h-44 overflow-y-auto">
+                                            {selectedCompany.teamMembers.map((member: any) => (
+                                                <div key={member._id || member.userId} className="p-2.5 flex items-center justify-between text-xs">
+                                                    <div>
+                                                        <p className="font-semibold text-slate-200">{member.fullName || member.username}</p>
+                                                        <p className="text-[10px] text-slate-400">{member.email}</p>
+                                                    </div>
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-white/5 text-slate-300">
+                                                        {member.role || "team"}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="p-3 text-center text-slate-400 text-xs bg-slate-800/30 rounded-xl border border-white/5">
+                                            No separate team members registered for this company yet.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Modal Footer Actions */}
+                            <div className="p-4 border-t border-white/10 bg-slate-900/90 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                    <Link
+                                        href={`/admin/documents?organizationId=${selectedCompany.organizationId || selectedCompany.organization?.organizationId || ""}`}
+                                        className="btn-gradient rounded-xl px-3.5 py-2 text-xs font-semibold inline-flex items-center gap-1.5"
+                                    >
+                                        <FileText size={13} /> View Documents <ExternalLink size={12} />
+                                    </Link>
+                                    <Link
+                                        href="/admin/admins"
+                                        className="btn-secondary rounded-xl px-3.5 py-2 text-xs font-semibold inline-flex items-center gap-1.5"
+                                    >
+                                        Manage Admin <ArrowRight size={13} />
+                                    </Link>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCompanyModal(false)}
+                                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
 
             {!isAdminView && ready && !loading && (
                 <motion.section
@@ -347,6 +679,45 @@ function DashboardContent() {
                         </div>
                     )}
                 </motion.section>
+            )}
+
+            {selectedCompany && (
+                <motion.div
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 rounded-2xl bg-gradient-to-r from-teal-500/15 via-cyan-500/10 to-teal-500/5 border border-teal-500/30 flex flex-wrap items-center justify-between gap-3 shadow-md"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/30">
+                            <Building2 size={20} />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] uppercase font-bold text-teal-600 dark:text-teal-400 tracking-wider">Filtered View Active</span>
+                                <span className="text-xs text-slate-400 font-mono">({selectedCompany.organizationId || selectedCompany.organization?.organizationId || "N/A"})</span>
+                            </div>
+                            <p className="text-sm font-extrabold text-slate-900 dark:text-white">
+                                Showing cards & graphs for <span className="text-teal-600 dark:text-teal-400 underline">{selectedCompany.organization?.organizationName || selectedCompany.fullName}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setShowCompanyModal(true)}
+                            className="btn-secondary rounded-xl px-3.5 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5"
+                        >
+                            <User size={13} /> Full Details
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSelectedCompany(null)}
+                            className="rounded-xl px-3.5 py-1.5 text-xs font-bold inline-flex items-center gap-1.5 bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-colors"
+                        >
+                            <X size={14} /> Clear Filter (Show All)
+                        </button>
+                    </div>
+                </motion.div>
             )}
 
             <DashboardStats stats={data.stats} />
