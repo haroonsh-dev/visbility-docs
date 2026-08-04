@@ -34,6 +34,30 @@ async def get_session(session_id: str):
     return session
 
 
+@router.patch(
+    "/sessions/{session_id}",
+    summary="Rename chat session",
+    description="Update the display title of a chat session",
+)
+@router.post(
+    "/sessions/{session_id}/rename",
+    summary="Rename chat session",
+    description="Update the display title of a chat session",
+)
+async def rename_session(session_id: str, body: dict = Body(...)):
+    session = SupabaseDB.get_chat_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    title = str(body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    if len(title) > 120:
+        title = title[:117] + "..."
+    SupabaseDB.update_chat_session_title(session_id, title)
+    updated = SupabaseDB.get_chat_session(session_id)
+    return {"success": True, "session": updated or {**session, "title": title}}
+
+
 @router.delete(
     "/sessions/{session_id}",
     status_code=status.HTTP_200_OK,

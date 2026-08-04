@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
     FileText, Upload, Trash2, RefreshCw, Eye, Search, FolderUp, Copy, X, Loader2, Info, Filter, Share2,
-    CheckCircle, Clock, AlertTriangle, List, FolderTree, Brain,
+    CheckCircle, Clock, AlertTriangle, List, FolderTree, Brain, Sparkles,
 } from "lucide-react";
 import FilterSelect from "@/components/FilterSelect";
 import ClassifyAgentPopup from "@/components/ClassifyAgentPopup";
@@ -35,8 +35,15 @@ type DocItem = {
 
 type Pagination = { page: number; limit: number; total: number; totalPages: number };
 type PendingFile = { id: string; file: File };
-type QueueItemStatus = "queued" | "uploading" | "processing" | "done" | "error";
+type QueueItemStatus = "queued" | "uploading" | "processing" | "done" | "error" | "duplicate";
 type QueueItem = { id: string; name: string; size: number; mimeType: string; status: QueueItemStatus; error?: string; documentId?: string };
+
+const QUEUE_TERMINAL_STATUSES: QueueItemStatus[] = ["done", "error", "duplicate"];
+
+function queueStatusText(item: QueueItem) {
+    if (item.status === "duplicate") return "Duplicate — not added";
+    return item.error ? `${item.status}: ${item.error}` : item.status;
+}
 
 const SORT_PRESETS = [
     { value: "newest", label: "Newest first", sortBy: "createdAt", sortOrder: "desc" },
@@ -62,6 +69,7 @@ function statusBadge(status: string) {
     const s = status.toLowerCase();
     if (["ready", "processed", "completed", "complete", "done"].includes(s)) return "bg-emerald-50 text-emerald-700 border-emerald-200";
     if (["processing", "uploaded", "queued", "uploading"].includes(s)) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (s === "duplicate") return "bg-slate-100 text-slate-600 border-slate-200";
     if (s === "failed" || s.includes("fail") || s.includes("error")) return "bg-rose-50 text-rose-700 border-rose-200";
     return "bg-slate-50 text-slate-500 border-slate-200";
 }
@@ -134,7 +142,8 @@ function DocumentsContent() {
     const [docs, setDocs] = useState<DocItem[]>([]);
     const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 10, total: 0, totalPages: 0 });
     const [loading, setLoading] = useState(true);
-    const [uploading, setUploading] = useState(false);
+    const [activeBatches, setActiveBatches] = useState(0);
+    const uploading = activeBatches > 0;
     const [dragOver, setDragOver] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -165,10 +174,9 @@ function DocumentsContent() {
     const [members, setMembers] = useState<Array<{ userId: string; name?: string; email?: string }>>([]);
     const [mounted, setMounted] = useState(false);
 
-    // Active AI Provider state for Documents page
+    // AI model chosen for the next upload batch — sent per upload, not saved globally.
     const [configuredProviders, setConfiguredProviders] = useState<Array<{ provider: string; label: string; isActive: boolean; hasKey: boolean }>>([]);
-    const [activeProvider, setActiveProvider] = useState<string>("");
-    const [switchingProvider, setSwitchingProvider] = useState(false);
+    const [selectedProvider, setSelectedProvider] = useState<string>("");
 
     const loadProviderKeys = useCallback(async () => {
         try {
@@ -177,7 +185,7 @@ function DocumentsContent() {
             const active = keysList.filter((k: any) => k.hasKey);
             setConfiguredProviders(active);
             const currentActive = keysList.find((k: any) => k.isActive)?.provider || active[0]?.provider || "";
-            setActiveProvider(currentActive);
+            setSelectedProvider(currentActive);
         } catch {
             /* ignore */
         }
@@ -198,24 +206,6 @@ function DocumentsContent() {
         setMounted(true);
         if (canAccessPage("settings")) loadProviderKeys();
     }, [canAccessPage, loadProviderKeys]);
-
-    const handleSwitchProvider = async (newProvider: string) => {
-        if (!newProvider) return;
-        setSwitchingProvider(true);
-        try {
-            await apiRequest("/docs/settings/api-keys/primary", {
-                method: "POST",
-                body: JSON.stringify({ provider: newProvider }),
-            });
-            setActiveProvider(newProvider);
-            setToast(`Active AI Provider switched to ${newProvider.toUpperCase()}`);
-            await loadProviderKeys();
-        } catch (e: any) {
-            setError(e.message || "Failed to switch provider");
-        } finally {
-            setSwitchingProvider(false);
-        }
-    };
 
     const activeSort = SORT_PRESETS.find((s) => s.value === sortPreset) || SORT_PRESETS[0];
     const applySearch = () => { setQ(searchInput); setPage(1); };
@@ -330,38 +320,64 @@ function DocumentsContent() {
         const el = containerRef.current; el?.addEventListener("paste", onPaste as any); return () => el?.removeEventListener("paste", onPaste as any);
     });
 
+    const inFlightIdsRef = useRef<Set<string>>(new Set());
+
     const removeFromQueue = (id: string) => setPendingFiles((prev) => prev.filter((p) => p.id !== id));
     const clearQueue = () => setPendingFiles([]);
 
     const uploadQueue = async () => {
-        if (!pendingFiles.length || uploading) return;
-        setUploading(true); setError(null);
-        const filesToUpload = [...pendingFiles];
-        const items: QueueItem[] = filesToUpload.map((p) => ({ id: p.id, name: p.file.name, size: p.file.size, mimeType: p.file.type, status: "queued" }));
-        setQueueItems(items); setPendingFiles([]);
+        const batch = pendingFiles.filter((p) => !inFlightIdsRef.current.has(p.id));
+        if (!batch.length) return;
+        const batchIds = new Set(batch.map((p) => p.id));
+        batchIds.forEach((id) => inFlightIdsRef.current.add(id));
+        const batchAgent = preferredAgent;
+        const batchProvider = selectedProvider;
+        setPendingFiles((prev) => prev.filter((p) => !batchIds.has(p.id)));
+        setError(null);
+        setActiveBatches((n) => n + 1);
+        setQueueItems((prev) => [
+            ...prev,
+            ...batch.map((p) => ({ id: p.id, name: p.file.name, size: p.file.size, mimeType: p.file.type, status: "queued" as QueueItemStatus })),
+        ]);
+
         const processingIds: string[] = [];
-        for (let i = 0; i < filesToUpload.length; i++) {
-            const pf = filesToUpload[i];
-            setQueueItems((prev) => prev.map((q) => (q.id === pf.id ? { ...q, status: "uploading" } : q)));
-            try {
-                const form = new FormData(); form.append("file", pf.file);
-                if (preferredAgent) form.append("phase3Agent", preferredAgent);
-                const data = await apiRequest("/docs/documents", { method: "POST", body: form });
-                const doc = data?.data?.document; const aiMsg = data?.data?.aiModelResponse?.message;
-                const failed = doc?.status === "failed" || !!doc?.aiErrorMessage;
-                if (doc?.documentId && !failed) processingIds.push(doc.documentId);
-                setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, status: failed ? "error" : "processing", documentId: doc?.documentId, error: doc?.aiErrorMessage || (failed ? "Upload to model failed" : undefined) } : q));
-                if (!failed && aiMsg) setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, error: undefined } : q));
-            } catch (e: any) { setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, status: "error", error: e.message } : q)); }
+        try {
+            for (const pf of batch) {
+                setQueueItems((prev) => prev.map((q) => (q.id === pf.id ? { ...q, status: "uploading" } : q)));
+                try {
+                    const form = new FormData(); form.append("file", pf.file);
+                    if (batchAgent) form.append("phase3Agent", batchAgent);
+                    if (batchProvider) form.append("aiProvider", batchProvider);
+                    const data = await apiRequest("/docs/documents", { method: "POST", body: form });
+                    const doc = data?.data?.document;
+                    const failed = doc?.status === "failed" || !!doc?.aiErrorMessage;
+                    if (doc?.documentId && !failed) processingIds.push(doc.documentId);
+                    setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, status: failed ? "error" : "processing", documentId: doc?.documentId, error: doc?.aiErrorMessage || (failed ? "Upload to model failed" : undefined) } : q));
+                } catch (e: any) {
+                    const isDuplicate = e?.status === 409 || e?.code === "DUPLICATE_FILE";
+                    setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, status: isDuplicate ? "duplicate" : "error", error: isDuplicate ? undefined : e.message } : q));
+                }
+            }
+        } finally {
+            // Released as soon as the transfers finish so more files can be sent while these process.
+            setActiveBatches((n) => Math.max(0, n - 1));
         }
+
+        await load();
+
         if (processingIds.length) {
             await Promise.all(processingIds.map(async (docId) => {
                 const result = await pollUntilTerminal(docId);
                 setQueueItems((prev) => prev.map((q) => q.documentId === docId ? { ...q, status: result === "done" ? "done" : "error" } : q));
                 if (result === "done") await queueClassifyPopup(docId);
             }));
+            await load();
         }
-        await load(); setUploading(false); setTimeout(() => setQueueItems([]), 8000);
+
+        batchIds.forEach((id) => inFlightIdsRef.current.delete(id));
+        setTimeout(() => {
+            setQueueItems((prev) => prev.filter((q) => !(batchIds.has(q.id) && QUEUE_TERMINAL_STATUSES.includes(q.status))));
+        }, 8000);
     };
 
     const onDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files?.length) addFilesToQueue(e.dataTransfer.files); };
@@ -480,6 +496,11 @@ function DocumentsContent() {
     const allowView = canViewDocs();
     const allowDelete = canDeleteDocs();
     const showStaging = pendingFiles.length > 0 || queueItems.length > 0;
+    // In-flight items stay listed while newly picked files are appended below them.
+    const stagedRows: QueueItem[] = [
+        ...queueItems,
+        ...pendingFiles.map((p) => ({ id: p.id, name: p.file.name, size: p.file.size, mimeType: p.file.type, status: "queued" as QueueItemStatus })),
+    ];
     const hasActiveFilters = Boolean(scoreFilter || agentFilter || scopeFilter || typeFilter || sortPreset !== "newest");
 
     const totalDocs = pagination.total;
@@ -536,11 +557,11 @@ function DocumentsContent() {
                         <div className="flex flex-wrap gap-2.5 justify-center">
                             <label className="btn-gradient rounded-xl px-6 py-2.5 text-sm cursor-pointer inline-flex items-center gap-2 shadow-sm hover:shadow-md transition-shadow">
                                 <Upload size={14} /> Browse files
-                                <input type="file" className="hidden" accept={ACCEPT_ATTR} multiple disabled={uploading} onChange={(e) => { if (e.target.files?.length) addFilesToQueue(e.target.files); e.target.value = ""; }} />
+                                <input type="file" className="hidden" accept={ACCEPT_ATTR} multiple onChange={(e) => { if (e.target.files?.length) addFilesToQueue(e.target.files); e.target.value = ""; }} />
                             </label>
                             <label className="btn-secondary rounded-xl px-6 py-2.5 text-sm cursor-pointer inline-flex items-center gap-2">
                                 <FolderUp size={14} /> Upload folder
-                                <input type="file" className="hidden" accept={ACCEPT_ATTR} multiple {...({ webkitdirectory: "", directory: "" } as any)} disabled={uploading} onChange={(e) => { if (e.target.files?.length) addFilesToQueue(e.target.files); e.target.value = ""; }} />
+                                <input type="file" className="hidden" accept={ACCEPT_ATTR} multiple {...({ webkitdirectory: "", directory: "" } as any)} onChange={(e) => { if (e.target.files?.length) addFilesToQueue(e.target.files); e.target.value = ""; }} />
                             </label>
                         </div>
                     </div>
@@ -557,35 +578,63 @@ function DocumentsContent() {
                 <div className="surface-card overflow-visible">
                     <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                         <div>
-                            <h2 className="text-sm font-semibold text-slate-800">{uploading ? "Uploading queue" : `Ready to upload (${pendingFiles.length})`}</h2>
-                            <p className="text-xs mt-0.5 text-slate-500">Review files, pick extraction agent, then click Upload</p>
+                            <h2 className="text-sm font-semibold text-slate-800">
+                                {pendingFiles.length > 0 ? `Ready to upload (${pendingFiles.length})` : "Upload queue"}
+                            </h2>
+                            <p className="text-xs mt-0.5 text-slate-500">
+                                {uploading
+                                    ? "Uploading in the background — you can keep adding files and upload them right away."
+                                    : "Review files, pick AI model and extraction agent, then click Upload"}
+                            </p>
                         </div>
                         <div className="flex gap-2">
-                            {!uploading && pendingFiles.length > 0 && <button type="button" onClick={clearQueue} className="btn-ghost rounded-xl px-3 py-2 text-sm">Clear all</button>}
-                            <button type="button" onClick={uploadQueue} disabled={uploading || pendingFiles.length === 0} className="btn-gradient rounded-xl px-5 py-2.5 text-sm inline-flex items-center gap-2 disabled:opacity-50">
+                            {pendingFiles.length > 0 && <button type="button" onClick={clearQueue} className="btn-ghost rounded-xl px-3 py-2 text-sm">Clear all</button>}
+                            <button type="button" onClick={uploadQueue} disabled={pendingFiles.length === 0} className="btn-gradient rounded-xl px-5 py-2.5 text-sm inline-flex items-center gap-2 disabled:opacity-50">
                                 {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                                Upload {pendingFiles.length || queueItems.length} file(s)
+                                Upload {pendingFiles.length} file(s)
                             </button>
                         </div>
                     </div>
-                    {!uploading && pendingFiles.length > 0 && (
-                        <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50">
-                            <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">Extraction agent (optional)</label>
-                            <select value={preferredAgent} onChange={(e) => setPreferredAgent(e.target.value)} className="premium-input rounded-xl py-2.5 px-3 text-sm w-full sm:min-w-[240px]">
-                                {preferredAgentOptions.map((o) => <option key={o.value || "auto"} value={o.value}>{o.label}</option>)}
-                            </select>
+                    {pendingFiles.length > 0 && (
+                        <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-teal-50/40">
+                            <div className={`grid gap-3 ${configuredProviders.length > 0 ? "sm:grid-cols-2" : ""}`}>
+                                {configuredProviders.length > 0 && (
+                                    <FilterSelect
+                                        variant="card"
+                                        label="AI model"
+                                        icon={Brain}
+                                        iconClassName="border-amber-200/80 bg-gradient-to-br from-amber-50 to-orange-100/70 text-amber-500"
+                                        value={selectedProvider}
+                                        onChange={setSelectedProvider}
+                                        options={configuredProviders.map((p) => ({ value: p.provider, label: p.label || p.provider.toUpperCase() }))}
+                                    />
+                                )}
+                                <FilterSelect
+                                    variant="card"
+                                    label="Extraction agent"
+                                    labelHint="optional"
+                                    icon={Sparkles}
+                                    iconClassName="border-teal-200/80 bg-gradient-to-br from-teal-50 to-cyan-100/70 text-teal-500"
+                                    value={preferredAgent}
+                                    onChange={setPreferredAgent}
+                                    options={preferredAgentOptions}
+                                />
+                            </div>
+                            {configuredProviders.length > 0 && (
+                                <p className="mt-2.5 text-[11px] text-slate-400">Applies to this upload only — it does not change your workspace default.</p>
+                            )}
                         </div>
                     )}
                     <ul className="divide-y divide-slate-100">
-                        {(queueItems.length ? queueItems : pendingFiles.map((p) => ({ id: p.id, name: p.file.name, size: p.file.size, mimeType: p.file.type, status: "queued" as QueueItemStatus, error: undefined as string | undefined }))).map((item) => (
+                        {stagedRows.map((item) => (
                             <li key={item.id} className="px-5 py-3 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50/50">
                                 <div className="min-w-0 flex-1">
                                     <p className="font-medium truncate text-sm text-slate-800">{item.name}</p>
                                     <p className="text-xs mt-0.5 text-slate-500">{formatBytes(item.size)}{"mimeType" in item && item.mimeType && <span className="ml-2">{getFileTypeLabel(item.mimeType, item.name)}</span>}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    {"status" in item && item.status !== "queued" && <span className={`text-xs px-2 py-0.5 rounded-full border ${statusBadge(item.status)}`}>{item.status}{item.error ? `: ${item.error}` : ""}</span>}
-                                    {!uploading && pendingFiles.some((p) => p.id === item.id) && <button type="button" onClick={() => removeFromQueue(item.id)} className="btn-ghost rounded-lg p-2 text-rose-400" aria-label="Remove from queue"><X size={14} /></button>}
+                                    {item.status !== "queued" && <span className={`text-xs px-2 py-0.5 rounded-full border ${statusBadge(item.status)}`}>{queueStatusText(item)}</span>}
+                                    {pendingFiles.some((p) => p.id === item.id) && <button type="button" onClick={() => removeFromQueue(item.id)} className="btn-ghost rounded-lg p-2 text-rose-400" aria-label="Remove from queue"><X size={14} /></button>}
                                 </div>
                             </li>
                         ))}
@@ -608,26 +657,6 @@ function DocumentsContent() {
                             </div>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                            {/* Small Active AI Provider Selector */}
-                            {canAccessPage("settings") && configuredProviders.length > 0 && (
-                                <div className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 px-2.5 py-1.5 shadow-sm">
-                                    <Brain size={13} className="text-amber-500 shrink-0" />
-                                    <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">AI Model:</span>
-                                    <select
-                                        value={activeProvider}
-                                        onChange={(e) => handleSwitchProvider(e.target.value)}
-                                        disabled={switchingProvider}
-                                        className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer pr-1"
-                                    >
-                                        {configuredProviders.map((p) => (
-                                            <option key={p.provider} value={p.provider}>
-                                                {p.label || p.provider.toUpperCase()}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    {switchingProvider && <Loader2 size={12} className="animate-spin text-teal-600 shrink-0" />}
-                                </div>
-                            )}
                             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
                                 <button
                                     type="button"

@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
-    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2, X,
+    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatScopePanel, {
@@ -149,6 +149,10 @@ function ChatContent() {
     const [sessionId, setSessionId] = useState<string | undefined>();
     const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
     const [sessionsLoading, setSessionsLoading] = useState(false);
+    const [renamingId, setRenamingId] = useState<string | null>(null);
+    const [renameDraft, setRenameDraft] = useState("");
+    const [renameSaving, setRenameSaving] = useState(false);
+    const renameInputRef = useRef<HTMLInputElement>(null);
     const [docSearch, setDocSearch] = useState("");
     const [docStatusFilter, setDocStatusFilter] = useState<DocStatusFilter>("");
     const [focusedExcerpt, setFocusedExcerpt] = useState("");
@@ -500,6 +504,49 @@ function ChatContent() {
         }
     };
 
+    const beginRename = (s: ChatSessionSummary, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        setRenamingId(s.id);
+        setRenameDraft(s.title || "New Chat");
+        setTimeout(() => {
+            renameInputRef.current?.focus();
+            renameInputRef.current?.select();
+        }, 0);
+    };
+
+    const cancelRename = () => {
+        setRenamingId(null);
+        setRenameDraft("");
+        setRenameSaving(false);
+    };
+
+    const saveRename = async (id: string) => {
+        const title = renameDraft.trim();
+        if (!title) {
+            cancelRename();
+            return;
+        }
+        const current = sessions.find((s) => s.id === id);
+        if (current && (current.title || "New Chat") === title) {
+            cancelRename();
+            return;
+        }
+        setRenameSaving(true);
+        try {
+            const data = await apiRequest(`/docs/chat/sessions/${id}`, {
+                method: "PATCH",
+                body: JSON.stringify({ title }),
+            });
+            const nextTitle = data?.data?.session?.title || title;
+            setSessions((prev) =>
+                prev.map((s) => (s.id === id ? { ...s, title: nextTitle, updated_at: new Date().toISOString() } : s))
+            );
+            cancelRename();
+        } catch {
+            setRenameSaving(false);
+        }
+    };
+
     useEffect(() => {
         const last = localStorage.getItem(LAST_SESSION_KEY);
         if (last && libraryDocs.length) {
@@ -771,10 +818,11 @@ function ChatContent() {
                     ) : (
                         visibleSessions.map((s) => {
                             const active = sessionId === s.id;
+                            const isRenaming = renamingId === s.id;
                             return (
                                 <div
                                     key={s.id}
-                                    className={`mx-2 mb-1 flex items-start gap-1 rounded-xl px-2 py-2 transition-colors ${
+                                    className={`group mx-2 mb-1 flex items-start gap-1 rounded-xl px-2 py-2 transition-colors ${
                                         active
                                             ? "bg-[var(--accent-muted)] border border-[rgba(45,212,191,0.25)]"
                                             : isDark
@@ -782,34 +830,93 @@ function ChatContent() {
                                               : "border border-transparent hover:bg-slate-100/80"
                                     }`}
                                 >
-                                    <button
-                                        type="button"
-                                        onClick={() => loadSession(s.id)}
-                                        className="flex-1 flex items-start gap-2 min-w-0 text-left px-1 py-0.5"
-                                    >
-                                        <MessageSquare
-                                            size={14}
-                                            className={`shrink-0 mt-0.5 ${active ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
-                                        />
-                                        <div className="flex-1 min-w-0">
-                                            <p className={`${colors.textPrimary} line-clamp-2 text-xs font-medium leading-snug`}>
-                                                {s.title || "New Chat"}
-                                            </p>
-                                            <p className={`${colors.textMuted} mt-0.5 text-[10px]`}>
-                                                {s.updated_at || s.created_at
-                                                    ? new Date(s.updated_at || s.created_at!).toLocaleString()
-                                                    : ""}
-                                            </p>
+                                    {isRenaming ? (
+                                        <div className="flex-1 min-w-0 flex items-center gap-1 px-1">
+                                            <MessageSquare
+                                                size={14}
+                                                className={`shrink-0 ${active ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
+                                            />
+                                            <input
+                                                ref={renameInputRef}
+                                                value={renameDraft}
+                                                onChange={(e) => setRenameDraft(e.target.value)}
+                                                maxLength={120}
+                                                disabled={renameSaving}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter") {
+                                                        e.preventDefault();
+                                                        void saveRename(s.id);
+                                                    } else if (e.key === "Escape") {
+                                                        e.preventDefault();
+                                                        cancelRename();
+                                                    }
+                                                }}
+                                                className="flex-1 min-w-0 rounded-lg border border-[var(--accent)] bg-[var(--surface)] px-2 py-1 text-xs font-medium outline-none ring-2 ring-[var(--accent-ring)]"
+                                                aria-label="Rename chat"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => void saveRename(s.id)}
+                                                disabled={renameSaving || !renameDraft.trim()}
+                                                className="btn-ghost p-1.5 text-teal-500 hover:text-teal-400 shrink-0 rounded-lg disabled:opacity-40"
+                                                aria-label="Save name"
+                                            >
+                                                {renameSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={cancelRename}
+                                                disabled={renameSaving}
+                                                className="btn-ghost p-1.5 text-[var(--foreground-muted)] hover:text-[var(--foreground)] shrink-0 rounded-lg"
+                                                aria-label="Cancel rename"
+                                            >
+                                                <X size={12} />
+                                            </button>
                                         </div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={(e) => deleteSession(s.id, e)}
-                                        className="btn-ghost p-1.5 text-rose-400/80 hover:text-rose-300 shrink-0 rounded-lg"
-                                        aria-label="Delete chat"
-                                    >
-                                        <Trash2 size={12} />
-                                    </button>
+                                    ) : (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => loadSession(s.id)}
+                                                onDoubleClick={(e) => beginRename(s, e)}
+                                                className="flex-1 flex items-start gap-2 min-w-0 text-left px-1 py-0.5"
+                                            >
+                                                <MessageSquare
+                                                    size={14}
+                                                    className={`shrink-0 mt-0.5 ${active ? "text-[var(--accent)]" : "text-[var(--foreground-muted)]"}`}
+                                                />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className={`${colors.textPrimary} line-clamp-2 text-xs font-medium leading-snug`}>
+                                                        {s.title || "New Chat"}
+                                                    </p>
+                                                    <p className={`${colors.textMuted} mt-0.5 text-[10px]`}>
+                                                        {s.updated_at || s.created_at
+                                                            ? new Date(s.updated_at || s.created_at!).toLocaleString()
+                                                            : ""}
+                                                    </p>
+                                                </div>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => beginRename(s, e)}
+                                                className="btn-ghost p-1.5 text-[var(--foreground-muted)] hover:text-[var(--accent)] shrink-0 rounded-lg opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                                aria-label="Rename chat"
+                                                title="Rename"
+                                            >
+                                                <Pencil size={12} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => deleteSession(s.id, e)}
+                                                className="btn-ghost p-1.5 text-rose-400/80 hover:text-rose-300 shrink-0 rounded-lg opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                                aria-label="Delete chat"
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             );
                         })

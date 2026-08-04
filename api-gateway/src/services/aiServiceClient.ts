@@ -147,6 +147,19 @@ export async function syncProviderToAIBackend(config: AiProviderConfig): Promise
     }
 }
 
+export async function setAiPrimaryProvider(config: AiProviderConfig): Promise<void> {
+    if (!ENABLED) return;
+    const res = await client().post('/api/v1/settings/providers/primary', {
+        provider: config.provider,
+        apiKey: config.apiKey,
+        model: config.model || '',
+        baseUrl: config.baseUrl || '',
+    });
+    if (res.status >= 400) {
+        throw new Error(`Failed to select provider ${config.provider}: ${JSON.stringify(res.data)}`);
+    }
+}
+
 export async function chatWithAi(params: {
     organizationId: string;
     question: string;
@@ -523,6 +536,19 @@ export async function deleteChatSession(sessionId: string): Promise<boolean> {
 
     const res = await client().delete(`/api/v1/chat/sessions/${sessionId}`);
     return res.status < 400;
+}
+
+export async function renameChatSession(
+    sessionId: string,
+    title: string
+): Promise<ChatSessionSummary | null> {
+    if (!ENABLED || !sessionId) return null;
+    const trimmed = title.trim();
+    if (!trimmed) return null;
+
+    const res = await client().post(`/api/v1/chat/sessions/${sessionId}/rename`, { title: trimmed });
+    if (res.status >= 400) return null;
+    return (res.data?.session || { id: sessionId, title: trimmed, document_ids: [] }) as ChatSessionSummary;
 }
 
 export async function checkAiHealth(): Promise<boolean> {

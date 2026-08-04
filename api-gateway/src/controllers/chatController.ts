@@ -10,6 +10,7 @@ import {
     getChatSession,
     isAiServiceEnabled,
     listChatSessions,
+    renameChatSession,
     resolveAiOrganizationId,
     syncProviderToAIBackend,
     type AiProviderConfig,
@@ -394,6 +395,48 @@ export const deleteChatSessionHandler = async (req: Request, res: Response, next
             message: 'Deleted a chat session',
         });
         res.json({ success: true, message: 'Session deleted' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const renameChatSessionHandler = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.CHAT_USE)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        if (!isAiServiceEnabled()) {
+            return res.status(503).json({ success: false, message: 'AI service offline' });
+        }
+        const sessionId = String(req.params.id);
+        const title = String(req.body?.title || '').trim();
+        if (!title) {
+            return res.status(400).json({ success: false, message: 'Title is required' });
+        }
+        const existing = await getChatSession(sessionId);
+        if (!existing) {
+            return res.status(404).json({ success: false, message: 'Session not found' });
+        }
+        const orgId = resolveAiOrganizationId(req.user);
+        if (existing.organization_id && existing.organization_id !== orgId) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        if (existing.user_id && existing.user_id !== req.user.userId) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        const session = await renameChatSession(sessionId, title);
+        if (!session) {
+            return res.status(502).json({ success: false, message: 'Failed to rename session' });
+        }
+        recordActivityFromReq(req, {
+            action: 'chat.session.rename',
+            category: 'chat',
+            resourceType: 'chat_session',
+            resourceId: sessionId,
+            message: `Renamed chat to "${title.slice(0, 80)}"`,
+            metadata: { title },
+        });
+        res.json({ success: true, message: 'Session renamed', data: { session } });
     } catch (error) {
         next(error);
     }
