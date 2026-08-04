@@ -13,19 +13,19 @@ import { clearAuthState, hasValidAccessToken, canRefreshSession, getAuthValue } 
 
 const PAGE_TITLES: Record<string, string> = {
     "/dashboard": "Dashboard",
-    "/documents": "Documents",
+    "/documents": "Document Vault",
     "/search": "Search",
-    "/chat": "AI Chat",
-    "/activity": "Activity",
+    "/chat": "AI Assistant",
+    "/activity": "System Activity",
     "/profile": "Profile",
-    "/admin/departments": "Departments",
+    "/admin/departments": "Organization Hub",
     "/admin/admins": "Admins",
-    "/admin/plans": "Plans",
-    "/plans": "Plans",
+    "/admin/plans": "Subscriptions & Billing",
+    "/plans": "Subscriptions & Billing",
     "/admin/documents": "All Documents",
-    "/admin/settings": "AI Settings",
-    "/admin/integrations": "Integrations",
-    "/admin/email-reports": "Email reports",
+    "/admin/settings": "AI Engine Config",
+    "/admin/integrations": "API & Webhooks",
+    "/admin/email-reports": "Automated Reports",
 };
 
 function resolvePageTitle(pathname: string | null): string {

@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
     FileText, Upload, Trash2, RefreshCw, Eye, Search, FolderUp, Copy, X, Loader2, Info, Filter, Share2,
@@ -182,6 +182,17 @@ function DocumentsContent() {
             /* ignore */
         }
     }, []);
+
+    const searchParams = useSearchParams();
+    const agentUrlParam = searchParams?.get("agent");
+
+    useEffect(() => {
+        if (agentUrlParam !== null && agentUrlParam !== undefined) {
+            setAgentFilter(agentUrlParam);
+            if (agentUrlParam) setViewMode("tree");
+            setPage(1);
+        }
+    }, [agentUrlParam]);
 
     useEffect(() => {
         setMounted(true);
@@ -895,6 +906,8 @@ function DocumentsContent() {
 
 export default function DocumentsPage() {
     return (
-        <DocumentsContent />
+        <Suspense fallback={<div className="p-6 text-slate-400 font-medium">Loading documents...</div>}>
+            <DocumentsContent />
+        </Suspense>
     );
 }

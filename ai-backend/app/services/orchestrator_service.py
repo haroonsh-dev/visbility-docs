@@ -218,6 +218,9 @@ class OrchestratorService:
                 if clamped and clamped != agent_type:
                     log.warn(f"Agent {agent_type} not in plan allowlist — clamping to {clamped}")
                     agent_type = clamped
+                    if clamped == "other_agent":
+                        doc_type = "other"
+                        log.warn(f"doc_type clamped to 'other' (original was '{classification['document_type']}')")
 
             SupabaseDB.update("documents", {
                 "document_type": doc_type,
@@ -371,6 +374,10 @@ class OrchestratorService:
                 if clamped and clamped != agent_type:
                     log.warn(f"Agent {agent_type} not in plan allowlist — clamping to {clamped}")
                     agent_type = clamped
+                    # Also clamp doc_type to 'other' so restricted skill.md prompts are not loaded
+                    if clamped == "other_agent":
+                        doc_type = "other"
+                        log.warn(f"doc_type clamped to 'other' (original was '{classification['document_type']}')")
 
             SupabaseDB.update("documents", {
                 "document_type": doc_type,

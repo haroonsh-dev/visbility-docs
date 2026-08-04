@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
-    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2,
+    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2, X,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatScopePanel, {
@@ -17,7 +18,7 @@ import ChatScopePanel, {
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
 import { usePermissions } from "@/context/PermissionsContext";
-import { resolveDocAgent } from "@/lib/documentAgents";
+import { resolveDocAgent, agentLabel } from "@/lib/documentAgents";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { useToast } from "@/components/Toast";
 
@@ -223,6 +224,30 @@ function ChatContent() {
         loadModels();
     }, [loadDocs, loadSessions, loadModels]);
 
+    const searchParams = useSearchParams();
+    const agentUrlParam = searchParams?.get("agent");
+    const isNewChatReq = searchParams?.get("new") === "1" || searchParams?.get("new") === "true";
+
+    useEffect(() => {
+        if (isNewChatReq) {
+            setSessionId(undefined);
+            setMessages([WELCOME_MSG]);
+            setFocusedExcerpt("");
+        }
+    }, [isNewChatReq, agentUrlParam]);
+
+    useEffect(() => {
+        if (!agentUrlParam || !libraryDocs.length) return;
+        const matchingDocs = libraryDocs.filter((d) => resolveDocAgent(d) === agentUrlParam);
+        if (matchingDocs.length > 0) {
+            setSelectedDocIds(matchingDocs.map((d) => d.documentId));
+            setChatScope("selected");
+        } else {
+            setSelectedDocIds([]);
+            setChatScope("selected");
+        }
+    }, [agentUrlParam, libraryDocs]);
+
     useEffect(() => {
         const mq = window.matchMedia("(min-width: 1024px)");
         const apply = () => {
@@ -307,6 +332,7 @@ function ChatContent() {
     const selectableDocs = libraryDocs.filter((d) => d.pythonDocumentId);
 
     const filteredDocs = selectableDocs.filter((doc) => {
+        if (agentUrlParam && resolveDocAgent(doc) !== agentUrlParam) return false;
         const q = docSearch.trim().toLowerCase();
         if (q && !doc.originalFilename.toLowerCase().includes(q)) return false;
         if (docStatusFilter === "ready" && doc.status !== "ready") return false;
@@ -314,6 +340,17 @@ function ChatContent() {
         if (docStatusFilter === "failed" && doc.status !== "failed") return false;
         return true;
     });
+
+    const visibleSessions = agentUrlParam
+        ? sessions.filter((s) => {
+              const docIds = s.document_ids || [];
+              if (!docIds.length) return true;
+              return docIds.some((id) => {
+                  const doc = libraryDocs.find((d) => d.pythonDocumentId === id || d.documentId === id);
+                  return doc ? resolveDocAgent(doc) === agentUrlParam : true;
+              });
+          })
+        : sessions;
 
     const unprocessedCount = libraryDocs.length - selectableDocs.length;
 
@@ -725,14 +762,14 @@ function ChatContent() {
                 <div className="flex-1 min-h-0 overflow-y-auto py-2">
                     {sessionsLoading ? (
                         <p className={`px-4 py-3 text-xs ${colors.textMuted}`}>Loading chats…</p>
-                    ) : sessions.length === 0 ? (
+                    ) : visibleSessions.length === 0 ? (
                         <div className="px-4 py-8 text-center">
                             <MessageSquare size={22} className="mx-auto mb-2 text-[var(--accent)] opacity-60" />
-                            <p className={`text-xs ${colors.textMuted}`}>No past chats yet.</p>
+                            <p className={`text-xs ${colors.textMuted}`}>No chats for this agent.</p>
                             <p className={`text-[11px] mt-1 ${colors.textMuted}`}>Start typing to create one.</p>
                         </div>
                     ) : (
-                        sessions.map((s) => {
+                        visibleSessions.map((s) => {
                             const active = sessionId === s.id;
                             return (
                                 <div
@@ -798,9 +835,30 @@ function ChatContent() {
                         <Sparkles size={18} />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <h1 className={`text-base sm:text-xl font-bold tracking-tight ${colors.textPrimary}`}>AI Chat</h1>
+                        <div className="flex items-center gap-2">
+                            <h1 className={`text-base sm:text-xl font-bold tracking-tight ${colors.textPrimary}`}>AI Chat</h1>
+                            {agentUrlParam && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 text-xs text-teal-400 font-semibold shrink-0">
+                                    <span>Agent: {agentLabel(agentUrlParam)}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const url = new URL(window.location.href);
+                                            url.searchParams.delete("agent");
+                                            url.searchParams.delete("new");
+                                            window.history.replaceState({}, "", url.toString());
+                                            window.dispatchEvent(new Event("popstate"));
+                                        }}
+                                        className="hover:text-rose-400 text-slate-400 p-0.5"
+                                        title="Clear agent filter"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            )}
+                        </div>
                         <p className={`text-xs sm:text-sm ${colors.textMuted} truncate hidden sm:block`}>
-                            Ask questions across your document library
+                            {agentUrlParam ? `Chatting with ${agentLabel(agentUrlParam)} documents` : "Ask questions across your document library"}
                         </p>
                     </div>
                     <button
@@ -1177,6 +1235,8 @@ function ChatContent() {
 
 export default function ChatPage() {
     return (
-        <ChatContent />
+        <Suspense fallback={<div className="p-6 text-slate-400 font-medium">Loading AI Assistant...</div>}>
+            <ChatContent />
+        </Suspense>
     );
 }

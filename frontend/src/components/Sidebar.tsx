@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { Suspense, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
     FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
     X, Building2, ChevronDown, Settings, LayoutDashboard, User,
@@ -13,22 +13,26 @@ import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
 import { clearAuthState, getStoredUser } from "@/lib/authSession";
 import { apiRequest } from "@/lib/apiClient";
-import SiteLogo from "@/assets/Logo/dark_bg_VB.png";
+import SiteLogo from "@/assets/Logo/visibility_docs_logo.png";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { cn } from "@/lib/utils";
 
 type StoredUser = { fullName?: string; email?: string; username?: string; role?: string };
 type DeptNav = { departmentId: string; name: string };
 type SidebarProps = { open?: boolean; onClose?: () => void };
 
-export default function Sidebar({ open = false, onClose }: SidebarProps) {
+export function SidebarContent({ open = false, onClose }: SidebarProps) {
     const pathname = usePathname();
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const currentAgent = searchParams?.get("agent") || "";
     const { theme } = useTheme();
     const {
         role: permRole,
         canAccessPage,
         ready,
     } = usePermissions();
+    const { agentOptions } = usePlanAgents();
     // Avoid reading localStorage during SSR/first paint (hydration mismatch)
     const [user, setUser] = React.useState<StoredUser | null>(null);
     const [mounted, setMounted] = React.useState(false);
@@ -41,6 +45,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
     const role = permRole || user?.role || "team";
 
     const [deptOpen, setDeptOpen] = React.useState(true);
+    const [agentOpen, setAgentOpen] = React.useState(true);
     const [departments, setDepartments] = React.useState<DeptNav[]>([]);
 
     useEffect(() => {
@@ -61,18 +66,16 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         isSuperAdmin ||
         canAccessPage("departments");
 
-    const nav: { href: string; label: string; icon: React.ElementType; roles: string[]; allow?: () => boolean }[] = [
+    const nav: { href: string; label: string; roles: string[]; allow?: () => boolean }[] = [
         {
             href: "/dashboard",
             label: "Dashboard",
-            icon: LayoutDashboard,
             roles: ["superAdmin", "admin", "team", "service_account"],
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("dashboard"),
         },
         {
             href: departments[0] ? `/departments/${departments[0].departmentId}` : "/documents",
             label: "Department",
-            icon: Building2,
             roles: ["team"],
             allow: () =>
                 !canAccessPage("documents") &&
@@ -81,35 +84,31 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
         },
         {
             href: "/documents",
-            label: "Documents",
-            icon: FileText,
+            label: "Document Vault",
             roles: ["superAdmin", "admin", "team", "service_account"],
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("documents"),
         },
-        { href: "/admin/documents", label: "All Documents", icon: FolderOpen, roles: ["superAdmin"] },
+        { href: "/admin/documents", label: "All Documents", roles: ["superAdmin"] },
         {
             href: "/chat",
-            label: "AI Chat",
-            icon: MessageSquare,
+            label: "AI Assistant",
             roles: ["superAdmin", "admin", "team", "service_account"],
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("chat"),
         },
         {
             href: "/admin/departments",
-            label: "Departments",
-            icon: Building2,
+            label: "Organization Hub",
             roles: ["admin", "superAdmin"],
         },
-        { href: "/admin/admins", label: "Admins", icon: Shield, roles: ["superAdmin"] },
-        { href: "/admin/plans", label: "Plans", icon: CreditCard, roles: ["superAdmin"] },
-        { href: "/plans", label: "Plans", icon: CreditCard, roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("plans") },
-        { href: "/admin/email-reports", label: "Email reports", icon: Mail, roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("email_reports") },
-        { href: "/admin/integrations", label: "Integrations", icon: Plug, roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("integrations") },
-        { href: "/admin/settings", label: "AI Settings", icon: Settings, roles: ["admin", "superAdmin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("settings") },
+        { href: "/admin/admins", label: "Admins", roles: ["superAdmin"] },
+        { href: "/admin/plans", label: "Subscriptions & Billing", roles: ["superAdmin"] },
+        { href: "/plans", label: "Subscriptions & Billing", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("plans") },
+        { href: "/admin/email-reports", label: "Automated Reports", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("email_reports") },
+        { href: "/admin/integrations", label: "API & Webhooks", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("integrations") },
+        { href: "/admin/settings", label: "AI Engine Config", roles: ["admin", "superAdmin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("settings") },
         {
             href: "/activity",
-            label: "Activity",
-            icon: Activity,
+            label: "System Activity",
             roles: ["superAdmin", "admin", "team"],
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("activity"),
         },
@@ -148,8 +147,8 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             )}>
                 {/* Logo */}
                 <div className="px-2 py-2 border-b border-white/[0.07] relative z-[1] flex items-center justify-between bg-gradient-to-r from-teal-500/[0.08] via-transparent to-cyan-500/[0.05]">
-                    <Link href="/dashboard" className="flex-1 flex items-center justify-center">
-                        <Image src={SiteLogo} alt="Visibility Bots" className="h-16 w-auto" priority />
+                    <Link href="/dashboard" className="flex-1 flex items-center justify-center py-1.5 px-1">
+                        <Image src={SiteLogo} alt="Visibility Docs" className="h-16 w-auto object-contain bg-white/95 rounded-xl px-3 py-1.5 shadow-md border border-white/20" priority />
                     </Link>
                     <button type="button" onClick={onClose}
                         className="lg:hidden rounded-lg p-2 min-h-9 min-w-9 flex items-center justify-center shrink-0 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
@@ -160,17 +159,16 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
                 {/* Navigation */}
                 <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto relative z-[1]">
-                    {visibleNav.map(({ href, label, icon: Icon }) => {
+                    {visibleNav.map(({ href, label }) => {
                         const active = pathname === href || pathname?.startsWith(`${href}/`);
                         const showDeptDropdown = href === "/documents" && canSeeDepts && departments.length > 0;
+                        const showAgentDropdown = href === "/chat" && agentOptions.length > 0;
+
                         return (
                             <div key={href}>
                                 <div className="flex items-center gap-1">
                                     <Link href={href} onClick={() => onClose?.()}
                                         className={cn("sidebar-nav-item flex-1", active && !pathname?.startsWith("/departments/") ? "active" : "")}>
-                                        <span className={cn("sidebar-icon", active && !pathname?.startsWith("/departments/") ? "active" : "inactive")}>
-                                            <Icon size={14} />
-                                        </span>
                                         {label}
                                     </Link>
                                     {showDeptDropdown && (
@@ -178,6 +176,13 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
                                             className="p-1.5 rounded-lg min-h-8 min-w-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
                                             aria-label="Toggle departments">
                                             <ChevronDown size={14} className={cn("transition-transform", deptOpen ? "rotate-180" : "")} />
+                                        </button>
+                                    )}
+                                    {showAgentDropdown && (
+                                        <button type="button" onClick={() => setAgentOpen((o) => !o)}
+                                            className="p-1.5 rounded-lg min-h-8 min-w-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                                            aria-label="Toggle agent options">
+                                            <ChevronDown size={14} className={cn("transition-transform", agentOpen ? "rotate-180" : "")} />
                                         </button>
                                     )}
                                 </div>
@@ -190,6 +195,29 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
                                                     className={cn("flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-colors", dActive && "text-teal-400 bg-teal-500/10")}>
                                                     <Building2 size={11} className="shrink-0 opacity-60" />
                                                     <span className="truncate">{d.name}</span>
+                                                </Link>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {showAgentDropdown && agentOpen && (
+                                    <div className="ml-4 pl-3 border-l border-white/[0.06] space-y-0.5 mb-1 mt-0.5">
+                                        {agentOptions.map((ag) => {
+                                            const isSelected = currentAgent === ag.value;
+                                            return (
+                                                <Link
+                                                    key={ag.value}
+                                                    href={`/chat?agent=${ag.value}&new=1`}
+                                                    onClick={() => onClose?.()}
+                                                    className={cn(
+                                                        "block px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors truncate",
+                                                        isSelected
+                                                            ? "text-teal-300 bg-teal-500/20 font-semibold border border-teal-500/30"
+                                                            : "text-slate-400 hover:text-teal-300 hover:bg-white/5"
+                                                    )}
+                                                    title={`Start new chat with ${ag.label}`}
+                                                >
+                                                    {ag.label}
                                                 </Link>
                                             );
                                         })}
@@ -217,5 +245,13 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
                 </div>
             </aside>
         </>
+    );
+}
+
+export default function Sidebar(props: SidebarProps) {
+    return (
+        <Suspense fallback={null}>
+            <SidebarContent {...props} />
+        </Suspense>
     );
 }
