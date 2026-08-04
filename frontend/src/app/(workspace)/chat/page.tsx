@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
-    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2,
+    Plus, Trash2, MessageSquare, MessageCircle, Copy, Check, Upload, Loader2, X, Pencil,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatScopePanel, {
