@@ -9,6 +9,8 @@ import {
     listOrganizations,
     updateAdmin,
     updateAdminStatus,
+    updateOrganizationGroqKey,
+    deleteOrganizationGroqKey,
 } from '../controllers/superAdminController';
 import {
     approvePlanRequest,
@@ -36,6 +38,9 @@ router.patch('/admins/:userId/status', updateAdminStatus);
 router.put('/admins/:userId', updateAdmin);
 router.delete('/admins/:userId', deleteAdmin);
 router.get('/organizations', listOrganizations);
+router.post('/organizations/:orgId/groq-key', updateOrganizationGroqKey);
+router.put('/organizations/:orgId/groq-key', updateOrganizationGroqKey);
+router.delete('/organizations/:orgId/groq-key', deleteOrganizationGroqKey);
 router.get('/documents', listAllDocuments);
 router.get('/teams', listAllTeams);
 

@@ -7,6 +7,7 @@ import {
     ChevronRight,
     Clock,
     Building2,
+    KeyRound,
     Loader2,
     Pencil,
     Plus,
@@ -44,6 +45,8 @@ type OrganizationInfo = {
     status?: string;
     subscriptionPlan?: string;
     contactEmail?: string;
+    hasGroqApiKey?: boolean;
+    groqApiKeyMasked?: string | null;
 };
 
 type Admin = {
@@ -70,6 +73,7 @@ type AdminFormState = {
     contactNumber: string;
     organizationName: string;
     status: "active" | "blocked";
+    groqApiKey: string;
 };
 
 const EMPTY_CREATE_FORM: AdminFormState = {
@@ -79,6 +83,7 @@ const EMPTY_CREATE_FORM: AdminFormState = {
     contactNumber: "",
     organizationName: "",
     status: "active",
+    groqApiKey: "",
 };
 
 const AVATAR_COLORS = [
@@ -169,6 +174,14 @@ function AdminsContent() {
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
 
+    // Groq Key Modal state
+    const [groqModalOrg, setGroqModalOrg] = useState<{ orgId: string; orgName: string; currentKeyMasked?: string | null } | null>(null);
+    const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
+    const [groqKeyError, setGroqKeyError] = useState<string | null>(null);
+    const [groqKeySuccess, setGroqKeySuccess] = useState<string | null>(null);
+    const [groqKeySaving, setGroqKeySaving] = useState(false);
+    const [groqKeyDeleting, setGroqKeyDeleting] = useState(false);
+
     const load = useCallback(async () => {
         setLoading(true);
         try {
@@ -207,6 +220,7 @@ function AdminsContent() {
             contactNumber: admin.contactNumber || "",
             organizationName: admin.organization?.organizationName || "",
             status: admin.status === "blocked" ? "blocked" : "active",
+            groqApiKey: admin.organization?.groqApiKeyMasked || "",
         });
         setEditError(null);
     };
@@ -215,6 +229,78 @@ function AdminsContent() {
         if (saving) return;
         setEditingAdmin(null);
         setEditError(null);
+    };
+
+    const openGroqModal = (orgId: string, orgName: string, currentKeyMasked?: string | null) => {
+        setGroqModalOrg({ orgId, orgName, currentKeyMasked });
+        setGroqApiKeyInput("");
+        setGroqKeyError(null);
+        setGroqKeySuccess(null);
+    };
+
+    const closeGroqModal = () => {
+        if (groqKeySaving || groqKeyDeleting) return;
+        setGroqModalOrg(null);
+        setGroqApiKeyInput("");
+        setGroqKeyError(null);
+        setGroqKeySuccess(null);
+    };
+
+    const saveGroqKey = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!groqModalOrg) return;
+        const key = groqApiKeyInput.trim();
+        if (!key) {
+            setGroqKeyError("Please enter a Groq API key");
+            return;
+        }
+        if (!key.startsWith("gsk_")) {
+            setGroqKeyError("Groq API keys usually start with gsk_");
+            return;
+        }
+        setGroqKeySaving(true);
+        setGroqKeyError(null);
+        setGroqKeySuccess(null);
+        try {
+            await apiRequest(`/docs/super-admin/organizations/${groqModalOrg.orgId}/groq-key`, {
+                method: "POST",
+                body: JSON.stringify({ groqApiKey: key }),
+            });
+            setGroqKeySuccess("Groq API key saved successfully!");
+            setGroqApiKeyInput("");
+            await load();
+            setTimeout(() => {
+                setGroqModalOrg(null);
+                setGroqKeySuccess(null);
+            }, 1200);
+        } catch (err: any) {
+            setGroqKeyError(err.message || "Failed to update Groq API key");
+        } finally {
+            setGroqKeySaving(false);
+        }
+    };
+
+    const deleteGroqKey = async () => {
+        if (!groqModalOrg) return;
+        if (!confirm(`Delete Groq API key for organization "${groqModalOrg.orgName}"?`)) return;
+        setGroqKeyDeleting(true);
+        setGroqKeyError(null);
+        setGroqKeySuccess(null);
+        try {
+            await apiRequest(`/docs/super-admin/organizations/${groqModalOrg.orgId}/groq-key`, {
+                method: "DELETE",
+            });
+            setGroqKeySuccess("Groq API key deleted!");
+            await load();
+            setTimeout(() => {
+                setGroqModalOrg(null);
+                setGroqKeySuccess(null);
+            }, 1200);
+        } catch (err: any) {
+            setGroqKeyError(err.message || "Failed to delete Groq API key");
+        } finally {
+            setGroqKeyDeleting(false);
+        }
     };
 
     const createAdmin = async (e: React.FormEvent) => {
@@ -231,6 +317,9 @@ function AdminsContent() {
             };
             if (createForm.contactNumber.trim()) {
                 body.contactNumber = createForm.contactNumber.trim();
+            }
+            if (createForm.groqApiKey.trim()) {
+                body.groqApiKey = createForm.groqApiKey.trim();
             }
             await apiRequest("/docs/super-admin/admins", {
                 method: "POST",
@@ -261,6 +350,11 @@ function AdminsContent() {
             };
             if (editForm.password.trim()) {
                 body.password = editForm.password;
+            }
+            if (editForm.groqApiKey !== undefined && editForm.groqApiKey !== editForm.groqApiKey.trim()) {
+                body.groqApiKey = editForm.groqApiKey.trim();
+            } else if (editForm.groqApiKey && editForm.groqApiKey.startsWith("gsk_") && !editForm.groqApiKey.includes("•")) {
+                body.groqApiKey = editForm.groqApiKey.trim();
             }
             await apiRequest(`/docs/super-admin/admins/${editingAdmin.userId}`, {
                 method: "PUT",
@@ -498,6 +592,15 @@ function AdminsContent() {
                                                         </Badge>
                                                         <Badge variant="accent">Admin</Badge>
                                                         {a.emailVerified && <Badge variant="success">Verified</Badge>}
+                                                        {a.organization?.hasGroqApiKey ? (
+                                                            <Badge variant="success" className="gap-1">
+                                                                <KeyRound size={11} /> Groq Key Set
+                                                            </Badge>
+                                                        ) : (
+                                                            <Badge variant="muted" className="gap-1">
+                                                                <KeyRound size={11} opacity={0.6} /> No Groq Key
+                                                            </Badge>
+                                                        )}
                                                     </div>
                                                     <p className={`text-sm ${colors.textMuted} mt-1 break-words`}>
                                                         {a.email}
@@ -527,6 +630,15 @@ function AdminsContent() {
                                                 <span className="text-[var(--foreground-muted)]">
                                                     {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                                                 </span>
+                                                {a.organization && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openGroqModal(a.organization!.organizationId, a.organization!.organizationName, a.organization!.groqApiKeyMasked)}
+                                                        className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 hover:border-teal-500/50 hover:text-teal-400"
+                                                    >
+                                                        <KeyRound size={14} className="text-teal-400" /> Groq Key
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => openEdit(a)}
@@ -577,6 +689,7 @@ function AdminsContent() {
                                                         { label: "Org Plan", value: a.organization?.subscriptionPlan || "—" },
                                                         { label: "Org Status", value: a.organization?.status || "—" },
                                                         { label: "Org Contact", value: a.organization?.contactEmail || "—" },
+                                                        { label: "Groq Key", value: a.organization?.groqApiKeyMasked || "Not configured", mono: true },
                                                         { label: "User ID", value: a.userId, mono: true },
                                                     ].map((d) => (
                                                         <div
@@ -795,6 +908,19 @@ function AdminsContent() {
                                             <option value="blocked">Blocked</option>
                                         </select>
                                     </div>
+                                    <div className="space-y-1.5 sm:col-span-2">
+                                        <label className={labelClass}>
+                                            Groq API Key <span className="normal-case font-normal opacity-70">(gsk_..., optional)</span>
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={createForm.groqApiKey}
+                                            onChange={(e) => setCreateForm({ ...createForm, groqApiKey: e.target.value })}
+                                            className={fieldClass}
+                                            placeholder="gsk_..."
+                                            autoComplete="off"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div className="flex justify-end gap-2 pt-4 border-t border-[var(--border)]">
@@ -950,6 +1076,19 @@ function AdminsContent() {
                                             <option value="blocked">Blocked</option>
                                         </select>
                                     </div>
+                                    <div className="space-y-1.5 sm:col-span-2">
+                                        <label className={labelClass}>
+                                            Groq API Key <span className="normal-case font-normal opacity-70">(gsk_..., leave blank to clear)</span>
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={editForm.groqApiKey}
+                                            onChange={(e) => setEditForm({ ...editForm, groqApiKey: e.target.value })}
+                                            className={fieldClass}
+                                            placeholder={editingAdmin.organization?.groqApiKeyMasked || "gsk_..."}
+                                            autoComplete="off"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div className="flex justify-end gap-2 pt-4 border-t border-[var(--border)]">
@@ -969,6 +1108,134 @@ function AdminsContent() {
                                         {saving && <Loader2 size={14} className="animate-spin" />}
                                         {saving ? "Saving…" : "Save changes"}
                                     </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>,
+                    document.body
+                )}
+
+            {/* Groq API Key Modal — portaled to body so it centers on full screen */}
+            {groqModalOrg &&
+                typeof document !== "undefined" &&
+                createPortal(
+                    <div
+                        className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="groq-modal-title"
+                    >
+                        <button
+                            type="button"
+                            className="absolute inset-0 bg-slate-950/55 backdrop-blur-[6px]"
+                            aria-label="Close dialog"
+                            onClick={closeGroqModal}
+                        />
+                        <div
+                            className="relative z-[1] w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="relative px-6 pt-5 pb-4 border-b border-[var(--border)] bg-gradient-to-r from-teal-500/[0.1] via-cyan-500/[0.05] to-transparent">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/10 text-teal-500 border border-teal-500/20 flex items-center justify-center shrink-0">
+                                            <KeyRound size={20} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <h2 id="groq-modal-title" className="text-base font-bold text-[var(--foreground)] tracking-tight">
+                                                Company Groq API Key
+                                            </h2>
+                                            <p className="text-xs text-[var(--foreground-muted)] mt-0.5 truncate">
+                                                {groqModalOrg.orgName}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={closeGroqModal}
+                                        disabled={groqKeySaving || groqKeyDeleting}
+                                        className="p-2 rounded-xl hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+                                        aria-label="Close"
+                                    >
+                                        <X size={16} className="text-[var(--foreground-muted)]" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <form onSubmit={saveGroqKey} className="px-6 py-5 space-y-4">
+                                {groqKeyError && (
+                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[var(--error-muted)] border border-[rgba(248,113,113,0.25)] text-sm text-[var(--error)]">
+                                        <X size={14} className="shrink-0" />
+                                        {groqKeyError}
+                                    </div>
+                                )}
+                                {groqKeySuccess && (
+                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-400">
+                                        <KeyRound size={14} className="shrink-0" />
+                                        {groqKeySuccess}
+                                    </div>
+                                )}
+
+                                <div className="space-y-2">
+                                    <label className={labelClass}>Current Key</label>
+                                    <div className="h-11 px-3.5 rounded-xl text-sm bg-[var(--surface-2)] border border-[var(--border)] text-[var(--foreground-muted)] flex items-center font-mono">
+                                        {groqModalOrg.currentKeyMasked || "No Groq API Key configured"}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className={labelClass}>New Groq API Key</label>
+                                    <input
+                                        type="password"
+                                        required
+                                        value={groqApiKeyInput}
+                                        onChange={(e) => setGroqApiKeyInput(e.target.value)}
+                                        className={fieldClass}
+                                        placeholder="gsk_..."
+                                        autoComplete="off"
+                                    />
+                                    <p className="text-[11px] text-[var(--foreground-muted)]">
+                                        Enter a valid Groq API key (starts with <code className="font-mono text-teal-400">gsk_</code>).
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3 pt-4 border-t border-[var(--border)]">
+                                    {groqModalOrg.currentKeyMasked ? (
+                                        <button
+                                            type="button"
+                                            onClick={deleteGroqKey}
+                                            disabled={groqKeySaving || groqKeyDeleting}
+                                            className="btn-secondary rounded-xl px-4 py-2.5 text-sm min-h-10 text-[var(--error)] hover:bg-[var(--error-muted)] disabled:opacity-50 inline-flex items-center gap-1.5"
+                                        >
+                                            {groqKeyDeleting ? (
+                                                <Loader2 size={14} className="animate-spin" />
+                                            ) : (
+                                                <Trash2 size={14} />
+                                            )}
+                                            Delete Key
+                                        </button>
+                                    ) : (
+                                        <div />
+                                    )}
+
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={closeGroqModal}
+                                            disabled={groqKeySaving || groqKeyDeleting}
+                                            className="btn-secondary rounded-xl px-4 py-2.5 text-sm min-h-10 disabled:opacity-50"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            disabled={groqKeySaving || groqKeyDeleting}
+                                            className="btn-primary rounded-xl px-5 py-2.5 text-sm inline-flex items-center gap-2 min-h-10 disabled:opacity-50"
+                                        >
+                                            {groqKeySaving && <Loader2 size={14} className="animate-spin" />}
+                                            {groqKeySaving ? "Saving…" : "Save Groq Key"}
+                                        </button>
+                                    </div>
                                 </div>
                             </form>
                         </div>

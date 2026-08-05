@@ -7,6 +7,7 @@ export interface IOrganization extends Document {
     status: 'active' | 'inactive';
     subscriptionPlan?: string;
     openRemoteRealm?: string | null;
+    groqApiKey?: string | null;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -19,6 +20,7 @@ const OrganizationSchema = new Schema<IOrganization>(
         status: { type: String, enum: ['active', 'inactive'], default: 'active' },
         subscriptionPlan: { type: String, default: 'free' },
         openRemoteRealm: { type: String, default: null },
+        groqApiKey: { type: String, default: null },
     },
     { timestamps: true }
 );

@@ -3,6 +3,8 @@ import bcrypt from 'bcrypt';
 import User, { defaultPermissionsForRole } from '../models/User';
 import Organization from '../models/Organization';
 import Document from '../models/Document';
+import ApiKey from '../models/ApiKey';
+import { syncProviderToAIBackend } from '../services/aiServiceClient';
 import {
     annotateDuplicateCounts,
     getDuplicateDocumentIds,
@@ -45,6 +47,14 @@ function deriveRealm(organizationName: string) {
             .replace(/_+/g, '_')
             .slice(0, 40) || 'enterprise'
     );
+}
+
+function maskGroqApiKey(key?: string | null): string | null {
+    if (!key || typeof key !== 'string') return null;
+    const trimmed = key.trim();
+    if (!trimmed) return null;
+    if (trimmed.length <= 11) return 'gsk_••••••••';
+    return `${trimmed.slice(0, 7)}...${trimmed.slice(-4)}`;
 }
 
 export const listAdmins = async (req: Request, res: Response, next: NextFunction) => {
@@ -105,6 +115,8 @@ export const listAdmins = async (req: Request, res: Response, next: NextFunction
                           status: org.status,
                           subscriptionPlan: org.subscriptionPlan,
                           contactEmail: org.contactEmail,
+                          hasGroqApiKey: !!org.groqApiKey,
+                          groqApiKeyMasked: maskGroqApiKey(org.groqApiKey),
                       }
                     : null,
                 teamMembers: members,
@@ -129,6 +141,7 @@ export const createAdmin = async (req: Request, res: Response, next: NextFunctio
             contactNumber,
             organizationName,
             status = 'active',
+            groqApiKey,
         } = req.body;
 
         const normalizedEmail = (email || '').toString().trim().toLowerCase();
@@ -144,6 +157,15 @@ export const createAdmin = async (req: Request, res: Response, next: NextFunctio
         }
         if (!['active', 'blocked', 'pending'].includes(status)) {
             return res.status(400).json({ success: false, message: 'status must be active, blocked, or pending' });
+        }
+
+        let initialGroqKey: string | null = null;
+        if (groqApiKey && typeof groqApiKey === 'string' && groqApiKey.trim()) {
+            const k = groqApiKey.trim();
+            if (!k.startsWith('gsk_')) {
+                return res.status(400).json({ success: false, message: 'Groq API keys must start with gsk_' });
+            }
+            initialGroqKey = k;
         }
 
         const existing = await User.findOne({ email: normalizedEmail });
@@ -197,7 +219,32 @@ export const createAdmin = async (req: Request, res: Response, next: NextFunctio
             status: 'active',
             subscriptionPlan: 'free',
             openRemoteRealm,
+            groqApiKey: initialGroqKey,
         });
+
+        if (initialGroqKey) {
+            await ApiKey.findOneAndUpdate(
+                { organizationId: orgId, provider: 'groq' },
+                {
+                    keyId: `key_groq_${orgId}`,
+                    organizationId: orgId,
+                    provider: 'groq',
+                    apiKey: initialGroqKey,
+                    label: 'Groq',
+                    aiModel: 'llama-3.3-70b-versatile',
+                    baseUrl: 'https://api.groq.com/openai/v1',
+                    isActive: true,
+                    createdBy: req.user.userId,
+                },
+                { upsert: true, new: true }
+            );
+            await syncProviderToAIBackend({
+                provider: 'groq',
+                apiKey: initialGroqKey,
+                model: 'llama-3.3-70b-versatile',
+                baseUrl: 'https://api.groq.com/openai/v1',
+            });
+        }
 
         try {
             await ensureDefaultOrgRoles(orgId);
@@ -247,6 +294,8 @@ export const createAdmin = async (req: Request, res: Response, next: NextFunctio
                         status: org.status,
                         subscriptionPlan: org.subscriptionPlan,
                         contactEmail: org.contactEmail,
+                        hasGroqApiKey: !!org.groqApiKey,
+                        groqApiKeyMasked: maskGroqApiKey(org.groqApiKey),
                     },
                     teamMembers: [],
                     teamMemberCount: 0,
@@ -292,7 +341,7 @@ export const updateAdmin = async (req: Request, res: Response, next: NextFunctio
         const admin = await User.findOne({ userId: req.params.userId, role: 'admin' });
         if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
 
-        const { fullName, email, contactNumber, password, organizationName, status } = req.body;
+        const { fullName, email, contactNumber, password, organizationName, status, groqApiKey } = req.body;
         if (fullName) admin.fullName = String(fullName).trim();
         if (contactNumber !== undefined) {
             admin.contactNumber = contactNumber ? String(contactNumber).trim() : undefined;
@@ -317,11 +366,48 @@ export const updateAdmin = async (req: Request, res: Response, next: NextFunctio
         }
         await admin.save();
 
-        if (organizationName && admin.organizationId) {
-            await Organization.findOneAndUpdate(
-                { organizationId: admin.organizationId },
-                { organizationName: String(organizationName).trim() }
-            );
+        if (admin.organizationId) {
+            const updates: Record<string, unknown> = {};
+            if (organizationName) updates.organizationName = String(organizationName).trim();
+            if (groqApiKey !== undefined) {
+                if (typeof groqApiKey === 'string' && groqApiKey.trim()) {
+                    const k = groqApiKey.trim();
+                    if (!k.startsWith('gsk_')) {
+                        return res.status(400).json({ success: false, message: 'Groq API keys must start with gsk_' });
+                    }
+                    updates.groqApiKey = k;
+                    await ApiKey.findOneAndUpdate(
+                        { organizationId: admin.organizationId, provider: 'groq' },
+                        {
+                            keyId: `key_groq_${admin.organizationId}`,
+                            organizationId: admin.organizationId,
+                            provider: 'groq',
+                            apiKey: k,
+                            label: 'Groq',
+                            aiModel: 'llama-3.3-70b-versatile',
+                            baseUrl: 'https://api.groq.com/openai/v1',
+                            isActive: true,
+                            createdBy: req.user.userId,
+                        },
+                        { upsert: true, new: true }
+                    );
+                    await syncProviderToAIBackend({
+                        provider: 'groq',
+                        apiKey: k,
+                        model: 'llama-3.3-70b-versatile',
+                        baseUrl: 'https://api.groq.com/openai/v1',
+                    });
+                } else {
+                    updates.groqApiKey = null;
+                    await ApiKey.deleteMany({ organizationId: admin.organizationId, provider: 'groq' });
+                }
+            }
+            if (Object.keys(updates).length > 0) {
+                await Organization.findOneAndUpdate(
+                    { organizationId: admin.organizationId },
+                    updates
+                );
+            }
         }
 
         recordActivityFromReq(req, {
@@ -368,7 +454,120 @@ export const deleteAdmin = async (req: Request, res: Response, next: NextFunctio
 export const listOrganizations = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const orgs = await Organization.find().sort({ createdAt: -1 }).lean();
-        res.json({ success: true, data: { organizations: orgs } });
+        const enriched = orgs.map((o) => ({
+            ...o,
+            hasGroqApiKey: !!o.groqApiKey,
+            groqApiKeyMasked: maskGroqApiKey(o.groqApiKey),
+        }));
+        res.json({ success: true, data: { organizations: enriched } });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const updateOrganizationGroqKey = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { orgId } = req.params;
+        const apiKey = String(req.body?.groqApiKey || req.body?.api_key || req.body?.apiKey || '').trim();
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: 'groqApiKey is required' });
+        }
+        if (!apiKey.startsWith('gsk_')) {
+            return res.status(400).json({ success: false, message: 'Groq API keys must start with gsk_' });
+        }
+
+        const org = await Organization.findOneAndUpdate(
+            { organizationId: orgId },
+            { groqApiKey: apiKey },
+            { new: true }
+        );
+
+        if (!org) {
+            return res.status(404).json({ success: false, message: 'Organization not found' });
+        }
+
+        // Upsert into ApiKey collection so chat/RAG/OCR find this active provider key for the org
+        await ApiKey.findOneAndUpdate(
+            { organizationId: orgId, provider: 'groq' },
+            {
+                keyId: `key_groq_${orgId}`,
+                organizationId: orgId,
+                provider: 'groq',
+                apiKey: apiKey,
+                label: 'Groq',
+                aiModel: 'llama-3.3-70b-versatile',
+                baseUrl: 'https://api.groq.com/openai/v1',
+                isActive: true,
+                createdBy: req.user.userId,
+            },
+            { upsert: true, new: true }
+        );
+
+        // Sync with AI backend
+        await syncProviderToAIBackend({
+            provider: 'groq',
+            apiKey: apiKey,
+            model: 'llama-3.3-70b-versatile',
+            baseUrl: 'https://api.groq.com/openai/v1',
+        });
+
+        recordActivityFromReq(req, {
+            action: 'organization.groq_key_update',
+            category: 'admin',
+            resourceType: 'organization',
+            resourceId: org.organizationId,
+            message: `Updated Groq API key for organization ${org.organizationName}`,
+        });
+
+        res.json({
+            success: true,
+            message: `Groq API key updated for organization ${org.organizationName}`,
+            data: {
+                organizationId: org.organizationId,
+                organizationName: org.organizationName,
+                hasGroqApiKey: true,
+                groqApiKeyMasked: maskGroqApiKey(org.groqApiKey),
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const deleteOrganizationGroqKey = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { orgId } = req.params;
+        const org = await Organization.findOneAndUpdate(
+            { organizationId: orgId },
+            { groqApiKey: null },
+            { new: true }
+        );
+
+        if (!org) {
+            return res.status(404).json({ success: false, message: 'Organization not found' });
+        }
+
+        // Delete from ApiKey collection
+        await ApiKey.deleteMany({ organizationId: orgId, provider: 'groq' });
+
+        recordActivityFromReq(req, {
+            action: 'organization.groq_key_delete',
+            category: 'admin',
+            resourceType: 'organization',
+            resourceId: org.organizationId,
+            message: `Deleted Groq API key for organization ${org.organizationName}`,
+        });
+
+        res.json({
+            success: true,
+            message: `Groq API key deleted for organization ${org.organizationName}`,
+            data: {
+                organizationId: org.organizationId,
+                organizationName: org.organizationName,
+                hasGroqApiKey: false,
+                groqApiKeyMasked: null,
+            },
+        });
     } catch (error) {
         next(error);
     }

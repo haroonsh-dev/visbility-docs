@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import Document from '../models/Document';
 import ApiKey, { AIProvider } from '../models/ApiKey';
+import Organization from '../models/Organization';
 import { buildDocumentFilter, hasPermission } from '../services/accessScope';
 import {
     chatWithAi,
@@ -32,24 +33,56 @@ async function resolveChatProviderConfig(
     if (provider) {
         filter.provider = provider as AIProvider;
         const key = await ApiKey.findOne(filter).lean();
-        if (!key?.apiKey) return null;
+        if (key?.apiKey) {
+            return {
+                provider: key.provider,
+                apiKey: key.apiKey,
+                model: model || key.aiModel || '',
+                baseUrl: key.baseUrl || null,
+            };
+        }
+    } else {
+        const keys = await ApiKey.find(filter).sort({ createdAt: 1 }).lean();
+        const primary = keys.find((k) => k.provider === 'groq') || keys[0];
+        if (primary?.apiKey) {
+            return {
+                provider: primary.provider,
+                apiKey: primary.apiKey,
+                model: model || primary.aiModel || '',
+                baseUrl: primary.baseUrl || null,
+            };
+        }
+    }
+
+    // Fallback 1: Check Organization.groqApiKey for this organization
+    if (organizationId) {
+        const org = await Organization.findOne({ organizationId }).lean();
+        if (org?.groqApiKey) {
+            return {
+                provider: 'groq',
+                apiKey: org.groqApiKey,
+                model: model || 'llama-3.3-70b-versatile',
+                baseUrl: 'https://api.groq.com/openai/v1',
+            };
+        }
+    }
+
+    // Fallback 2: Check global active key in ApiKey collection
+    const globalKey = await ApiKey.findOne({
+        isActive: true,
+        ...(provider ? { provider: provider as AIProvider } : {}),
+    }).sort({ createdAt: 1 }).lean();
+
+    if (globalKey?.apiKey) {
         return {
-            provider: key.provider,
-            apiKey: key.apiKey,
-            model: model || key.aiModel || '',
-            baseUrl: key.baseUrl || null,
+            provider: globalKey.provider,
+            apiKey: globalKey.apiKey,
+            model: model || globalKey.aiModel || '',
+            baseUrl: globalKey.baseUrl || null,
         };
     }
 
-    const keys = await ApiKey.find(filter).sort({ createdAt: 1 }).lean();
-    const primary = keys.find((k) => k.provider === 'groq') || keys[0];
-    if (!primary?.apiKey) return null;
-    return {
-        provider: primary.provider,
-        apiKey: primary.apiKey,
-        model: model || primary.aiModel || '',
-        baseUrl: primary.baseUrl || null,
-    };
+    return null;
 }
 
 export const chatWithDocuments = async (req: Request, res: Response, next: NextFunction) => {
