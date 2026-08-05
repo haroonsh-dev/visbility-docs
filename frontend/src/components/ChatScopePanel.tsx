@@ -37,6 +37,7 @@ type ChatScopePanelProps = {
     unprocessedCount: number;
     libraryCount: number;
     selectableCount: number;
+    offPlanCount?: number;
     textPrimary: string;
     textMuted: string;
     textSecondary: string;
@@ -99,6 +100,7 @@ export default function ChatScopePanel({
     unprocessedCount,
     libraryCount,
     selectableCount,
+    offPlanCount = 0,
     textPrimary,
     textMuted,
     textSecondary,
@@ -449,6 +451,11 @@ export default function ChatScopePanel({
                         {unprocessedCount > 0 && (
                             <p className={`text-[11px] ${textMuted} pt-1`}>
                                 {unprocessedCount} document(s) not yet processed by AI are hidden.
+                            </p>
+                        )}
+                        {offPlanCount > 0 && (
+                            <p className={`text-[11px] ${textMuted} pt-1`}>
+                                {offPlanCount} document(s) are hidden because their agent is not on your plan.
                             </p>
                         )}
                     </>

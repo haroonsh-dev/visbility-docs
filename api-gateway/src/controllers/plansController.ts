@@ -14,6 +14,7 @@ import {
     getOrCreatePricing,
     getOrgEntitlement,
     getOrgStorageUsedBytes,
+    getEffectiveAllowedAgentIds,
     quoteFromPricing,
 } from '../services/planService';
 
@@ -757,14 +758,20 @@ export const getMySubscription = async (req: Request, res: Response, next: NextF
                 },
             });
         }
-        const [entitlement, storageUsedBytes] = await Promise.all([
+        const [orgEntitlement, storageUsedBytes, effective] = await Promise.all([
             getOrgEntitlement(organizationId),
             getOrgStorageUsedBytes(organizationId),
+            getEffectiveAllowedAgentIds(req.user),
         ]);
         res.json({
             success: true,
             data: {
-                entitlement,
+                entitlement: {
+                    ...orgEntitlement,
+                    agentIds: effective.agentIds,
+                    orgAgentIds: effective.orgAgentIds,
+                    departmentId: effective.departmentId,
+                },
                 storageUsedBytes,
                 agentLabels: PLAN_AGENT_LABELS,
             },

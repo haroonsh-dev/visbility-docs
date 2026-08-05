@@ -132,9 +132,115 @@ function dedupeCitations(
         if (!key || seen.has(key)) continue;
         seen.add(key);
         out.push(c);
-        if (out.length >= 3) break;
+        if (out.length >= 8) break;
     }
     return out;
+}
+
+function looksLikeRawId(value?: string | null) {
+    if (!value) return true;
+    const v = value.trim();
+    if (!v) return true;
+    // Mongo doc ids, UUIDs, or long hex blobs — not a real filename
+    if (/^doc_[a-z0-9]+$/i.test(v)) return true;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return true;
+    if (/^[0-9a-f]{16,}$/i.test(v) && !v.includes(".")) return true;
+    return false;
+}
+
+function shortFileLabel(name: string, max = 28) {
+    if (name.length <= max) return name;
+    const extMatch = name.match(/(\.[a-z0-9]{1,8})$/i);
+    const ext = extMatch?.[1] || "";
+    const base = ext ? name.slice(0, -ext.length) : name;
+    const keep = Math.max(8, max - ext.length - 1);
+    return `${base.slice(0, keep)}…${ext}`;
+}
+
+/** Map AI / python source ids → Mongo documentId + real filename from the library. */
+function resolveCitations(
+    raw: Array<{
+        documentId?: string;
+        pythonDocumentId?: string;
+        filename?: string;
+        pageNumber?: number;
+        snippet?: string;
+        score?: number;
+    }>,
+    libraryDocs: Array<{
+        documentId: string;
+        originalFilename?: string;
+        pythonDocumentId?: string | null;
+        classification?: string | null;
+        metadata?: { phase3Agent?: string } | null;
+    }>,
+    allowedAgentIds?: string[] | null
+) {
+    const byNode = new Map(libraryDocs.map((d) => [d.documentId, d]));
+    const byPython = new Map(
+        libraryDocs.filter((d) => d.pythonDocumentId).map((d) => [d.pythonDocumentId as string, d])
+    );
+    const allowed = allowedAgentIds?.length ? new Set(allowedAgentIds) : null;
+
+    const mapped = (raw || []).map((c) => {
+        const id = String(c.documentId || c.pythonDocumentId || "");
+        const hit = byNode.get(id) || byPython.get(id) || byPython.get(String(c.pythonDocumentId || ""));
+        const filename =
+            (hit?.originalFilename && !looksLikeRawId(hit.originalFilename) ? hit.originalFilename : null) ||
+            (!looksLikeRawId(c.filename) ? c.filename : null) ||
+            hit?.originalFilename ||
+            c.filename ||
+            "Document";
+        const agent = hit ? resolveDocAgent(hit) : "other_agent";
+        return {
+            documentId: hit?.documentId || (id.startsWith("doc_") ? id : undefined),
+            filename,
+            pageNumber: c.pageNumber,
+            snippet: c.snippet,
+            score: c.score,
+            agentId: agent,
+        };
+    });
+
+    const filtered = allowed
+        ? mapped.filter((c) => !c.agentId || allowed.has(c.agentId))
+        : mapped;
+
+    return dedupeCitations(filtered).filter((c) => c.documentId || c.filename);
+}
+
+/** Turn fenced JSON objects into Field|Value markdown tables when possible. */
+function formatAssistantMarkdown(content: string): string {
+    if (!content) return content;
+    return content.replace(/```json\s*([\s\S]*?)```/gi, (_full, body: string) => {
+        try {
+            const data = JSON.parse(String(body).trim());
+            if (!data || typeof data !== "object" || Array.isArray(data)) return _full;
+            const rows: string[] = ["| Field | Value |", "| --- | --- |"];
+            const skip = new Set(["order_details", "additional_information", "vendor_address", "billing_contact"]);
+            for (const [key, val] of Object.entries(data)) {
+                if (skip.has(key)) continue;
+                if (val != null && typeof val === "object") continue;
+                const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+                rows.push(`| **${label}** | ${val == null ? "—" : String(val)} |`);
+            }
+            if (Array.isArray((data as any).order_details) && (data as any).order_details.length) {
+                rows.push("");
+                rows.push("**Line items**");
+                rows.push("");
+                rows.push("| Product | SKU | Qty | Rate | Amount |");
+                rows.push("| --- | --- | ---: | ---: | ---: |");
+                for (const item of (data as any).order_details) {
+                    rows.push(
+                        `| ${item.product || "—"} | ${item.sku || "—"} | ${item.quantity ?? "—"} | ${item.rate ?? "—"} | ${item.amount ?? "—"} |`
+                    );
+                }
+            }
+            return rows.join("\n");
+        } catch {
+            return _full;
+        }
+    });
 }
 
 function citationMeta(c: { pageNumber?: number; score?: number }) {
@@ -156,19 +262,33 @@ function formatChatThreadAsText(msgs: ChatMessage[]): string {
         .join("\n\n");
 }
 
-function mapSessionMessages(raw: any[], pythonToNode: Map<string, string>): ChatMessage[] {
+function mapSessionMessages(
+    raw: any[],
+    libraryDocs: Array<{
+        documentId: string;
+        originalFilename?: string;
+        pythonDocumentId?: string | null;
+        classification?: string | null;
+        metadata?: { phase3Agent?: string } | null;
+    }>,
+    allowedAgentIds?: string[] | null
+): ChatMessage[] {
     return raw.map((m, i) => ({
         id: `m_${m.id || i}`,
         role: m.role === "user" ? "user" : "assistant",
         content: m.content || "",
         citations: Array.isArray(m.sources)
-            ? dedupeCitations(
+            ? resolveCitations(
                   m.sources.map((s: any) => ({
-                      documentId: pythonToNode.get(s.document_id) || s.document_id,
-                      filename: s.document_title || s.title,
-                      pageNumber: s.page_number,
+                      documentId: s.document_id || s.documentId,
+                      pythonDocumentId: s.document_id || s.pythonDocumentId,
+                      filename: s.document_title || s.title || s.filename,
+                      pageNumber: s.page_number ?? s.pageNumber,
                       score: s.score,
-                  }))
+                      snippet: s.snippet || s.chunk_text,
+                  })),
+                  libraryDocs,
+                  allowedAgentIds
               )
             : undefined,
     }));
@@ -179,7 +299,7 @@ function ChatContent() {
     const colors = theme.colors;
     const isDark = theme.name === "dark";
     const { canChat } = usePermissions();
-    const { isAgentAllowed } = usePlanAgents();
+    const { isAgentAllowed, allowedIds } = usePlanAgents();
     const { showToast } = useToast();
     const pathname = usePathname();
 
@@ -402,7 +522,24 @@ function ChatContent() {
         };
     }, [headerMenuOpen]);
 
-    const selectableDocs = libraryDocs.filter((d) => d.pythonDocumentId);
+    // Only docs processed by AI AND covered by the user's plan agents
+    const selectableDocs = useMemo(
+        () =>
+            libraryDocs.filter((d) => {
+                if (!d.pythonDocumentId) return false;
+                return isAgentAllowed(resolveDocAgent(d));
+            }),
+        [libraryDocs, isAgentAllowed]
+    );
+
+    // Drop selections that are no longer on-plan (e.g. after entitlement load)
+    useEffect(() => {
+        setSelectedDocIds((prev) => {
+            const allowed = new Set(selectableDocs.map((d) => d.documentId));
+            const next = prev.filter((id) => allowed.has(id));
+            return next.length === prev.length ? prev : next;
+        });
+    }, [selectableDocs]);
 
     const agentIdFromScope = useMemo(() => {
         if (chatScope === "selected" && selectedDocIds.length) {
@@ -418,6 +555,8 @@ function ChatContent() {
 
     const filteredDocs = selectableDocs.filter((doc) => {
         if (agentUrlParam && resolveDocAgent(doc) !== agentUrlParam) return false;
+        // Extra guard: never list files for agents outside plan
+        if (!isAgentAllowed(resolveDocAgent(doc))) return false;
         const q = docSearch.trim().toLowerCase();
         if (q && !doc.originalFilename.toLowerCase().includes(q)) return false;
         if (docStatusFilter === "ready" && doc.status !== "ready") return false;
@@ -437,7 +576,10 @@ function ChatContent() {
           })
         : sessions;
 
-    const unprocessedCount = libraryDocs.length - selectableDocs.length;
+    const unprocessedCount = libraryDocs.filter((d) => !d.pythonDocumentId).length;
+    const offPlanCount = libraryDocs.filter(
+        (d) => d.pythonDocumentId && !isAgentAllowed(resolveDocAgent(d))
+    ).length;
 
     const toggleDoc = (id: string) => {
         setSelectedDocIds((prev) =>
@@ -577,7 +719,7 @@ function ChatContent() {
                 setSelectedDocIds([]);
             }
 
-            const msgs = mapSessionMessages(session.messages || [], pythonToNode);
+            const msgs = mapSessionMessages(session.messages || [], libraryDocs, allowedIds);
             setMessages(msgs.length ? msgs : [WELCOME_MSG]);
             setFocusedExcerpt("");
         } catch (e: any) {
@@ -747,8 +889,17 @@ function ChatContent() {
                 streamRevealRef.current,
                 controller.signal
             );
+            let citations = resolveCitations(data?.data?.citations || [], libraryDocs, allowedIds);
+            // If AI omitted sources but user asked with selected files, still show those files
+            if (!citations.length && chatScope === "selected" && selectedDocIds.length) {
+                citations = resolveCitations(
+                    selectedDocIds.map((id) => ({ documentId: id })),
+                    libraryDocs,
+                    allowedIds
+                );
+            }
             patchAssistant(assistantId, {
-                citations: dedupeCitations(data?.data?.citations || []),
+                citations,
                 agentId: data?.data?.agentId,
                 aiProvider: data?.data?.aiProvider,
                 aiModel: data?.data?.aiModel,
@@ -911,7 +1062,7 @@ function ChatContent() {
 
     const scopeLabel =
         chatScope === "all"
-            ? `All documents (${libraryDocs.length})`
+            ? `All documents (${selectableDocs.length})`
             : `Selected (${selectedDocIds.length} of ${selectableDocs.length})`;
 
     const isWelcomeOnly = messages.length === 1 && messages[0].id === "welcome";
@@ -1013,7 +1164,6 @@ function ChatContent() {
                         <p className={`px-4 py-3 text-xs ${colors.textMuted}`}>Loading chats…</p>
                     ) : visibleSessions.length === 0 ? (
                         <div className="px-4 py-8 text-center">
-                        <div className="px-4 py-8 text-center">
                             <MessageSquare size={22} className="mx-auto mb-2 text-accent opacity-60" />
                             <p className={`text-xs ${colors.textMuted}`}>No chats for this agent.</p>
                             <p className={`text-[11px] mt-1 ${colors.textMuted}`}>Start typing to create one.</p>
@@ -1025,9 +1175,9 @@ function ChatContent() {
                                 (s.title || "New Chat").toLowerCase().includes(sessionSearch.toLowerCase())
                             )
                             .map((s) => {
-                            const active = sessionId === s.id;
-                            const isRenaming = renamingId === s.id;
-                            return (
+                                const active = sessionId === s.id;
+                                const isRenaming = renamingId === s.id;
+                                return (
                                 <div
                                     key={s.id}
                                     className={`group mx-2 mb-1 flex items-start gap-1 rounded-xl px-2 py-2 transition-colors ${
@@ -1126,8 +1276,8 @@ function ChatContent() {
                                         </>
                                     )}
                                 </div>
-                            );
-                        })
+                                );
+                            })
                     )}
                 </div>
             </aside>
@@ -1301,29 +1451,43 @@ function ChatContent() {
                                 </button>
                             </div>
                         ) : (
-                            messages.map((msg, msgIdx) => (
+                            messages.map((msg, msgIdx) => {
+                                const isLastMsg = messages[messages.length - 1]?.id === msg.id;
+                                const hasText = Boolean((msg.content || "").trim());
+                                const isThinking =
+                                    msg.role === "assistant" &&
+                                    !hasText &&
+                                    sending &&
+                                    isLastMsg &&
+                                    msg.id !== "welcome";
+                                return (
                                 <div
                                     key={msg.id}
                                     className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                                 >
                                     {msg.role === "assistant" ? (
+                                        !(hasText || isThinking) ? null : (
                                         <div className="flex w-full min-w-0 gap-3 sm:gap-4">
                                             <div
-                                                className={`mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
-                                                    isDark ? "bg-teal-500/15 text-teal-300" : "bg-slate-100 text-slate-700"
+                                                className={`mt-1 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
+                                                    isDark ? "bg-teal-500/15 text-teal-300" : "bg-slate-100 text-slate-600"
                                                 }`}
                                                 aria-hidden
                                             >
                                                 <Sparkles size={15} />
                                             </div>
-                                            <div className="flex flex-col items-start flex-1 min-w-0 gap-2">
+                                            <div className="flex flex-col items-start flex-1 min-w-0 gap-1.5">
                                             <div
                                                 data-role="assistant"
-                                                className={`w-full min-w-0 text-[15px] sm:text-base leading-7 ${colors.textPrimary}`}
+                                                className={`w-full min-w-0 rounded-2xl border shadow-sm ${
+                                                    isDark
+                                                        ? "bg-white/5 border-white/10 shadow-black/20"
+                                                        : "bg-white border-slate-200 shadow-slate-200/60"
+                                                }`}
                                             >
-                                                <div className={`chat-assistant-prose max-w-none ${isDark ? "is-dark" : ""}`}>
-                                                {!msg.content && sending ? (
-                                                    <p className="text-foreground-muted text-[15px] animate-pulse m-0">
+                                                <div className={`chat-assistant-prose max-w-none px-4 sm:px-5 py-4 ${isDark ? "is-dark text-slate-100" : "text-slate-800"}`}>
+                                                {isThinking ? (
+                                                    <p className="text-slate-400 text-[15px] animate-pulse m-0">
                                                         Thinking…
                                                     </p>
                                                 ) : (
@@ -1331,66 +1495,84 @@ function ChatContent() {
                                                     remarkPlugins={[remarkGfm]}
                                                     components={{
                                                         p: ({ children }) => (
-                                                            <p className="mb-4 last:mb-0 leading-7">{children}</p>
+                                                            <p className="mb-3.5 last:mb-0 text-[14px] sm:text-[15px] leading-7">{children}</p>
+                                                        ),
+                                                        strong: ({ children }) => (
+                                                            <strong className="font-semibold text-inherit">{children}</strong>
                                                         ),
                                                         h1: ({ children }) => (
-                                                            <h1 className="text-xl font-semibold mt-5 mb-3 leading-snug">{children}</h1>
+                                                            <h1 className="text-lg font-bold mt-5 mb-3 leading-snug">{children}</h1>
                                                         ),
                                                         h2: ({ children }) => (
-                                                            <h2 className="text-lg font-semibold mt-5 mb-2.5 leading-snug">{children}</h2>
+                                                            <h2 className="text-base font-bold mt-5 mb-2.5 leading-snug">{children}</h2>
                                                         ),
                                                         h3: ({ children }) => (
-                                                            <h3 className="text-base font-semibold mt-4 mb-2 leading-snug">{children}</h3>
+                                                            <h3 className="text-[15px] font-bold mt-4 mb-2 leading-snug">{children}</h3>
+                                                        ),
+                                                        hr: () => (
+                                                            <hr className={`my-4 border-0 border-t ${isDark ? "border-white/10" : "border-slate-200"}`} />
                                                         ),
                                                         table: ({ children }) => (
-                                                            <div className="my-5 overflow-x-auto rounded-xl border border-slate-200">
+                                                            <div className={`my-4 overflow-x-auto rounded-xl border ${isDark ? "border-white/10" : "border-slate-200"}`}>
                                                                 <table className="min-w-full border-collapse text-sm">
                                                                     {children}
                                                                 </table>
                                                             </div>
                                                         ),
                                                         thead: ({ children }) => (
-                                                            <thead className={isDark ? "bg-white/10" : "bg-slate-100"}>{children}</thead>
+                                                            <thead className={isDark ? "bg-white/8" : "bg-slate-100"}>{children}</thead>
                                                         ),
                                                         th: ({ children }) => (
-                                                            <th className="border-b border-slate-200 px-3 py-2.5 text-left text-xs font-semibold">
+                                                            <th className={`border-b px-3.5 py-2.5 text-left text-xs font-semibold ${isDark ? "border-white/10 text-slate-200" : "border-slate-200 text-slate-700"}`}>
                                                                 {children}
                                                             </th>
                                                         ),
                                                         td: ({ children }) => (
-                                                            <td className="border-b border-slate-100 px-3 py-2.5 align-top leading-relaxed">
+                                                            <td className={`border-b px-3.5 py-2.5 align-top text-[13px] leading-relaxed ${isDark ? "border-white/8 text-slate-200" : "border-slate-100 text-slate-700"}`}>
                                                                 {children}
                                                             </td>
                                                         ),
                                                         ul: ({ children }) => (
-                                                            <ul className="list-disc pl-5 my-4 space-y-2">{children}</ul>
+                                                            <ul className="list-disc pl-5 my-3 space-y-1.5 text-[14px] sm:text-[15px]">{children}</ul>
                                                         ),
                                                         ol: ({ children }) => (
-                                                            <ol className="list-decimal pl-5 my-4 space-y-2">{children}</ol>
+                                                            <ol className="list-decimal pl-5 my-3 space-y-2 text-[14px] sm:text-[15px]">{children}</ol>
                                                         ),
                                                         li: ({ children }) => (
-                                                            <li className="leading-7 pl-0.5">{children}</li>
+                                                            <li className="leading-7 pl-0.5 marker:text-slate-400">{children}</li>
                                                         ),
                                                         blockquote: ({ children }) => (
-                                                            <blockquote className="border-l-4 border-slate-300 pl-4 my-4 italic text-slate-600">
+                                                            <blockquote className={`border-l-4 pl-4 my-4 italic ${isDark ? "border-amber-400/40 text-slate-300" : "border-amber-300 text-slate-600"}`}>
                                                                 {children}
                                                             </blockquote>
                                                         ),
-                                                        code: ({ children, className }) => (
-                                                            <code
-                                                                className={`rounded-md px-1.5 py-0.5 text-[0.9em] ${className ? className : isDark ? "bg-white/10" : "bg-slate-100"}`}
-                                                            >
-                                                                {children}
-                                                            </code>
-                                                        ),
+                                                        code: ({ children, className }) => {
+                                                            const isBlock = Boolean(className);
+                                                            if (isBlock) {
+                                                                return <code className={className}>{children}</code>;
+                                                            }
+                                                            return (
+                                                                <code
+                                                                    className={`rounded-md px-1.5 py-0.5 text-[0.88em] font-mono ${
+                                                                        isDark ? "bg-white/10 text-slate-100" : "bg-slate-100 text-slate-800"
+                                                                    }`}
+                                                                >
+                                                                    {children}
+                                                                </code>
+                                                            );
+                                                        },
                                                         pre: ({ children }) => (
-                                                            <pre className={`overflow-x-auto rounded-xl p-4 my-4 text-sm leading-relaxed ${isDark ? "bg-slate-950/40" : "bg-slate-100"}`}>
+                                                            <pre className={`overflow-x-auto rounded-xl border p-3.5 my-3 text-[12px] sm:text-[13px] leading-relaxed font-mono whitespace-pre-wrap wrap-break-word ${
+                                                                isDark
+                                                                    ? "bg-slate-950/50 border-white/10 text-slate-200"
+                                                                    : "bg-slate-50 border-slate-200 text-slate-700"
+                                                            }`}>
                                                                 {children}
                                                             </pre>
                                                         ),
                                                     }}
                                                 >
-                                                    {msg.content}
+                                                    {formatAssistantMarkdown(msg.content)}
                                                 </ReactMarkdown>
                                                 )}
                                                 {msg.agentId && (
@@ -1406,52 +1588,72 @@ function ChatContent() {
                                                     </div>
                                                 )}
                                                 {msg.citations && msg.citations.length > 0 && (
-                                                    <div className={`mt-4 pt-4 border-t ${colors.borderPrimary}`}>
-                                                        <p className={`text-[10px] font-semibold uppercase tracking-wider mb-2 ${colors.textMuted}`}>
+                                                    <div className={`mt-5 pt-4 border-t ${isDark ? "border-white/10" : "border-slate-200"}`}>
+                                                        <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] mb-2.5 ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                                                             Sources
                                                         </p>
-                                                        <div className="flex flex-wrap gap-1.5">
+                                                        <div className="flex flex-wrap gap-2">
                                                             {msg.citations.map((c, i) => {
-                                                                const label = c.filename || c.documentId || "Source";
+                                                                const label = shortFileLabel(c.filename || "Document");
+                                                                const fullName = c.filename || "Document";
                                                                 const meta = citationMeta(c);
                                                                 const href = c.documentId
-                                                                    ? `/documents/details?doc=${c.documentId}`
+                                                                    ? `/documents/details?doc=${encodeURIComponent(c.documentId)}`
                                                                     : null;
                                                                 const citeKey = `${msg.id}-${i}`;
                                                                 const expanded = expandedCitation === citeKey;
-                                                                const chipClass = `inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border transition-colors cursor-pointer ${
-                                                                    isDark
-                                                                        ? "bg-white/5 border-white/10 text-slate-200 hover:border-teal-400/40 hover:bg-teal-500/10"
-                                                                        : "bg-slate-100 border-slate-200 text-slate-700 hover:border-teal-400 hover:bg-teal-50"
+                                                                const chipClass = `inline-flex items-center gap-1.5 text-[11px] rounded-lg px-2.5 py-1.5 border transition-colors ${
+                                                                    href
+                                                                        ? isDark
+                                                                            ? "bg-white/5 border-white/10 text-slate-200 hover:border-teal-400/50 hover:bg-teal-500/10 hover:text-teal-200"
+                                                                            : "bg-slate-50 border-slate-200 text-slate-700 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-800"
+                                                                        : isDark
+                                                                          ? "bg-white/5 border-white/10 text-slate-400 opacity-80"
+                                                                          : "bg-slate-50 border-slate-200 text-slate-500 opacity-80"
                                                                 }`;
 
                                                                 const inner = (
                                                                     <>
-                                                                        <FileText size={11} className="shrink-0 opacity-70" />
-                                                                        <span className="truncate max-w-40">{label}</span>
+                                                                        <FileText size={12} className="shrink-0 opacity-70" />
+                                                                        <span className="truncate max-w-44 font-medium">{label}</span>
                                                                         {meta && (
-                                                                            <span className="text-[10px] opacity-70 shrink-0">{meta}</span>
+                                                                            <span className="text-[10px] shrink-0 opacity-60">{meta}</span>
                                                                         )}
                                                                     </>
                                                                 );
 
                                                                 return (
-                                                                    <div key={citeKey} className="flex flex-col">
-                                                                        <span
-                                                                            className={chipClass}
-                                                                            onClick={() => setExpandedCitation(expanded ? null : citeKey)}
-                                                                            title={expanded ? "Collapse" : `Click for snippet`}
-                                                                        >
-                                                                            {inner}
-                                                                        </span>
+                                                                    <div key={citeKey} className="flex flex-col max-w-full">
+                                                                        {href ? (
+                                                                            <Link
+                                                                                href={href}
+                                                                                className={`${chipClass} cursor-pointer`}
+                                                                                title={`Open ${fullName}`}
+                                                                            >
+                                                                                {inner}
+                                                                            </Link>
+                                                                        ) : (
+                                                                            <span className={chipClass} title={fullName}>
+                                                                                {inner}
+                                                                            </span>
+                                                                        )}
+                                                                        {c.snippet && (
+                                                                            <button
+                                                                                type="button"
+                                                                                className="mt-1 ml-1 text-[10px] text-left text-accent hover:underline"
+                                                                                onClick={() => setExpandedCitation(expanded ? null : citeKey)}
+                                                                            >
+                                                                                {expanded ? "Hide snippet" : "Show snippet"}
+                                                                            </button>
+                                                                        )}
                                                                         {expanded && c.snippet && (
-                                                                            <div className={`mt-1.5 ml-1 rounded-xl border p-3 text-xs leading-relaxed max-w-105 ${
+                                                                            <div className={`mt-1.5 rounded-xl border p-3 text-xs leading-relaxed max-w-105 ${
                                                                                 isDark ? "border-white/10 bg-white/5 text-slate-200" : "border-slate-200 bg-slate-50 text-slate-600"
                                                                             }`}>
-                                                                                <p className="line-clamp-4 italic">"{c.snippet}"</p>
+                                                                                <p className="line-clamp-4 italic">&quot;{c.snippet}&quot;</p>
                                                                                 {href && (
                                                                                     <Link href={href} className="inline-flex items-center gap-1 mt-2 text-[10px] text-accent hover:underline">
-                                                                                        <FileText size={10} /> Open document
+                                                                                        <FileText size={10} /> Open {shortFileLabel(fullName, 36)}
                                                                                     </Link>
                                                                                 )}
                                                                             </div>
@@ -1464,9 +1666,9 @@ function ChatContent() {
                                                 )}
                                                 </div>
                                             </div>
-                                            {msg.content &&
+                                            {hasText &&
                                             msg.id !== "welcome" &&
-                                            !(sending && messages[messages.length - 1]?.id === msg.id) ? (
+                                            !isThinking ? (
                                             <div className="flex items-center flex-nowrap gap-0.5 h-8 shrink-0 -ml-1">
                                                     {messages[messages.length - 1]?.id === msg.id && (
                                                         <button
@@ -1526,9 +1728,9 @@ function ChatContent() {
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        onClick={() => toggleFeedback(msg, msgIdx, 'like')}
+                                                        onClick={() => toggleFeedback(msg, msgIdx, "like")}
                                                         className={`group relative h-8 w-8 min-h-8 min-w-8 inline-flex items-center justify-center rounded-lg transition-colors ${
-                                                            feedbackState[msg.id] === 'like'
+                                                            feedbackState[msg.id] === "like"
                                                                 ? "text-emerald-600 bg-emerald-50"
                                                                 : isDark
                                                                   ? "text-slate-400 hover:bg-white/10 hover:text-slate-200"
@@ -1537,16 +1739,16 @@ function ChatContent() {
                                                         aria-label="Thumbs up"
                                                         title="Good response"
                                                     >
-                                                        <ThumbsUp size={15} fill={feedbackState[msg.id] === 'like' ? "currentColor" : "none"} />
+                                                        <ThumbsUp size={15} fill={feedbackState[msg.id] === "like" ? "currentColor" : "none"} />
                                                         <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-medium text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
                                                             Good response
                                                         </span>
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        onClick={() => toggleFeedback(msg, msgIdx, 'dislike')}
+                                                        onClick={() => toggleFeedback(msg, msgIdx, "dislike")}
                                                         className={`group relative h-8 w-8 min-h-8 min-w-8 inline-flex items-center justify-center rounded-lg transition-colors ${
-                                                            feedbackState[msg.id] === 'dislike'
+                                                            feedbackState[msg.id] === "dislike"
                                                                 ? "text-rose-600 bg-rose-50"
                                                                 : isDark
                                                                   ? "text-slate-400 hover:bg-white/10 hover:text-slate-200"
@@ -1555,7 +1757,7 @@ function ChatContent() {
                                                         aria-label="Thumbs down"
                                                         title="Bad response"
                                                     >
-                                                        <ThumbsDown size={15} fill={feedbackState[msg.id] === 'dislike' ? "currentColor" : "none"} />
+                                                        <ThumbsDown size={15} fill={feedbackState[msg.id] === "dislike" ? "currentColor" : "none"} />
                                                         <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-medium text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
                                                             Bad response
                                                         </span>
@@ -1564,6 +1766,7 @@ function ChatContent() {
                                             ) : null}
                                         </div>
                                         </div>
+                                        )
                                     ) : (
                                         <div
                                             className="max-w-[85%] sm:max-w-[75%] rounded-3xl px-4 py-3 text-[15px] leading-relaxed"
@@ -1577,13 +1780,20 @@ function ChatContent() {
                                         </div>
                                     )}
                                 </div>
-                            ))
+                                );
+                            })
                         )}
                         {sending &&
                             (() => {
                                 const last = messages[messages.length - 1];
-                                // Empty assistant uses inline “Thinking…”. During reveal, text is the progress.
-                                if (last?.role === "assistant" && last.id !== "welcome") return null;
+                                // Inline Thinking… card already covers the empty assistant placeholder
+                                if (last?.role === "assistant" && last.id !== "welcome" && !(last.content || "").trim()) {
+                                    return null;
+                                }
+                                // While text is streaming in, don't show a second Thinking row
+                                if (last?.role === "assistant" && (last.content || "").trim()) {
+                                    return null;
+                                }
                                 return (
                             <div className="flex w-full min-w-0 gap-3 sm:gap-4" aria-live="polite" aria-label="Assistant is thinking">
                                 <div
@@ -1594,13 +1804,16 @@ function ChatContent() {
                                 >
                                     <Sparkles size={15} />
                                 </div>
-                                <div className="inline-flex items-center gap-2 py-1.5">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0ms]" />
-                                    <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:150ms]" />
-                                    <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:300ms]" />
-                                    <span className={`text-sm ${colors.textMuted}`}>
+                                <div
+                                    className={`rounded-2xl border px-4 py-3 shadow-sm ${
+                                        isDark
+                                            ? "bg-white/5 border-white/10"
+                                            : "bg-white border-slate-200"
+                                    }`}
+                                >
+                                    <p className={`text-[15px] m-0 animate-pulse ${isDark ? "text-slate-400" : "text-slate-400"}`}>
                                         {agentIdFromScope ? `${agentLabel(agentIdFromScope)} Agent is thinking…` : "Thinking…"}
-                                    </span>
+                                    </p>
                                 </div>
                             </div>
                                 );
@@ -1730,8 +1943,9 @@ function ChatContent() {
                 docStatusFilter={docStatusFilter}
                 onDocStatusFilterChange={setDocStatusFilter}
                 unprocessedCount={unprocessedCount}
-                libraryCount={libraryDocs.length}
+                libraryCount={selectableDocs.length}
                 selectableCount={selectableDocs.length}
+                offPlanCount={offPlanCount}
                 textPrimary={colors.textPrimary}
                 textMuted={colors.textMuted}
                 textSecondary={colors.textSecondary}

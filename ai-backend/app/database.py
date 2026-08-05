@@ -220,6 +220,8 @@ def _init_local_db(conn):
         "ALTER TABLE document_chunks ADD COLUMN chunk_text TEXT",
         "ALTER TABLE documents ADD COLUMN phase3_agent TEXT",
         "ALTER TABLE documents ADD COLUMN allowed_agents TEXT",
+        "ALTER TABLE documents ADD COLUMN natural_agent TEXT",
+        "ALTER TABLE documents ADD COLUMN agent_clamped INTEGER DEFAULT 0",
         "ALTER TABLE chat_sessions ADD COLUMN user_id TEXT",
         "ALTER TABLE document_chunks ADD COLUMN section TEXT",
         "ALTER TABLE document_chunks ADD COLUMN section_number TEXT",

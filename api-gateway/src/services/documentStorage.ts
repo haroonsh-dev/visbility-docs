@@ -76,6 +76,79 @@ export const KNOWN_DOCUMENT_TYPES = new Set([
     'other',
 ]);
 
+/** Document type → specialist agent (keep in sync with frontend documentAgents.ts) */
+export const DOC_TYPE_TO_AGENT: Record<string, string> = {
+    invoice: 'finance_agent',
+    financial_statement: 'finance_agent',
+    expense_report: 'finance_agent',
+    payment_receipt: 'finance_agent',
+    tax_document: 'finance_agent',
+    bank_statement: 'finance_agent',
+    budget: 'finance_agent',
+    employee_record: 'hr_agent',
+    hr_document: 'hr_agent',
+    offer_letter: 'hr_agent',
+    employment_contract: 'hr_agent',
+    leave_application: 'hr_agent',
+    payroll: 'hr_agent',
+    attendance: 'hr_agent',
+    performance_review: 'hr_agent',
+    training_certificate: 'hr_agent',
+    resume: 'hr_agent',
+    transcript: 'hr_agent',
+    contract: 'legal_agent',
+    agreement: 'legal_agent',
+    nda: 'legal_agent',
+    service_agreement: 'legal_agent',
+    lease_agreement: 'legal_agent',
+    vendor_contract: 'legal_agent',
+    purchase_order: 'procurement_agent',
+    po: 'procurement_agent',
+    quotation: 'procurement_agent',
+    supplier_agreement: 'procurement_agent',
+    vendor_list: 'procurement_agent',
+    rfq: 'procurement_agent',
+    delivery_note: 'procurement_agent',
+    procurement_request: 'procurement_agent',
+    sop: 'compliance_agent',
+    audit_report: 'compliance_agent',
+    quality_report: 'compliance_agent',
+    certificate: 'compliance_agent',
+    maintenance_report: 'compliance_agent',
+    engineering_drawing: 'compliance_agent',
+    inspection_report: 'compliance_agent',
+    safety_manual: 'compliance_agent',
+    iso_document: 'compliance_agent',
+    compliance_form: 'compliance_agent',
+    regulatory_document: 'compliance_agent',
+    other: 'other_agent',
+};
+
+/** Doc types an org may assign to departments, limited to agents on their plan. */
+export function documentTypesForAgents(agentIds: string[]): string[] {
+    const allowed = new Set(agentIds);
+    // Always allow "other" vault type when other_agent is on plan (or when plan is empty → free other)
+    return Array.from(KNOWN_DOCUMENT_TYPES).filter((t) => {
+        const agent = DOC_TYPE_TO_AGENT[t] || 'other_agent';
+        return allowed.has(agent);
+    });
+}
+
+export function normalizeDocumentTypesToOrgPlan(
+    raw: unknown,
+    orgAgentIds: string[]
+): string[] {
+    if (!Array.isArray(raw)) return [];
+    const allowedTypes = new Set(documentTypesForAgents(orgAgentIds));
+    return [
+        ...new Set(
+            raw
+                .map((t) => normalizeDocumentType(String(t)))
+                .filter((t) => allowedTypes.has(t))
+        ),
+    ];
+}
+
 export function ensureUploadDir() {
     if (!fs.existsSync(UPLOAD_ROOT)) {
         fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
@@ -396,8 +469,8 @@ export async function saveUploadedFile(
             appliedProvider = await applyRequestedAiProvider(user.organizationId, aiProvider);
             let allowedAgents: string[] | undefined;
             if (user.role !== 'superAdmin' && user.organizationId) {
-                const { getAllowedAgentsForOrg } = await import('./planService');
-                allowedAgents = await getAllowedAgentsForOrg(user.organizationId);
+                const { getAllowedAgentsForUser } = await import('./planService');
+                allowedAgents = await getAllowedAgentsForUser(user);
             }
             const aiResult = await uploadDocumentToAi({
                 filePath: storagePath,

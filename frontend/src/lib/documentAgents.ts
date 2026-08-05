@@ -65,6 +65,95 @@ export const AGENT_FILTER_OPTIONS = [
     ...AGENT_OPTIONS.filter((o) => o.value),
 ];
 
+/** Capability skills per agent (mirrors ai-backend phase3 skill folders). */
+export const AGENT_SKILLS: Record<string, string[]> = {
+    finance_agent: [
+        "Invoice extraction",
+        "Invoice search",
+        "Duplicate invoice detection",
+        "Expense summary",
+        "Payment term extraction",
+        "Bank statement analysis",
+        "Tax & budget docs",
+    ],
+    hr_agent: [
+        "Resume / CV scoring",
+        "Employee records",
+        "Payroll & attendance",
+        "Offer letters",
+        "Employment contracts",
+        "Leave applications",
+        "Training certificates",
+        "Document completeness",
+    ],
+    legal_agent: [
+        "Contract summary",
+        "Clause extraction",
+        "Risk detection",
+        "NDA review",
+        "Agreements & leases",
+        "Version comparison",
+    ],
+    procurement_agent: [
+        "Purchase orders",
+        "Quotations & comparison",
+        "RFQ handling",
+        "Vendor lists",
+        "PO & invoice validation",
+        "Delivery notes",
+    ],
+    compliance_agent: [
+        "SOP review",
+        "Audit reports & evidence",
+        "Certificates & expiry",
+        "Quality / inspection",
+        "Safety manuals",
+        "ISO & regulatory docs",
+    ],
+    other_agent: [
+        "General correspondence",
+        "Meeting minutes",
+        "Policies & memos",
+        "Project proposals",
+    ],
+};
+
+/** Document types covered by the given agents. */
+export function docTypesForAgents(agentIds: string[]): string[] {
+    const allowed = new Set(agentIds);
+    return Object.entries(DOC_TYPE_TO_AGENT)
+        .filter(([, agent]) => allowed.has(agent))
+        .map(([docType]) => docType);
+}
+
+export function filterAgentOptions(agentIds: string[] | null | undefined) {
+    if (!agentIds) return AGENT_OPTIONS.filter((o) => o.value);
+    const set = new Set(agentIds);
+    return AGENT_OPTIONS.filter((o) => o.value && set.has(o.value));
+}
+
+export function filterAgentFilterOptions(agentIds: string[] | null | undefined) {
+    return [{ value: "", label: "All agents" }, ...filterAgentOptions(agentIds)];
+}
+
+export function filterDocTypeFilterOptions(agentIds: string[] | null | undefined) {
+    const types = new Set(docTypesForAgents(agentIds || Object.keys(DOC_TYPE_TO_AGENT)));
+    return [
+        { value: "", label: "All types" },
+        ...Object.entries(DOC_TYPE_LABELS)
+            .filter(([k]) => k !== "unclassified" && types.has(k))
+            .map(([value, label]) => ({ value, label })),
+    ];
+}
+
+export function skillsForAgents(agentIds: string[]): { agentId: string; label: string; skills: string[] }[] {
+    return filterAgentOptions(agentIds).map((a) => ({
+        agentId: a.value,
+        label: a.label,
+        skills: AGENT_SKILLS[a.value] || [],
+    }));
+}
+
 export const DOC_TYPE_LABELS: Record<string, string> = {
     invoice: "Invoice",
     financial_statement: "Financial statement",
@@ -143,18 +232,32 @@ export function resolveDocAgent(doc: {
 }
 
 export function inferDocTypeFromFilename(filename: string): string | null {
-    const name = filename.toLowerCase();
-    if (/\b(cv|resume|curriculum)\b/.test(name)) return "resume";
+    const name = filename.toLowerCase().replace(/\.[^.]+$/, "");
+    // Specific HR / finance cues before broad "contract" / "certificate" matches
+    if (/(^|[^a-z0-9])(cv|resume|curriculum)([^a-z0-9]|$)/.test(name) || /[_-]cv$/.test(name)) {
+        return "resume";
+    }
+    if (name.includes("payroll")) return "payroll";
+    if (name.includes("offer") && name.includes("letter")) return "offer_letter";
+    if (name.includes("employment") && name.includes("contract")) return "employment_contract";
+    if (name.includes("leave")) return "leave_application";
+    if (name.includes("training") && name.includes("certificate")) return "training_certificate";
+    if (name.includes("transcript")) return "transcript";
     if (name.includes("invoice")) return "invoice";
-    if (name.includes("nda") || name.includes("non-disclosure")) return "nda";
-    if (name.includes("contract")) return "contract";
-    if (name.includes("quotation") || name.includes("quote")) return "quotation";
-    if (name.includes("purchase") || /\bpo\b/.test(name)) return "purchase_order";
+    if (name.includes("bank") && name.includes("statement")) return "bank_statement";
+    if (name.includes("expense")) return "expense_report";
+    if (name.includes("nda") || name.includes("non-disclosure") || name.includes("non_disclosure")) {
+        return "nda";
+    }
+    if (name.includes("service") && name.includes("agreement")) return "service_agreement";
+    if (name.includes("lease") && name.includes("agreement")) return "lease_agreement";
+    if (name.includes("vendor") && name.includes("contract")) return "vendor_contract";
+    if (name.includes("contract") || name.includes("agreement")) return "contract";
+    if (name.includes("quotation") || /(^|[^a-z0-9])quote([^a-z0-9]|$)/.test(name)) return "quotation";
+    if (name.includes("purchase") || /(^|[^a-z0-9])po([^a-z0-9]|$)/.test(name)) return "purchase_order";
     if (name.includes("rfq")) return "rfq";
     if (name.includes("certificate")) return "certificate";
-    if (name.includes("transcript")) return "transcript";
-    if (name.includes("payroll")) return "payroll";
-    if (name.includes("sop")) return "sop";
+    if (/(^|[^a-z0-9])sop([^a-z0-9]|$)/.test(name)) return "sop";
     if (name.includes("bank")) return "bank_statement";
     return null;
 }

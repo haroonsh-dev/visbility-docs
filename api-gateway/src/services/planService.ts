@@ -5,6 +5,8 @@ import AgentStoragePricing, {
 import OrgSubscription, { type IOrgSubscription } from '../models/OrgSubscription';
 import Document from '../models/Document';
 import Organization from '../models/Organization';
+import Department from '../models/Department';
+import { loadUserDeptContext, type AuthUser } from './accessScope';
 
 function id() {
     return `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -197,33 +199,109 @@ export async function getAllowedAgentsForOrg(
     return entitlement.agentIds;
 }
 
+/** Agent ids from raw input, limited to org plan and known catalog agents. */
+export function normalizeAgentsToOrgPlan(raw: unknown, orgAgentIds: string[]): string[] {
+    if (!Array.isArray(raw)) return [];
+    const orgSet = new Set(orgAgentIds);
+    const planSet = new Set<string>(PLAN_AGENT_IDS);
+    return [...new Set(raw.map((x) => String(x)).filter((id) => planSet.has(id) && orgSet.has(id)))];
+}
+
+/** When department list is empty, members get full org plan agents. */
+export function intersectDeptAgents(deptAgents: string[], orgAgentIds: string[]): string[] {
+    if (!deptAgents.length) return orgAgentIds;
+    const effective = deptAgents.filter((id) => orgAgentIds.includes(id));
+    return effective.length > 0 ? effective : orgAgentIds;
+}
+
+export type EffectiveAgentContext = {
+    agentIds: string[];
+    orgAgentIds: string[];
+    departmentId: string | null;
+};
+
 /**
- * Reject if user (non-superAdmin) requests an agent outside their org plan.
- * Returns entitlement for reuse by callers.
+ * Org admin → full org plan.
+ * Team → org plan ∩ department.allowedAgents (empty dept list = full org plan).
+ */
+export async function getEffectiveAllowedAgentIds(
+    user: Pick<AuthUser, 'role' | 'organizationId' | 'userId'>
+): Promise<EffectiveAgentContext> {
+    if (user.role === 'superAdmin') {
+        return {
+            agentIds: [...PLAN_AGENT_IDS],
+            orgAgentIds: [...PLAN_AGENT_IDS],
+            departmentId: null,
+        };
+    }
+
+    const orgEntitlement = await getOrgEntitlement(user.organizationId);
+    const orgAgentIds = orgEntitlement.agentIds;
+
+    if (user.role === 'admin') {
+        return { agentIds: orgAgentIds, orgAgentIds, departmentId: null };
+    }
+
+    const ctx = await loadUserDeptContext(user as AuthUser);
+    if (!ctx.departmentId) {
+        return { agentIds: orgAgentIds, orgAgentIds, departmentId: null };
+    }
+
+    const dept = await Department.findOne({ departmentId: ctx.departmentId }).lean();
+    const deptAgents = dept?.allowedAgents || [];
+    return {
+        agentIds: intersectDeptAgents(deptAgents, orgAgentIds),
+        orgAgentIds,
+        departmentId: ctx.departmentId,
+    };
+}
+
+export async function getAllowedAgentsForUser(
+    user: Pick<AuthUser, 'role' | 'organizationId' | 'userId'>
+): Promise<string[]> {
+    const effective = await getEffectiveAllowedAgentIds(user);
+    return effective.agentIds;
+}
+
+/**
+ * Reject if user requests an agent outside their effective entitlement
+ * (org plan ∩ department for team members).
  */
 export async function requireAllowedAgent(
-    user: { role?: string; organizationId?: string | null },
+    user: Pick<AuthUser, 'role' | 'organizationId' | 'userId'>,
     agentId: string | null | undefined
 ): Promise<
-    | { ok: true; entitlement: OrgEntitlement; agentId?: string }
-    | { ok: false; message: string; entitlement: OrgEntitlement; code: string }
+    | { ok: true; entitlement: OrgEntitlement; agentId?: string; orgAgentIds: string[] }
+    | { ok: false; message: string; entitlement: OrgEntitlement; code: string; orgAgentIds: string[] }
 > {
-    const entitlement = await getOrgEntitlement(user.organizationId);
+    const orgEntitlement = await getOrgEntitlement(user.organizationId);
+    const effective = await getEffectiveAllowedAgentIds(user);
+    const entitlement: OrgEntitlement = {
+        ...orgEntitlement,
+        agentIds: effective.agentIds,
+    };
+    const orgAgentIds = effective.orgAgentIds;
+
     if (user.role === 'superAdmin') {
-        return { ok: true, entitlement, agentId: agentId || undefined };
+        return { ok: true, entitlement, agentId: agentId || undefined, orgAgentIds };
     }
     if (!agentId) {
-        return { ok: true, entitlement };
+        return { ok: true, entitlement, orgAgentIds };
     }
     if (!isAgentAllowed(entitlement, agentId)) {
+        const scope =
+            effective.departmentId && effective.agentIds.length < orgAgentIds.length
+                ? 'your department'
+                : 'your plan';
         return {
             ok: false,
             code: 'AGENT_NOT_IN_PLAN',
-            message: `Agent "${agentId}" is not included in your plan. Only plan agents can be used: ${entitlement.agentIds.join(', ') || 'none'}.`,
+            message: `Agent "${agentId}" is not included in ${scope}. Allowed agents: ${entitlement.agentIds.join(', ') || 'none'}.`,
             entitlement,
+            orgAgentIds,
         };
     }
-    return { ok: true, entitlement, agentId };
+    return { ok: true, entitlement, agentId, orgAgentIds };
 }
 
 export async function syncOrgSubscriptionLabel(

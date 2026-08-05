@@ -93,15 +93,15 @@ const PERM_LABELS: Record<string, string> = {
     "document.share": "Share documents",
     "chat.use": "AI Chat",
     "org.documents.view": "View all org documents",
-    "page.dashboard": "Dashboard page",
-    "page.documents": "Documents page",
-    "page.chat": "Chat page",
-    "page.activity": "Activity page",
-    "page.departments": "Departments page",
-    "page.plans": "Plans page",
-    "page.email_reports": "Email reports page",
-    "page.integrations": "Integrations page",
-    "page.settings": "AI Settings page",
+    "page.dashboard": "Dashboard",
+    "page.documents": "Document Vault",
+    "page.chat": "AI Assistant",
+    "page.activity": "System Activity",
+    "page.departments": "Department pages",
+    "page.plans": "Subscriptions & Billing",
+    "page.email_reports": "Automated Reports",
+    "page.integrations": "API & Webhooks",
+    "page.settings": "AI Engine Config",
 };
 
 function formatBytes(n: number) {
@@ -341,7 +341,7 @@ function MemberDetailContent() {
                 animate={{ opacity: 1, y: 0 }}
                 className="surface-card p-5 flex flex-col sm:flex-row sm:items-center gap-4"
             >
-                <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-500 text-white flex items-center justify-center text-lg font-bold shadow-lg shadow-teal-500/20">
+                <div className="h-14 w-14 rounded-2xl bg-linear-to-br from-teal-500 to-cyan-500 text-white flex items-center justify-center text-lg font-bold shadow-lg shadow-teal-500/20">
                     {initials}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -558,7 +558,7 @@ function MemberDetailContent() {
                                         }
                                     }}
                                     placeholder="Search by filename…"
-                                    className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-[44px]"
+                                    className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-11"
                                 />
                             </div>
                             <button
@@ -567,7 +567,7 @@ function MemberDetailContent() {
                                     setDocQ(docSearchInput.trim());
                                     setDocPage(1);
                                 }}
-                                className="btn-gradient rounded-xl px-5 text-sm h-[44px]"
+                                className="btn-gradient rounded-xl px-5 text-sm h-11"
                             >
                                 Search
                             </button>

@@ -7,6 +7,8 @@ export interface IDepartment extends Document {
     slug: string;
     description?: string;
     allowedDocumentTypes: string[];
+    /** Subset of org plan agents; empty = department may use all org plan agents */
+    allowedAgents: string[];
     status: 'active' | 'inactive';
     createdBy: string;
     createdAt: Date;
@@ -21,6 +23,7 @@ const DepartmentSchema = new Schema<IDepartment>(
         slug: { type: String, required: true },
         description: { type: String, default: '' },
         allowedDocumentTypes: { type: [String], default: [] },
+        allowedAgents: { type: [String], default: [] },
         status: { type: String, enum: ['active', 'inactive'], default: 'active' },
         createdBy: { type: String, required: true },
     },

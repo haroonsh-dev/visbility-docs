@@ -30,7 +30,6 @@ import { Badge, PageHeader } from "@/components/ui";
 import { apiRequest } from "@/lib/apiClient";
 import { downloadDashboardReport } from "@/lib/dashboardExport";
 import { usePermissions } from "@/context/PermissionsContext";
-import { getStoredUser } from "@/lib/authSession";
 
 type DashboardData = {
     stats: { total: number; processed: number; processing: number; failed: number };
@@ -78,8 +77,14 @@ const fadeUp = {
 
 function DashboardContent() {
     const { role, ready, canAccessPage, user: contextUser } = usePermissions();
-    const storedUser = getStoredUser<{ userId?: string; fullName?: string }>();
     const isAdminView = role === "admin" || role === "superAdmin";
+    const userId =
+        typeof contextUser?.userId === "string" ? (contextUser.userId as string) : undefined;
+    // Only personalize after PermissionsContext is ready (post-mount) to avoid SSR/client mismatch
+    const displayName =
+        ready && typeof contextUser?.fullName === "string"
+            ? (contextUser.fullName as string)
+            : undefined;
     const [data, setData] = useState<DashboardData>({
         stats: { total: 0, processed: 0, processing: 0, failed: 0 },
         trendData: [],
@@ -187,21 +192,20 @@ function DashboardContent() {
                 sortOrder: "desc",
                 withDuplicates: "false",
             });
-            if (!isAdminView && storedUser?.userId) {
-                params.set("uploadedBy", storedUser.userId);
+            if (!isAdminView && userId) {
+                params.set("uploadedBy", userId);
             }
             const activityParams = new URLSearchParams({ page: "1", limit: "8" });
-            if (!isAdminView && storedUser?.userId) {
-                activityParams.set("actorUserId", storedUser.userId);
+            if (!isAdminView && userId) {
+                activityParams.set("actorUserId", userId);
             }
 
             const isSuperAdmin = role === "superAdmin";
 
-            const [docsRes, deptRes, activityRes, meRes, superAdminRes] = await Promise.all([
+            const [docsRes, deptRes, activityRes, superAdminRes] = await Promise.all([
                 apiRequest(`/docs/documents?${params}`),
                 isAdminView ? apiRequest(`/docs/departments`).catch(() => null) : Promise.resolve(null),
                 apiRequest(`/docs/activity?${activityParams}`).catch(() => null),
-                !isAdminView ? apiRequest("/auth/me").catch(() => null) : Promise.resolve(null),
                 isSuperAdmin ? apiRequest("/docs/super-admin/admins").catch(() => null) : Promise.resolve(null),
             ]);
             const docs = docsRes?.data?.documents || [];
@@ -212,20 +216,6 @@ function DashboardContent() {
                 setAdminsData(superAdminRes.data.admins);
             }
 
-            if (!isAdminView) {
-                const freshUser = meRes?.data?.user;
-                setTeamIdentity(
-                    freshUser
-                        ? {
-                              fullName: freshUser.fullName,
-                              department: freshUser.department || null,
-                              orgRole: freshUser.orgRole || null,
-                          }
-                        : null
-                );
-            } else {
-                setTeamIdentity(null);
-            }
             const departmentNames: Record<string, string> = {};
             if (Array.isArray(departments)) {
                 for (const d of departments) {
@@ -245,7 +235,7 @@ function DashboardContent() {
         } finally {
             setLoading(false);
         }
-    }, [ready, isAdminView, role, storedUser?.userId, buildData]);
+    }, [ready, isAdminView, role, userId, buildData]);
 
     useEffect(() => {
         if (!ready || loading) return;
@@ -286,7 +276,7 @@ function DashboardContent() {
                     subtitle={
                         isAdminView
                             ? "Organization-wide document intelligence and workspace activity."
-                            : `Your documents, processing progress, and recent activity${storedUser?.fullName ? `, ${storedUser.fullName}` : ""}.`
+                            : `Your documents, processing progress, and recent activity${displayName ? `, ${displayName}` : ""}.`
                     }
                     actions={
                         <div className="flex flex-wrap gap-2">
@@ -322,7 +312,7 @@ function DashboardContent() {
                 <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-red-50 text-rose-700 px-5 py-4 text-sm flex items-center gap-3"
+                    className="rounded-2xl border border-rose-200 bg-linear-to-r from-rose-50 to-red-50 text-rose-700 px-5 py-4 text-sm flex items-center gap-3"
                 >
                     <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
                         <span className="text-rose-600 text-lg">⚠</span>
@@ -338,9 +328,9 @@ function DashboardContent() {
                     transition={{ delay: 0.05, duration: 0.4 }}
                     className="surface-card overflow-hidden border border-teal-500/20 shadow-xl"
                 >
-                    <div className="p-5 sm:p-6 border-b border-white/[0.08] bg-gradient-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex flex-wrap items-center justify-between gap-4">
+                    <div className="p-5 sm:p-6 border-b border-white/8 bg-linear-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex flex-wrap items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-md">
+                            <div className="h-11 w-11 rounded-xl bg-linear-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-md">
                                 <Building2 size={22} />
                             </div>
                             <div>
@@ -401,7 +391,7 @@ function DashboardContent() {
                                                 className={`cursor-pointer transition-all ${
                                                     isSelected
                                                         ? "bg-teal-500/15 dark:bg-teal-500/20 font-semibold"
-                                                        : "hover:bg-teal-500/[0.06]"
+                                                        : "hover:bg-teal-500/6"
                                                 }`}
                                                 title="Click to view company details"
                                             >
@@ -472,9 +462,9 @@ function DashboardContent() {
                             className="bg-slate-900 border border-teal-500/30 text-slate-100 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden relative"
                         >
                             {/* Modal Header */}
-                            <div className="p-5 border-b border-white/10 bg-gradient-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex items-center justify-between">
+                            <div className="p-5 border-b border-white/10 bg-linear-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-lg font-bold">
+                                    <div className="w-12 h-12 rounded-xl bg-linear-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-lg font-bold">
                                         <Building2 size={24} />
                                     </div>
                                     <div>
@@ -632,9 +622,9 @@ function DashboardContent() {
                 >
                     {teamIdentity?.department ? (
                         <div className="relative p-5 sm:p-6">
-                            <div className="absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b from-teal-500 to-cyan-500" />
+                            <div className="absolute inset-y-0 left-0 w-1.5 bg-linear-to-b from-teal-500 to-cyan-500" />
                             <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-5">
-                                <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
+                                <div className="h-14 w-14 rounded-2xl bg-linear-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
                                     <Building2 size={24} />
                                 </div>
                                 <div className="min-w-0 flex-1">
@@ -709,7 +699,7 @@ function DashboardContent() {
                 <motion.div
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="p-4 rounded-2xl bg-gradient-to-r from-teal-500/15 via-cyan-500/10 to-teal-500/5 border border-teal-500/30 flex flex-wrap items-center justify-between gap-3 shadow-md"
+                    className="p-4 rounded-2xl bg-linear-to-r from-teal-500/15 via-cyan-500/10 to-teal-500/5 border border-teal-500/30 flex flex-wrap items-center justify-between gap-3 shadow-md"
                 >
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/30">
@@ -798,7 +788,7 @@ function DashboardContent() {
                         <motion.div key={item.href} variants={fadeUp}>
                             <Link href={item.href} className="action-card group block h-full">
                                 <div
-                                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${item.gradient} flex items-center justify-center shrink-0 shadow-lg ${item.shadow} group-hover:scale-110 transition-transform duration-300`}
+                                    className={`w-12 h-12 rounded-xl bg-linear-to-br ${item.gradient} flex items-center justify-center shrink-0 shadow-lg ${item.shadow} group-hover:scale-110 transition-transform duration-300`}
                                 >
                                     <item.icon size={22} className="text-white" />
                                 </div>

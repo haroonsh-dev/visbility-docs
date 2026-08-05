@@ -8,7 +8,8 @@ import DocumentShare from '../models/DocumentShare';
 import User from '../models/User';
 import { PERMISSIONS, ORG_ROLE_EDITABLE_PERMISSIONS } from '../types/permissions';
 import { hasPermission, loadUserDeptContext, canAccessDocument, canSuperviseUser, listSupervisableUserIds } from '../services/accessScope';
-import { KNOWN_DOCUMENT_TYPES, normalizeDocumentType } from '../services/documentStorage';
+import { documentTypesForAgents, normalizeDocumentTypesToOrgPlan } from '../services/documentStorage';
+import { getOrgEntitlement, normalizeAgentsToOrgPlan } from '../services/planService';
 import { recordActivityFromReq } from '../services/activityLog';
 import { ensureDefaultOrgRoles } from '../services/orgRoleSeed';
 import { permissionsToPlain, applyOrgRolePermissions, resetToDefaultTeamPermissions } from '../utils/permissionsUtil';
@@ -86,14 +87,31 @@ export const listDepartments = async (req: Request, res: Response, next: NextFun
         ]);
         const countMap = Object.fromEntries(memberCounts.map((m) => [m._id, m.count]));
 
+        // Org hub only offers document types / agents included in the org plan
+        const orgEntitlement = orgId
+            ? await getOrgEntitlement(orgId)
+            : { agentIds: [] as string[] };
+        const orgAgentIds = orgEntitlement.agentIds?.length
+            ? orgEntitlement.agentIds
+            : ['other_agent'];
+        const planDocumentTypes = documentTypesForAgents(orgAgentIds);
+
         res.json({
             success: true,
             data: {
                 departments: departments.map((d) => ({
                     ...d,
                     memberCount: countMap[d.departmentId] || 0,
+                    // Surface only agents still on the org plan (stale ids hidden)
+                    allowedAgents: (d.allowedAgents || []).filter((a: string) =>
+                        orgAgentIds.includes(a)
+                    ),
+                    allowedDocumentTypes: (d.allowedDocumentTypes || []).filter((t: string) =>
+                        planDocumentTypes.includes(t)
+                    ),
                 })),
-                knownDocumentTypes: Array.from(KNOWN_DOCUMENT_TYPES),
+                knownDocumentTypes: planDocumentTypes,
+                orgAgentIds,
             },
         });
     } catch (error) {
@@ -111,21 +129,25 @@ export const createDepartment = async (req: Request, res: Response, next: NextFu
             return res.status(400).json({ success: false, message: 'organizationId required' });
         }
 
-        const { name, description, allowedDocumentTypes } = req.body || {};
+        const { name, description, allowedDocumentTypes, allowedAgents } = req.body || {};
         if (!name || !String(name).trim()) {
             return res.status(400).json({ success: false, message: 'name is required' });
         }
 
         await ensureDefaultOrgRoles(orgId);
 
+        const orgEntitlement = await getOrgEntitlement(orgId);
+        const deptAgentIds = normalizeAgentsToOrgPlan(allowedAgents, orgEntitlement.agentIds);
+
         const departmentId = `dept_${uuidv4()}`;
         let slug = slugify(String(name));
         const existingSlug = await Department.findOne({ organizationId: orgId, slug });
         if (existingSlug) slug = `${slug}-${Date.now().toString(36)}`;
 
-        const types = Array.isArray(allowedDocumentTypes)
-            ? allowedDocumentTypes.map((t: string) => normalizeDocumentType(t))
-            : [];
+        const types = normalizeDocumentTypesToOrgPlan(
+            allowedDocumentTypes,
+            orgEntitlement.agentIds
+        );
 
         const dept = await Department.create({
             departmentId,
@@ -134,6 +156,7 @@ export const createDepartment = async (req: Request, res: Response, next: NextFu
             slug,
             description: description ? String(description) : '',
             allowedDocumentTypes: types,
+            allowedAgents: deptAgentIds,
             createdBy: req.user.userId,
         });
 
@@ -163,11 +186,20 @@ export const updateDepartment = async (req: Request, res: Response, next: NextFu
             return res.status(403).json({ success: false, message: 'Forbidden' });
         }
 
-        const { name, description, allowedDocumentTypes, status } = req.body || {};
+        const { name, description, allowedDocumentTypes, allowedAgents, status } = req.body || {};
         if (name) dept.name = String(name).trim();
         if (description !== undefined) dept.description = String(description);
-        if (Array.isArray(allowedDocumentTypes)) {
-            dept.allowedDocumentTypes = allowedDocumentTypes.map((t: string) => normalizeDocumentType(t));
+        if (Array.isArray(allowedDocumentTypes) || allowedAgents !== undefined) {
+            const orgEntitlement = await getOrgEntitlement(dept.organizationId);
+            if (Array.isArray(allowedDocumentTypes)) {
+                dept.allowedDocumentTypes = normalizeDocumentTypesToOrgPlan(
+                    allowedDocumentTypes,
+                    orgEntitlement.agentIds
+                );
+            }
+            if (allowedAgents !== undefined) {
+                dept.allowedAgents = normalizeAgentsToOrgPlan(allowedAgents, orgEntitlement.agentIds);
+            }
         }
         if (status === 'active' || status === 'inactive') dept.status = status;
         await dept.save();

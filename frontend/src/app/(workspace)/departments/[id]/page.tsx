@@ -13,7 +13,8 @@ import { PageHeader, EmptyState } from "@/components/ui";
 import { usePermissions } from "@/context/PermissionsContext";
 import { apiRequest } from "@/lib/apiClient";
 import { getStoredUser } from "@/lib/authSession";
-import { AGENT_FILTER_OPTIONS, agentLabel, resolveDocAgent, DOC_TYPE_FILTER_OPTIONS } from "@/lib/documentAgents";
+import { agentLabel, resolveDocAgent, filterAgentFilterOptions, filterDocTypeFilterOptions } from "@/lib/documentAgents";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { getFileTypeLabel } from "@/lib/fileValidation";
 
 type Overview = {
@@ -110,6 +111,9 @@ function DepartmentContent() {
     const params = useParams();
     const departmentId = String(params?.id || "");
     const { canViewDocs, canDeleteDocs, canShareDocs } = usePermissions();
+    const { allowedIds } = usePlanAgents();
+    const agentFilterOptions = filterAgentFilterOptions(allowedIds);
+    const typeFilterOptions = filterDocTypeFilterOptions(allowedIds);
     const me = getStoredUser<{ userId?: string; orgRole?: { isLeader?: boolean } }>();
 
     const [overview, setOverview] = useState<Overview | null>(null);
@@ -205,7 +209,7 @@ function DepartmentContent() {
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }} className="surface-card overflow-hidden">
                     <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
+                            <div className="w-9 h-9 rounded-xl bg-linear-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
                                 <Activity size={16} className="text-white" />
                             </div>
                             <div>
@@ -234,7 +238,7 @@ function DepartmentContent() {
                                         href={`/departments/${departmentId}/members/${m.userId}`}
                                         className="px-4 sm:px-5 py-4 flex items-center gap-3 hover:bg-slate-50/70 transition-colors"
                                     >
-                                        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-teal-500/15 to-cyan-500/15 text-teal-700 flex items-center justify-center text-sm font-bold shrink-0 border border-teal-100">
+                                        <div className="h-10 w-10 rounded-xl bg-linear-to-br from-teal-500/15 to-cyan-500/15 text-teal-700 flex items-center justify-center text-sm font-bold shrink-0 border border-teal-100">
                                             {initials}
                                         </div>
                                         <div className="min-w-0 flex-1">
@@ -273,7 +277,7 @@ function DepartmentContent() {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="surface-card">
                 <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20"><FileText size={16} className="text-white" /></div>
+                        <div className="w-9 h-9 rounded-xl bg-linear-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20"><FileText size={16} className="text-white" /></div>
                         <div>
                             <h2 className="text-sm font-bold text-slate-800">Department Documents</h2>
                             <p className="text-[11px] text-slate-400">All files uploaded by this department</p>
@@ -287,11 +291,11 @@ function DepartmentContent() {
                         <div className="flex flex-col sm:flex-row gap-2 sm:items-stretch">
                             <div className="relative flex-1 min-w-0">
                                 <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
-                                <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applySearch()} placeholder="Search by filename…" className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-[44px]" />
+                                <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applySearch()} placeholder="Search by filename…" className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-11" />
                             </div>
-                            <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-[44px] shrink-0 sm:w-auto w-full">Search</button>
+                            <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-11 shrink-0 sm:w-auto w-full">Search</button>
                             <button type="button" onClick={() => setFiltersOpen((v) => !v)}
-                                className={`rounded-xl px-4 text-sm font-medium h-[44px] shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-teal-50 border-teal-200 text-teal-700" : "btn-secondary"}`}
+                                className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-teal-50 border-teal-200 text-teal-700" : "btn-secondary"}`}
                                 aria-expanded={filtersOpen}>
                                 <Filter size={15} /> Filters
                                 {hasActiveFilters && <span className="h-5 min-w-5 px-1 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center">{[scoreFilter, agentFilter, scopeFilter, typeFilter, sortPreset !== "newest"].filter(Boolean).length}</span>}
@@ -300,10 +304,10 @@ function DepartmentContent() {
                         {filtersOpen && (
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1 animate-fade-in-up">
                                 <FilterSelect label="Scope" value={scopeFilter} onChange={(v) => { setScopeFilter(v); setPage(1); }} options={[{ value: "", label: "All scopes" }, { value: "department", label: "Department" }, { value: "personal", label: "Personal" }]} minWidth="w-full" />
-                                <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={DOC_TYPE_FILTER_OPTIONS} minWidth="w-full" />
+                                <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={typeFilterOptions} minWidth="w-full" />
                                 <FilterSelect label="Score" value={scoreFilter} onChange={(v) => { setScoreFilter(v); setPage(1); }} options={SCORE_FILTER_OPTIONS} minWidth="w-full" />
                                 <FilterSelect label="Sort" value={sortPreset} onChange={(v) => { setSortPreset(v); setPage(1); }} options={SORT_PRESETS.map((s) => ({ value: s.value, label: s.label }))} minWidth="w-full" />
-                                <FilterSelect label="Agent" value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={AGENT_FILTER_OPTIONS} minWidth="w-full" />
+                                <FilterSelect label="Agent" value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={agentFilterOptions} minWidth="w-full" />
                             </div>
                         )}
                     </div>

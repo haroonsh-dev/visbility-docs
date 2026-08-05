@@ -85,9 +85,21 @@ async function syncStatusFromAiDocument(
             doc.metadata = { ...(doc.metadata || {}), cvScore: Number(aiDoc.cv_score) };
         }
         if (aiDoc.phase3_agent) {
+            const naturalAgent =
+                aiDoc.natural_agent != null
+                    ? String(aiDoc.natural_agent)
+                    : undefined;
+            const agentClamped =
+                aiDoc.agent_clamped === true ||
+                aiDoc.agent_clamped === 1 ||
+                aiDoc.agent_clamped === '1' ||
+                (naturalAgent != null &&
+                    naturalAgent !== String(aiDoc.phase3_agent));
             doc.metadata = {
                 ...(doc.metadata || {}),
                 phase3Agent: String(aiDoc.phase3_agent),
+                ...(naturalAgent ? { naturalAgent } : {}),
+                agentClamped: !!agentClamped,
             };
         }
     } else if (pyStatus) {

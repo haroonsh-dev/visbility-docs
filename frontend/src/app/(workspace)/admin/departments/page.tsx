@@ -16,12 +16,15 @@ import {
     UserX,
     Users,
     FileType,
+    Bot,
     ChevronRight,
     X,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { Badge, Button, EmptyState, PageHeader } from "@/components/ui";
 import { apiRequest } from "@/lib/apiClient";
+import { agentLabel, docTypeLabel, docTypesForAgents, skillsForAgents } from "@/lib/documentAgents";
+import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { cn } from "@/lib/utils";
 
 type Department = {
@@ -30,6 +33,7 @@ type Department = {
     slug: string;
     description?: string;
     allowedDocumentTypes: string[];
+    allowedAgents?: string[];
     memberCount?: number;
 };
 
@@ -54,14 +58,14 @@ type Member = {
 
 const ROLE_PAGE_LABELS: { key: string; label: string; hint: string }[] = [
     { key: "page.dashboard", label: "Dashboard", hint: "Home overview page" },
-    { key: "page.documents", label: "Documents", hint: "Document library page" },
-    { key: "page.chat", label: "AI Chat", hint: "Chat page (also needs Chat permission)" },
-    { key: "page.activity", label: "Activity", hint: "Activity log page" },
+    { key: "page.documents", label: "Document Vault", hint: "Document library page" },
+    { key: "page.chat", label: "AI Assistant", hint: "Chat page (also needs Chat permission)" },
+    { key: "page.activity", label: "System Activity", hint: "Activity log page" },
     { key: "page.departments", label: "Department pages", hint: "Department overview under Documents" },
-    { key: "page.plans", label: "Plans", hint: "Subscription and plans page" },
-    { key: "page.email_reports", label: "Email reports", hint: "Scheduled email report settings" },
-    { key: "page.integrations", label: "Integrations", hint: "Third-party integrations page" },
-    { key: "page.settings", label: "AI Settings", hint: "AI configuration and settings page" },
+    { key: "page.plans", label: "Subscriptions & Billing", hint: "Subscription and plans page" },
+    { key: "page.email_reports", label: "Automated Reports", hint: "Scheduled email report settings" },
+    { key: "page.integrations", label: "API & Webhooks", hint: "Third-party integrations page" },
+    { key: "page.settings", label: "AI Engine Config", hint: "AI configuration and settings page" },
 ];
 
 const ROLE_FEATURE_LABELS: { key: string; label: string; hint: string }[] = [
@@ -90,26 +94,8 @@ function rankBadgeLabel(rank?: number, isLeader?: boolean) {
     return null;
 }
 
-const DOC_TYPE_LABELS: Record<string, string> = {
-    resume: "Resume / CV",
-    hr_document: "HR document",
-    invoice: "Invoice",
-    purchase_order: "Purchase order",
-    quotation: "Quotation",
-    financial_statement: "Financial statement",
-    contract: "Contract",
-    transcript: "Transcript",
-    audit_report: "Audit report",
-    quality_report: "Quality report",
-    certificate: "Certificate",
-    sop: "SOP",
-    maintenance_report: "Maintenance report",
-    engineering_drawing: "Engineering drawing",
-    other: "Other",
-};
-
 function typeLabel(t: string) {
-    return DOC_TYPE_LABELS[t] || t.replace(/_/g, " ");
+    return docTypeLabel(t);
 }
 
 function defaultPerms(): Record<string, boolean> {
@@ -135,7 +121,7 @@ function permsFromRole(r: OrgRole): Record<string, boolean> {
 }
 
 function fieldClass() {
-    return "w-full h-11 px-3.5 rounded-[var(--radius-md)] text-sm bg-[var(--surface-2)] border border-[var(--border)] text-[var(--foreground)] placeholder:text-[var(--foreground-muted)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[rgba(45,212,191,0.2)] transition-shadow";
+    return "w-full h-11 px-3.5 rounded-md text-sm bg-surface-2 border border-border text-foreground placeholder:text-foreground-muted outline-none focus:border-accent focus:ring-2 focus:ring-[rgba(45,212,191,0.2)] transition-shadow";
 }
 
 function DocTypePicker({
@@ -157,16 +143,16 @@ function DocTypePicker({
                         type="button"
                         onClick={() => onToggle(t)}
                         className={cn(
-                            "flex items-center gap-2 text-left px-3 py-2.5 rounded-[var(--radius-md)] border text-xs font-medium transition-colors",
+                            "flex items-center gap-2 text-left px-3 py-2.5 rounded-md border text-xs font-medium transition-colors",
                             on
-                                ? "border-[rgba(45,212,191,0.4)] bg-[var(--accent-muted)] text-[var(--accent)]"
-                                : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--foreground-secondary)] hover:border-[var(--border-strong)]"
+                                ? "border-[rgba(45,212,191,0.4)] bg-accent-muted text-accent"
+                                : "border-border bg-surface-2 text-foreground-secondary hover:border-border-strong"
                         )}
                     >
                         <span
                             className={cn(
                                 "h-4 w-4 rounded shrink-0 flex items-center justify-center border",
-                                on ? "bg-[var(--accent)] border-[var(--accent)] text-[#042f2e]" : "border-[var(--border-strong)]"
+                                on ? "bg-accent border-accent text-[#042f2e]" : "border-border-strong"
                             )}
                         >
                             {on && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -175,6 +161,131 @@ function DocTypePicker({
                     </button>
                 );
             })}
+        </div>
+    );
+}
+
+function AgentPicker({
+    orgAgentIds,
+    selected,
+    onToggle,
+}: {
+    orgAgentIds: string[];
+    selected: string[];
+    onToggle: (id: string) => void;
+}) {
+    const planSkills = skillsForAgents(orgAgentIds);
+    if (!planSkills.length) {
+        return (
+            <p className="text-xs text-foreground-muted">
+                No agents on your organization plan yet.{" "}
+                <Link href="/plans" className="text-accent font-semibold underline-offset-2 hover:underline">
+                    Request a plan
+                </Link>{" "}
+                (e.g. Finance) and have super admin approve it — then assign that agent to this department&apos;s
+                team.
+            </p>
+        );
+    }
+    return (
+        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+            {planSkills.map((a) => {
+                const on = selected.includes(a.agentId);
+                return (
+                    <button
+                        key={a.agentId}
+                        type="button"
+                        onClick={() => onToggle(a.agentId)}
+                        className={cn(
+                            "w-full text-left px-3 py-2.5 rounded-md border transition-colors",
+                            on
+                                ? "border-[rgba(45,212,191,0.4)] bg-accent-muted"
+                                : "border-border bg-surface-2 hover:border-border-strong"
+                        )}
+                    >
+                        <div className="flex items-center gap-2">
+                            <span
+                                className={cn(
+                                    "h-4 w-4 rounded shrink-0 flex items-center justify-center border",
+                                    on ? "bg-accent border-accent text-[#042f2e]" : "border-border-strong"
+                                )}
+                            >
+                                {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                            </span>
+                            <span className={cn("text-xs font-semibold", on ? "text-accent" : "text-foreground")}>
+                                {a.label}
+                            </span>
+                        </div>
+                        {!!a.skills.length && (
+                            <p className="mt-1.5 pl-6 text-[10px] text-foreground-muted leading-relaxed">
+                                Skills: {a.skills.slice(0, 4).join(" · ")}
+                                {a.skills.length > 4 ? ` · +${a.skills.length - 4} more` : ""}
+                            </p>
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+function PlanAgentsSkillsPanel({ orgAgentIds }: { orgAgentIds: string[] }) {
+    const planSkills = skillsForAgents(orgAgentIds);
+    const typeCount = docTypesForAgents(orgAgentIds).length;
+
+    return (
+        <div className="surface-card p-5 space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                        <Bot className="h-4 w-4 text-accent" />
+                        Your organization plan
+                    </h3>
+                    <p className="text-xs text-foreground-muted mt-1">
+                        Departments can only use these agents and skills. Document types below are limited to this
+                        plan.
+                    </p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Badge variant="accent">{planSkills.length} agents</Badge>
+                    <Badge variant="muted">{typeCount} doc types</Badge>
+                    <Link
+                        href="/plans"
+                        className="text-[11px] font-semibold text-accent hover:underline underline-offset-2"
+                    >
+                        Manage plan →
+                    </Link>
+                </div>
+            </div>
+
+            {!planSkills.length ? (
+                <p className="text-xs text-foreground-muted">
+                    No agents on your plan yet. Request agents from Subscriptions &amp; Billing — once super admin
+                    approves, they appear here for department assignment.
+                </p>
+            ) : (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {planSkills.map((a) => (
+                        <div
+                            key={a.agentId}
+                            className="rounded-md border border-border bg-surface-2 p-3 space-y-2"
+                        >
+                            <p className="text-xs font-semibold text-foreground">{a.label}</p>
+                            <ul className="space-y-1">
+                                {a.skills.map((s) => (
+                                    <li
+                                        key={s}
+                                        className="text-[10px] text-foreground-muted flex items-start gap-1.5"
+                                    >
+                                        <Check className="h-3 w-3 text-accent shrink-0 mt-0.5" />
+                                        <span>{s}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -194,15 +305,15 @@ function PermPicker({
                 <label
                     key={p.key}
                     className={cn(
-                        "flex items-start gap-3 p-3 rounded-[var(--radius-md)] border cursor-pointer transition-colors",
+                        "flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors",
                         permissions[p.key]
-                            ? "border-[rgba(45,212,191,0.35)] bg-[var(--accent-muted)]"
-                            : "border-[var(--border)] bg-[var(--surface-2)] hover:border-[var(--border-strong)]"
+                            ? "border-[rgba(45,212,191,0.35)] bg-accent-muted"
+                            : "border-border bg-surface-2 hover:border-border-strong"
                     )}
                 >
                     <input
                         type="checkbox"
-                        className="mt-0.5 accent-[var(--accent)]"
+                        className="mt-0.5 accent-accent"
                         checked={!!permissions[p.key]}
                         onChange={(e) =>
                             onChange({
@@ -214,8 +325,8 @@ function PermPicker({
                         }
                     />
                     <span>
-                        <span className="block text-xs font-semibold text-[var(--foreground)]">{p.label}</span>
-                        <span className="block text-[10px] text-[var(--foreground-muted)] mt-0.5">{p.hint}</span>
+                        <span className="block text-xs font-semibold text-foreground">{p.label}</span>
+                        <span className="block text-[10px] text-foreground-muted mt-0.5">{p.hint}</span>
                     </span>
                 </label>
             ))}
@@ -225,6 +336,8 @@ function PermPicker({
 
 function DepartmentsAdminContent() {
     const { showToast } = useToast();
+    const { orgAgentOptions, orgAllowedIds } = usePlanAgents();
+    const orgPlanAgentIds = orgAllowedIds || orgAgentOptions.map((o) => o.value);
     const [tab, setTab] = useState<"departments" | "roles" | "members">("departments");
     const [departments, setDepartments] = useState<Department[]>([]);
     const [roles, setRoles] = useState<OrgRole[]>([]);
@@ -233,11 +346,23 @@ function DepartmentsAdminContent() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
+    const planScopedTypes = useMemo(() => {
+        const fromPlan = docTypesForAgents(orgPlanAgentIds);
+        if (!knownTypes.length) return fromPlan;
+        const planSet = new Set(fromPlan);
+        return knownTypes.filter((t) => planSet.has(t));
+    }, [knownTypes, orgPlanAgentIds]);
+
     const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
     const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
     const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
 
-    const [deptForm, setDeptForm] = useState({ name: "", description: "", types: [] as string[] });
+    const [deptForm, setDeptForm] = useState({
+        name: "",
+        description: "",
+        types: [] as string[],
+        agents: [] as string[],
+    });
     const [roleForm, setRoleForm] = useState({
         name: "",
         description: "",
@@ -262,7 +387,14 @@ function DepartmentsAdminContent() {
                 apiRequest("/docs/team/members").catch(() => ({ data: { members: [] } })),
             ]);
             setDepartments(deptRes?.data?.departments || []);
-            setKnownTypes(deptRes?.data?.knownDocumentTypes || []);
+            const apiTypes: string[] = deptRes?.data?.knownDocumentTypes || [];
+            const apiAgents: string[] | undefined = deptRes?.data?.orgAgentIds;
+            // Prefer API plan-scoped types; fall back to client filter from subscription
+            setKnownTypes(
+                apiTypes.length
+                    ? apiTypes
+                    : docTypesForAgents(apiAgents?.length ? apiAgents : orgPlanAgentIds)
+            );
             setRoles(roleRes?.data?.roles || []);
             setTeamMembers(teamRes?.data?.members || []);
         } catch (e: any) {
@@ -270,7 +402,7 @@ function DepartmentsAdminContent() {
         } finally {
             setLoading(false);
         }
-    }, [showToast]);
+    }, [showToast, orgPlanAgentIds]);
 
     useEffect(() => {
         load();
@@ -287,7 +419,7 @@ function DepartmentsAdminContent() {
 
     const resetDeptForm = () => {
         setEditingDeptId(null);
-        setDeptForm({ name: "", description: "", types: [] });
+        setDeptForm({ name: "", description: "", types: [], agents: [] });
     };
     const resetRoleForm = () => {
         setEditingRoleId(null);
@@ -304,6 +436,7 @@ function DepartmentsAdminContent() {
             name: d.name,
             description: d.description || "",
             types: [...(d.allowedDocumentTypes || [])],
+            agents: [...(d.allowedAgents || [])],
         });
         setTab("departments");
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -347,6 +480,7 @@ function DepartmentsAdminContent() {
                 name: deptForm.name,
                 description: deptForm.description,
                 allowedDocumentTypes: deptForm.types,
+                allowedAgents: deptForm.agents,
             };
             if (editingDeptId) {
                 await apiRequest(`/docs/departments/${editingDeptId}`, {
@@ -546,8 +680,15 @@ function DepartmentsAdminContent() {
         }));
     };
 
+    const toggleAgent = (id: string) => {
+        setDeptForm((f) => ({
+            ...f,
+            agents: f.agents.includes(id) ? f.agents.filter((x) => x !== id) : [...f.agents, id],
+        }));
+    };
+
     const tabs = [
-        { id: "departments" as const, label: "Departments", icon: Building2, desc: "Units & document types" },
+        { id: "departments" as const, label: "Departments", icon: Building2, desc: "Units, types & AI agents" },
         { id: "roles" as const, label: "Roles", icon: Shield, desc: "Permissions" },
         { id: "members" as const, label: "Members", icon: Users, desc: "People & assignments" },
     ];
@@ -574,26 +715,26 @@ function DepartmentsAdminContent() {
                             type="button"
                             onClick={() => setTab(t.id)}
                             className={cn(
-                                "text-left rounded-[var(--radius-xl)] border p-4 transition-all duration-200",
+                                "text-left rounded-xl border p-4 transition-all duration-200",
                                 active
-                                    ? "border-[rgba(45,212,191,0.45)] bg-[var(--accent-muted)] shadow-[0_0_0_1px_rgba(45,212,191,0.15)]"
-                                    : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--border-strong)]"
+                                    ? "border-[rgba(45,212,191,0.45)] bg-accent-muted shadow-[0_0_0_1px_rgba(45,212,191,0.15)]"
+                                    : "border-border bg-surface hover:border-border-strong"
                             )}
                         >
                             <div className="flex items-center gap-3">
                                 <span
                                     className={cn(
-                                        "h-10 w-10 rounded-[var(--radius-md)] flex items-center justify-center",
+                                        "h-10 w-10 rounded-md flex items-center justify-center",
                                         active
-                                            ? "bg-[var(--accent)] text-[#042f2e]"
-                                            : "bg-[var(--surface-3)] text-[var(--foreground-muted)]"
+                                            ? "bg-accent text-[#042f2e]"
+                                            : "bg-surface-3 text-foreground-muted"
                                     )}
                                 >
                                     <t.icon className="h-4 w-4" />
                                 </span>
                                 <div>
-                                    <p className="text-sm font-semibold text-[var(--foreground)]">{t.label}</p>
-                                    <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">{t.desc}</p>
+                                    <p className="text-sm font-semibold text-foreground">{t.label}</p>
+                                    <p className="text-[11px] text-foreground-muted mt-0.5">{t.desc}</p>
                                 </div>
                             </div>
                         </button>
@@ -603,20 +744,25 @@ function DepartmentsAdminContent() {
 
             {loading ? (
                 <div className="flex justify-center py-24">
-                    <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
+                    <Loader2 className="h-8 w-8 animate-spin text-accent" />
                 </div>
             ) : (
                 <div className="mt-8">
                     {tab === "departments" && (
-                        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                        <div className="space-y-6">
+                            <PlanAgentsSkillsPanel orgAgentIds={orgPlanAgentIds} />
+                            <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
                             <form onSubmit={saveDepartment} className="surface-card p-6 space-y-5">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <h3 className="text-base font-semibold text-[var(--foreground)]">
+                                        <h3 className="text-base font-semibold text-foreground">
                                             {editingDeptId ? "Update department" : "Create department"}
                                         </h3>
-                                        <p className="text-xs text-[var(--foreground-muted)] mt-1">
-                                            Choose which document types this department manages. Other types go to personal vault.
+                                        <p className="text-xs text-foreground-muted mt-1">
+                                            Document types control department vs personal vault. AI agents control which
+                                            skills the team can use — they only get agents you assign here (subset of the
+                                            org plan). Example: org buys Finance → assign Finance to this department →
+                                            team uses Finance skills only.
                                         </p>
                                     </div>
                                     {editingDeptId && (
@@ -628,7 +774,7 @@ function DepartmentsAdminContent() {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">Name</label>
+                                    <label className="text-xs font-medium text-foreground-secondary">Name</label>
                                     <input
                                         required
                                         placeholder="e.g. HR, Finance, Legal"
@@ -639,7 +785,7 @@ function DepartmentsAdminContent() {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">Description</label>
+                                    <label className="text-xs font-medium text-foreground-secondary">Description</label>
                                     <textarea
                                         placeholder="Optional short description"
                                         value={deptForm.description}
@@ -650,12 +796,38 @@ function DepartmentsAdminContent() {
 
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-2">
-                                        <FileType className="h-3.5 w-3.5 text-[var(--accent)]" />
-                                        <label className="text-xs font-medium text-[var(--foreground-secondary)]">
+                                        <FileType className="h-3.5 w-3.5 text-accent" />
+                                        <label className="text-xs font-medium text-foreground-secondary">
                                             Document types managed
                                         </label>
                                     </div>
-                                    <DocTypePicker knownTypes={knownTypes} selected={deptForm.types} onToggle={toggleType} />
+                                    <DocTypePicker
+                                        knownTypes={planScopedTypes}
+                                        selected={deptForm.types}
+                                        onToggle={toggleType}
+                                    />
+                                    <p className="text-[10px] text-foreground-muted">
+                                        Only document types for agents on your plan are listed. Types decide where files
+                                        live; agents decide which AI skills run.
+                                    </p>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <Bot className="h-3.5 w-3.5 text-accent" />
+                                        <label className="text-xs font-medium text-foreground-secondary">
+                                            AI agents for this department&apos;s team
+                                        </label>
+                                    </div>
+                                    <p className="text-[10px] text-foreground-muted">
+                                        Only agents on your approved org plan are listed. Leave empty to give this team
+                                        every plan agent. Team members cannot use other agents&apos; skills.
+                                    </p>
+                                    <AgentPicker
+                                        orgAgentIds={orgPlanAgentIds}
+                                        selected={deptForm.agents}
+                                        onToggle={toggleAgent}
+                                    />
                                 </div>
 
                                 <Button type="submit" disabled={saving} className="w-full sm:w-auto">
@@ -674,7 +846,7 @@ function DepartmentsAdminContent() {
                             </form>
 
                             <div className="space-y-3">
-                                <h3 className="text-sm font-semibold text-[var(--foreground)] px-1">
+                                <h3 className="text-sm font-semibold text-foreground px-1">
                                     Your departments ({departments.length})
                                 </h3>
                                 {!departments.length ? (
@@ -686,7 +858,7 @@ function DepartmentsAdminContent() {
                                 ) : (
                                     departments.map((d) => (
                                         <div key={d.departmentId} className="surface-card p-4 flex gap-3 items-start group">
-                                            <div className="h-10 w-10 rounded-[var(--radius-md)] bg-[var(--accent-muted)] text-[var(--accent)] flex items-center justify-center shrink-0">
+                                            <div className="h-10 w-10 rounded-md bg-accent-muted text-accent flex items-center justify-center shrink-0">
                                                 <Building2 className="h-4 w-4" />
                                             </div>
                                             <div className="min-w-0 flex-1">
@@ -694,12 +866,12 @@ function DepartmentsAdminContent() {
                                                     <div>
                                                         <Link
                                                             href={`/departments/${d.departmentId}`}
-                                                            className="font-semibold text-[var(--foreground)] hover:text-[var(--accent)] inline-flex items-center gap-1"
+                                                            className="font-semibold text-foreground hover:text-accent inline-flex items-center gap-1"
                                                         >
                                                             {d.name}
                                                             <ChevronRight className="h-3.5 w-3.5 opacity-50" />
                                                         </Link>
-                                                        <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">
+                                                        <p className="text-[11px] text-foreground-muted mt-0.5">
                                                             {d.memberCount || 0} members
                                                             {editingDeptId === d.departmentId ? " · editing" : ""}
                                                         </p>
@@ -708,7 +880,7 @@ function DepartmentsAdminContent() {
                                                         <button
                                                             type="button"
                                                             onClick={() => startEditDept(d)}
-                                                            className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-muted)]"
+                                                            className="p-2 rounded-lg text-foreground-muted hover:text-accent hover:bg-accent-muted"
                                                             aria-label="Edit department"
                                                         >
                                                             <Pencil className="h-4 w-4" />
@@ -716,7 +888,7 @@ function DepartmentsAdminContent() {
                                                         <button
                                                             type="button"
                                                             onClick={() => deleteDepartment(d.departmentId)}
-                                                            className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--error)] hover:bg-[var(--error-muted)]"
+                                                            className="p-2 rounded-lg text-foreground-muted hover:text-error hover:bg-error-muted"
                                                             aria-label="Delete department"
                                                         >
                                                             <Trash2 className="h-4 w-4" />
@@ -734,10 +906,22 @@ function DepartmentsAdminContent() {
                                                         <Badge variant="muted">No types</Badge>
                                                     )}
                                                 </div>
+                                                <div className="flex flex-wrap gap-1.5 mt-2">
+                                                    {(d.allowedAgents || []).length ? (
+                                                        d.allowedAgents!.map((a) => (
+                                                            <Badge key={a} variant="muted">
+                                                                {agentLabel(a)}
+                                                            </Badge>
+                                                        ))
+                                                    ) : (
+                                                        <Badge variant="muted">All plan agents</Badge>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     ))
                                 )}
+                            </div>
                             </div>
                         </div>
                     )}
@@ -747,10 +931,10 @@ function DepartmentsAdminContent() {
                             <form onSubmit={saveRole} className="surface-card p-6 space-y-5">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <h3 className="text-base font-semibold text-[var(--foreground)]">
+                                        <h3 className="text-base font-semibold text-foreground">
                                             {editingRoleId ? "Update role" : "Create role"}
                                         </h3>
-                                        <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                                        <p className="text-xs text-foreground-muted mt-1">
                                             Set permissions for this role. Updates sync to members already using it.
                                         </p>
                                     </div>
@@ -763,7 +947,7 @@ function DepartmentsAdminContent() {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">Role name</label>
+                                    <label className="text-xs font-medium text-foreground-secondary">Role name</label>
                                     <input
                                         required
                                         placeholder="e.g. Team Lead, Recruiter"
@@ -773,7 +957,7 @@ function DepartmentsAdminContent() {
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">Description</label>
+                                    <label className="text-xs font-medium text-foreground-secondary">Description</label>
                                     <input
                                         placeholder="Optional"
                                         value={roleForm.description}
@@ -783,7 +967,7 @@ function DepartmentsAdminContent() {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">
+                                    <label className="text-xs font-medium text-foreground-secondary">
                                         Hierarchy rank
                                     </label>
                                     <select
@@ -804,28 +988,28 @@ function DepartmentsAdminContent() {
                                             </option>
                                         ))}
                                     </select>
-                                    <p className="text-[10px] text-[var(--foreground-muted)]">
+                                    <p className="text-[10px] text-foreground-muted">
                                         Employee (1) → Leader (2) → Manager (3). Higher ranks can get broader page access.
                                     </p>
                                 </div>
 
-                                <label className="flex items-start gap-3 p-3.5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-2)] cursor-pointer">
+                                <label className="flex items-start gap-3 p-3.5 rounded-md border border-border bg-surface-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        className="mt-1 accent-[var(--accent)]"
+                                        className="mt-1 accent-accent"
                                         checked={roleForm.isLeader}
                                         onChange={(e) => setRoleForm({ ...roleForm, isLeader: e.target.checked })}
                                     />
                                     <span>
-                                        <span className="block text-sm font-medium text-[var(--foreground)]">Leader role</span>
-                                        <span className="block text-[11px] text-[var(--foreground-muted)] mt-0.5">
+                                        <span className="block text-sm font-medium text-foreground">Leader role</span>
+                                        <span className="block text-[11px] text-foreground-muted mt-0.5">
                                             Department files stay private to peers until the leader shares them.
                                         </span>
                                     </span>
                                 </label>
 
                                 <div>
-                                    <p className="text-xs font-medium text-[var(--foreground-secondary)] mb-3">
+                                    <p className="text-xs font-medium text-foreground-secondary mb-3">
                                         Pages this role can open
                                     </p>
                                     <PermPicker
@@ -836,7 +1020,7 @@ function DepartmentsAdminContent() {
                                 </div>
 
                                 <div>
-                                    <p className="text-xs font-medium text-[var(--foreground-secondary)] mb-3">
+                                    <p className="text-xs font-medium text-foreground-secondary mb-3">
                                         Feature permissions
                                     </p>
                                     <PermPicker
@@ -862,7 +1046,7 @@ function DepartmentsAdminContent() {
                             </form>
 
                             <div className="space-y-3">
-                                <h3 className="text-sm font-semibold text-[var(--foreground)] px-1">
+                                <h3 className="text-sm font-semibold text-foreground px-1">
                                     Roles ({roles.length})
                                 </h3>
                                 {roles.map((r) => (
@@ -870,7 +1054,7 @@ function DepartmentsAdminContent() {
                                         <div className="flex items-start justify-between gap-2">
                                             <div>
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="font-semibold text-[var(--foreground)]">{r.name}</span>
+                                                    <span className="font-semibold text-foreground">{r.name}</span>
                                                     {rankBadgeLabel(r.rank, r.isLeader) && (
                                                         <Badge variant="accent">
                                                             {rankBadgeLabel(r.rank, r.isLeader)}
@@ -882,7 +1066,7 @@ function DepartmentsAdminContent() {
                                                     {r.isSystem && <Badge variant="muted">Default</Badge>}
                                                     {editingRoleId === r.roleId && <Badge variant="warning">Editing</Badge>}
                                                 </div>
-                                                <p className="text-[11px] text-[var(--foreground-muted)] mt-1">
+                                                <p className="text-[11px] text-foreground-muted mt-1">
                                                     {r.description || "No description"}
                                                 </p>
                                             </div>
@@ -890,7 +1074,7 @@ function DepartmentsAdminContent() {
                                                 <button
                                                     type="button"
                                                     onClick={() => startEditRole(r)}
-                                                    className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-muted)]"
+                                                    className="p-2 rounded-lg text-foreground-muted hover:text-accent hover:bg-accent-muted"
                                                     aria-label="Edit role"
                                                 >
                                                     <Pencil className="h-4 w-4" />
@@ -899,7 +1083,7 @@ function DepartmentsAdminContent() {
                                                     <button
                                                         type="button"
                                                         onClick={() => deleteRole(r.roleId)}
-                                                        className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--error)] hover:bg-[var(--error-muted)]"
+                                                        className="p-2 rounded-lg text-foreground-muted hover:text-error hover:bg-error-muted"
                                                         aria-label="Delete role"
                                                     >
                                                         <Trash2 className="h-4 w-4" />
@@ -925,10 +1109,10 @@ function DepartmentsAdminContent() {
                             <form onSubmit={saveMember} className="surface-card p-6 space-y-5">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <h3 className="text-base font-semibold text-[var(--foreground)]">
+                                        <h3 className="text-base font-semibold text-foreground">
                                             {editingMemberId ? "Update member" : "Add team member"}
                                         </h3>
-                                        <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                                        <p className="text-xs text-foreground-muted mt-1">
                                             {editingMemberId
                                                 ? "Change details, department, role, or password."
                                                 : "Create a person and assign department + role."}
@@ -943,7 +1127,7 @@ function DepartmentsAdminContent() {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">Full name</label>
+                                    <label className="text-xs font-medium text-foreground-secondary">Full name</label>
                                     <input
                                         required
                                         value={memberForm.fullName}
@@ -953,7 +1137,7 @@ function DepartmentsAdminContent() {
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">Email</label>
+                                    <label className="text-xs font-medium text-foreground-secondary">Email</label>
                                     <input
                                         required
                                         type="email"
@@ -964,7 +1148,7 @@ function DepartmentsAdminContent() {
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--foreground-secondary)]">
+                                    <label className="text-xs font-medium text-foreground-secondary">
                                         {editingMemberId ? "New password (optional)" : "Password"}
                                     </label>
                                     <input
@@ -979,7 +1163,7 @@ function DepartmentsAdminContent() {
                                 </div>
                                 <div className="grid sm:grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-[var(--foreground-secondary)]">Department</label>
+                                        <label className="text-xs font-medium text-foreground-secondary">Department</label>
                                         <select
                                             required
                                             value={memberForm.departmentId}
@@ -995,7 +1179,7 @@ function DepartmentsAdminContent() {
                                         </select>
                                     </div>
                                     <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-[var(--foreground-secondary)]">Role</label>
+                                        <label className="text-xs font-medium text-foreground-secondary">Role</label>
                                         <select
                                             required
                                             value={memberForm.orgRoleId}
@@ -1026,7 +1210,7 @@ function DepartmentsAdminContent() {
                                     )}
                                 </Button>
                                 {(!departments.length || !roles.length) && (
-                                    <p className="text-[11px] text-[var(--warning)]">
+                                    <p className="text-[11px] text-(--warning)">
                                         Create at least one department and role first.
                                     </p>
                                 )}
@@ -1034,11 +1218,11 @@ function DepartmentsAdminContent() {
 
                             <div>
                                 <div className="flex items-center justify-between px-1 mb-3">
-                                    <h3 className="text-sm font-semibold text-[var(--foreground)]">
+                                    <h3 className="text-sm font-semibold text-foreground">
                                         Current members ({teamMembers.length})
                                     </h3>
                                     {teamMembers.length > 0 && (
-                                        <div className="flex items-center gap-2 text-[11px] text-[var(--foreground-muted)]">
+                                        <div className="flex items-center gap-2 text-[11px] text-foreground-muted">
                                             <span className="inline-flex items-center gap-1">
                                                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
                                                 {teamMembers.filter((m) => m.status === "active").length} active
@@ -1068,13 +1252,13 @@ function DepartmentsAdminContent() {
                                             : (m.fullName.trim()[0] || "?").toUpperCase();
 
                                         return (
-                                            <div key={m.userId} className="surface-card px-4 py-3 flex items-start gap-3 hover:border-[var(--border-strong)] transition-colors">
+                                            <div key={m.userId} className="surface-card px-4 py-3 flex items-start gap-3 hover:border-border-strong transition-colors">
                                                 <div className={`h-10 w-10 rounded-xl ${colorClass} flex items-center justify-center shrink-0 font-semibold text-sm`}>
                                                     {initials}
                                                 </div>
                                                 <div className="min-w-0 flex-1">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                        <p className="text-sm font-medium text-[var(--foreground)] truncate">
+                                                        <p className="text-sm font-medium text-foreground truncate">
                                                             {m.fullName}
                                                         </p>
                                                         {m.status === "blocked" && <Badge variant="error">Blocked</Badge>}
@@ -1082,7 +1266,7 @@ function DepartmentsAdminContent() {
                                                             <Badge variant="warning">Editing</Badge>
                                                         )}
                                                     </div>
-                                                    <p className="text-[11px] text-[var(--foreground-muted)] truncate">{m.email}</p>
+                                                    <p className="text-[11px] text-foreground-muted truncate">{m.email}</p>
                                                     <div className="flex flex-wrap gap-1.5 mt-2">
                                                         <Badge variant={m.primaryDepartmentId ? "accent" : "muted"}>
                                                             <Building2 size={10} />
@@ -1101,7 +1285,7 @@ function DepartmentsAdminContent() {
                                                     {m.primaryDepartmentId && (
                                                         <Link
                                                             href={`/departments/${m.primaryDepartmentId}/members/${m.userId}`}
-                                                            className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-muted)]"
+                                                            className="p-2 rounded-lg text-foreground-muted hover:text-accent hover:bg-accent-muted"
                                                             title="View employee details"
                                                         >
                                                             <Eye className="h-4 w-4" />
@@ -1110,7 +1294,7 @@ function DepartmentsAdminContent() {
                                                     <button
                                                         type="button"
                                                         onClick={() => startEditMember(m)}
-                                                        className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-muted)]"
+                                                        className="p-2 rounded-lg text-foreground-muted hover:text-accent hover:bg-accent-muted"
                                                         title="Edit"
                                                     >
                                                         <Pencil className="h-4 w-4" />
@@ -1118,7 +1302,7 @@ function DepartmentsAdminContent() {
                                                     <button
                                                         type="button"
                                                         onClick={() => toggleMemberStatus(m)}
-                                                        className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--warning)] hover:bg-[var(--warning-muted)]"
+                                                        className="p-2 rounded-lg text-foreground-muted hover:text-(--warning) hover:bg-(--warning-muted)"
                                                         title={m.status === "blocked" ? "Activate" : "Block"}
                                                     >
                                                         {m.status === "blocked" ? (
@@ -1131,7 +1315,7 @@ function DepartmentsAdminContent() {
                                                         <button
                                                             type="button"
                                                             onClick={() => removeFromDepartment(m)}
-                                                            className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--surface-3)]"
+                                                            className="p-2 rounded-lg text-foreground-muted hover:text-foreground hover:bg-surface-3"
                                                             title="Remove from department"
                                                         >
                                                             <Building2 className="h-4 w-4" />
@@ -1140,7 +1324,7 @@ function DepartmentsAdminContent() {
                                                     <button
                                                         type="button"
                                                         onClick={() => deleteMember(m)}
-                                                        className="p-2 rounded-lg text-[var(--foreground-muted)] hover:text-[var(--error)] hover:bg-[var(--error-muted)]"
+                                                        className="p-2 rounded-lg text-foreground-muted hover:text-error hover:bg-error-muted"
                                                         title="Delete member"
                                                     >
                                                         <Trash2 className="h-4 w-4" />
@@ -1151,7 +1335,7 @@ function DepartmentsAdminContent() {
                                     })}
                                     {!teamMembers.length && (
                                         <EmptyState
-                                            icon={<Users size={24} className="text-[var(--accent)]" />}
+                                            icon={<Users size={24} className="text-accent" />}
                                             title="No members yet"
                                             description="Add team members above to populate this list."
                                         />

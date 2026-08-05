@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import FilterSelect from "@/components/FilterSelect";
 import ClassifyAgentPopup from "@/components/ClassifyAgentPopup";
+import AgentAccessBlockedNotice, { type AgentBlockItem } from "@/components/AgentAccessBlockedNotice";
 import DocumentFolderTree from "@/components/DocumentFolderTree";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
@@ -18,7 +19,7 @@ import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
-import { AGENT_FILTER_OPTIONS, AGENT_OPTIONS, agentLabel, resolveDocAgent, DOC_TYPE_FILTER_OPTIONS } from "@/lib/documentAgents";
+import { AGENT_OPTIONS, agentLabel, resolveDocAgent, DOC_TYPE_LABELS, DOC_TYPE_TO_AGENT, inferDocTypeFromFilename, filterDocTypeFilterOptions } from "@/lib/documentAgents";
 import { ACCEPT_ATTR, filterAllowedFiles, getFileTypeLabel } from "@/lib/fileValidation";
 import { usePermissions } from "@/context/PermissionsContext";
 import { getStoredUser } from "@/lib/authSession";
@@ -30,7 +31,7 @@ type DocItem = {
     departmentId?: string | null; uploaderIsLeader?: boolean; uploadedBy?: string; createdAt: string;
     duplicateCount?: number; isDuplicate?: boolean; pythonDocumentId?: string | null;
     aiProcessingStatus?: string | null; aiErrorMessage?: string | null;
-    metadata?: { phase3Agent?: string; cvScore?: number } | null;
+    metadata?: { phase3Agent?: string; naturalAgent?: string; agentClamped?: boolean; cvScore?: number } | null;
 };
 
 type Pagination = { page: number; limit: number; total: number; totalPages: number };
@@ -118,11 +119,27 @@ function DocumentsContent() {
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
     const { canUpload, canViewDocs, canDeleteDocs, canAccessPage, role } = usePermissions();
-    const { agentOptions } = usePlanAgents();
+    const { agentOptions, isAgentAllowed, allowedIds, loading: agentsLoading } = usePlanAgents();
+    const docTypeFilterOptions = filterDocTypeFilterOptions(allowedIds);
     const preferredAgentOptions = [
         { value: "", label: "Auto (from document type)" },
         ...agentOptions,
     ];
+
+    const fileNeedsForbiddenAgent = useCallback(
+        (filename: string): { blocked: true; agent: string; docType: string } | { blocked: false } => {
+            if (role === "superAdmin") return { blocked: false };
+            // Wait for entitlement — never block while agents are unknown
+            if (agentsLoading || allowedIds === null) return { blocked: false };
+            const docType = inferDocTypeFromFilename(filename);
+            if (!docType) return { blocked: false };
+            const agent = DOC_TYPE_TO_AGENT[docType] || "other_agent";
+            // File maps to an agent you already have → always allow
+            if (allowedIds.includes(agent) || isAgentAllowed(agent)) return { blocked: false };
+            return { blocked: true, agent, docType };
+        },
+        [role, agentsLoading, allowedIds, isAgentAllowed]
+    );
     const me = getStoredUser<{
         userId?: string;
         name?: string;
@@ -146,6 +163,7 @@ function DocumentsContent() {
     const uploading = activeBatches > 0;
     const [dragOver, setDragOver] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [agentBlock, setAgentBlock] = useState<AgentBlockItem[] | null>(null);
     const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
     const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
     const [q, setQ] = useState("");
@@ -254,6 +272,21 @@ function DocumentsContent() {
         } catch (e: any) { setError(e.message || "Failed to save agent"); }
     };
 
+    const handleRejectUploadForAgent = useCallback(
+        async (documentId: string, _reason: string) => {
+            try {
+                await apiRequest(`/docs/documents/${documentId}`, { method: "DELETE" });
+                setClassifyQueue((prev) => prev.filter((p) => p.documentId !== documentId));
+                setToast("Upload removed — that agent isn’t on your access");
+                await load();
+            } catch (e: any) {
+                setClassifyQueue((prev) => prev.filter((p) => p.documentId !== documentId));
+                setError(e.message || "Failed to remove blocked upload");
+            }
+        },
+        [load]
+    );
+
     const filteredDocs = agentFilter ? docs.filter((d) => resolveDocAgent(d) === agentFilter) : docs;
     const processingDocIds = docs.filter((d) => d.status === "processing" || d.status === "uploaded").map((d) => d.documentId);
 
@@ -313,7 +346,33 @@ function DocumentsContent() {
         const { allowed, rejected } = filterAllowedFiles(fileList);
         if (rejected.length) setError(`Rejected unsupported files: ${rejected.join(", ")}`);
         if (!allowed.length) return;
-        setPendingFiles((prev) => [...prev, ...allowed.map((file) => ({ id: `pf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, file }))]);
+
+        const pass: File[] = [];
+        const blockedItems: AgentBlockItem[] = [];
+        for (const file of allowed) {
+            const check = fileNeedsForbiddenAgent(file.name);
+            if (check.blocked) {
+                blockedItems.push({
+                    filename: file.name,
+                    typeLabel: DOC_TYPE_LABELS[check.docType] || check.docType.replace(/_/g, " "),
+                    agentId: check.agent,
+                });
+            } else {
+                pass.push(file);
+            }
+        }
+        if (blockedItems.length) {
+            setError(null);
+            setAgentBlock(blockedItems);
+        }
+        if (!pass.length) return;
+        setPendingFiles((prev) => [
+            ...prev,
+            ...pass.map((file) => ({
+                id: `pf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                file,
+            })),
+        ]);
     };
 
     useEffect(() => {
@@ -346,6 +405,35 @@ function DocumentsContent() {
             for (const pf of batch) {
                 setQueueItems((prev) => prev.map((q) => (q.id === pf.id ? { ...q, status: "uploading" } : q)));
                 try {
+                    const check = fileNeedsForbiddenAgent(pf.file.name);
+                    if (check.blocked) {
+                        const typeLabel =
+                            DOC_TYPE_LABELS[check.docType] || check.docType.replace(/_/g, " ");
+                        setAgentBlock((prev) => {
+                            const next = {
+                                filename: pf.file.name,
+                                typeLabel,
+                                agentId: check.agent,
+                            };
+                            if (!prev) return [next];
+                            if (prev.some((p) => p.filename === next.filename && p.agentId === next.agentId)) {
+                                return prev;
+                            }
+                            return [...prev, next];
+                        });
+                        setQueueItems((prev) =>
+                            prev.map((q) =>
+                                q.id === pf.id
+                                    ? {
+                                          ...q,
+                                          status: "error",
+                                          error: `Blocked — ${typeLabel} needs ${agentLabel(check.agent)}`,
+                                      }
+                                    : q
+                            )
+                        );
+                        continue;
+                    }
                     const form = new FormData(); form.append("file", pf.file);
                     if (batchAgent) form.append("phase3Agent", batchAgent);
                     if (batchProvider) form.append("aiProvider", batchProvider);
@@ -572,7 +660,14 @@ function DocumentsContent() {
             {toast && <div className="rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm">{toast}</div>}
 
             {allowUpload && classifyQueue.length > 0 && (
-                <ClassifyAgentPopup doc={classifyQueue[0]} queueLen={classifyQueue.length} defaultAgent={preferredAgent || undefined} onConfirm={handleAgentConfirm} onDismiss={() => setClassifyQueue((prev) => prev.slice(1))} />
+                <ClassifyAgentPopup
+                    doc={classifyQueue[0]}
+                    queueLen={classifyQueue.length}
+                    defaultAgent={preferredAgent || undefined}
+                    onConfirm={handleAgentConfirm}
+                    onRejectUpload={handleRejectUploadForAgent}
+                    onDismiss={() => setClassifyQueue((prev) => prev.slice(1))}
+                />
             )}
 
             {allowUpload && showStaging && (
@@ -643,6 +738,14 @@ function DocumentsContent() {
                 </div>
             )}
 
+            {agentBlock && agentBlock.length > 0 && role !== "superAdmin" && (
+                <AgentAccessBlockedNotice
+                    items={agentBlock}
+                    coveredAgents={allowedIds || agentOptions.map((a) => a.value)}
+                    role={role}
+                    onDismiss={() => setAgentBlock(null)}
+                />
+            )}
             {error && <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">{error}</div>}
 
             {allowView && (
@@ -715,7 +818,7 @@ function DocumentsContent() {
                             {filtersOpen && (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1 animate-fade-in-up">
                                     <FilterSelect label="Scope" value={scopeFilter} onChange={(v) => { setScopeFilter(v); setPage(1); }} options={[{ value: "", label: "All scopes" }, { value: "department", label: "Department" }, { value: "personal", label: "Personal" }]} minWidth="w-full" />
-                                    <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={DOC_TYPE_FILTER_OPTIONS} minWidth="w-full" />
+                                    <FilterSelect label="Doc type" value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} options={docTypeFilterOptions} minWidth="w-full" />
                                     <FilterSelect label="Score" value={scoreFilter} onChange={(v) => { setScoreFilter(v); setPage(1); }} options={SCORE_FILTER_OPTIONS} minWidth="w-full" />
                                     <FilterSelect label="Sort" value={sortPreset} onChange={(v) => { setSortPreset(v); setPage(1); }} options={SORT_PRESETS.map((s) => ({ value: s.value, label: s.label }))} minWidth="w-full" />
                                     <FilterSelect label="Agent" value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={[{ value: "", label: "All agents" }, ...agentOptions]} minWidth="w-full" />
@@ -764,6 +867,24 @@ function DocumentsContent() {
                                                     "bg-rose-50 text-rose-700 border-rose-200"
                                                 }`}>
                                                     {doc.metadata.cvScore >= 70 ? "✓" : doc.metadata.cvScore >= 40 ? "—" : "✗"} {doc.metadata.cvScore}
+                                                </span>
+                                            )}
+                                            {(doc.metadata?.agentClamped ||
+                                                (doc.metadata?.naturalAgent &&
+                                                    doc.metadata?.phase3Agent &&
+                                                    doc.metadata.naturalAgent !== doc.metadata.phase3Agent)) && (
+                                                <span
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200"
+                                                    title={
+                                                        doc.metadata.naturalAgent
+                                                            ? `Normally ${agentLabel(doc.metadata.naturalAgent)}; processed with ${agentLabel(doc.metadata.phase3Agent || "other_agent")} (not on your plan/department)`
+                                                            : "Processed with a fallback agent — specialist skills from outside your access were not used"
+                                                    }
+                                                >
+                                                    {agentLabel(doc.metadata.phase3Agent || "other_agent")}
+                                                    {doc.metadata.naturalAgent
+                                                        ? ` (${agentLabel(doc.metadata.naturalAgent)} not on access)`
+                                                        : " (clamped)"}
                                                 </span>
                                             )}
                                             {doc.isDuplicate && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-amber-50 text-amber-700 border border-amber-200"><Copy size={10} /> Dup</span>}
@@ -823,7 +944,7 @@ function DocumentsContent() {
                                 label="Document type"
                                 value={bulkType}
                                 onChange={(v) => { setBulkType(v); setBulkPreview(null); }}
-                                options={DOC_TYPE_FILTER_OPTIONS}
+                                options={docTypeFilterOptions}
                                 minWidth="w-full"
                             />
                             <div className="grid grid-cols-2 gap-3">

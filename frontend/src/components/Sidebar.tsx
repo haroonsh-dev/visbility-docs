@@ -245,7 +245,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                     </div>
                                 )}
                                 {showAgentDropdown && agentOpen && (
-                                    <div className="ml-4 pl-3 border-l border-white/[0.06] space-y-0.5 mb-1 mt-0.5">
+                                    <div className="ml-4 pl-3 border-l border-white/6 space-y-0.5 mb-1 mt-0.5">
                                         {agentOptions.map((ag) => {
                                             const isSelected = currentAgent === ag.value;
                                             return (

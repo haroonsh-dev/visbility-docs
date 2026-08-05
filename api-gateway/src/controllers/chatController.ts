@@ -20,6 +20,8 @@ import {
 import { PERMISSIONS } from '../types/permissions';
 import logger from '../utils/logger';
 import { recordActivityFromReq } from '../services/activityLog';
+import { DOC_TYPE_TO_AGENT } from '../services/documentStorage';
+import { requireAllowedAgent } from '../services/planService';
 
 async function resolveChatProviderConfig(
     organizationId: string,
@@ -190,6 +192,35 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             const orgId = resolveAiOrganizationId(req.user);
             let scopedPythonIds: string[] | undefined;
 
+            const phase3AgentRaw = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
+            const documentType = (req.body.document_type || req.body.documentType || '').toString().trim() || undefined;
+            const provider = (req.body.provider || req.body.modelProvider || '').toString().trim() || undefined;
+            const model = (req.body.model || req.body.aiModel || '').toString().trim() || undefined;
+
+            let phase3Agent = phase3AgentRaw;
+            let allowedAgents: string[] | undefined;
+            if (!isChitchat && req.user.role !== 'superAdmin') {
+                const check = await requireAllowedAgent(req.user, phase3AgentRaw);
+                if (!check.ok) {
+                    return res.status(403).json({
+                        success: false,
+                        code: check.code,
+                        message: check.message,
+                        data: { allowedAgents: check.entitlement.agentIds },
+                    });
+                }
+                allowedAgents = check.entitlement.agentIds;
+            }
+
+            const agentAllowed = (d: any) => {
+                if (!allowedAgents?.length) return true;
+                const agent =
+                    d?.metadata?.phase3Agent ||
+                    DOC_TYPE_TO_AGENT[String(d?.classification || '')] ||
+                    'other_agent';
+                return allowedAgents.includes(agent);
+            };
+
             if (isChitchat) {
                 // Greetings skip document scope — AI replies without RAG
                 scopedPythonIds = undefined;
@@ -198,10 +229,19 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     ...(await buildDocumentFilter(req.user, {})),
                     documentId: { $in: documentIds },
                 })
-                    .select('documentId pythonDocumentId originalFilename mimeType storagePath')
+                    .select('documentId pythonDocumentId originalFilename mimeType storagePath classification metadata')
                     .lean();
-                const healed = await ensureDocumentsInAi(selectedMongo as any[], orgId, req.user.userId);
-                scopedPythonIds = selectedMongo
+                const planSelected = selectedMongo.filter(agentAllowed);
+                if (!planSelected.length) {
+                    return res.status(403).json({
+                        success: false,
+                        message:
+                            'None of the selected documents are covered by your plan agents. Choose files for agents on your plan.',
+                        data: { allowedAgents },
+                    });
+                }
+                const healed = await ensureDocumentsInAi(planSelected as any[], orgId, req.user.userId);
+                scopedPythonIds = planSelected
                     .map((d) => healed.get(d.documentId) || d.pythonDocumentId)
                     .filter(Boolean) as string[];
                 if (!scopedPythonIds.length) {
@@ -212,20 +252,29 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     });
                 }
             } else {
-                // All-documents mode: heal library so AI search can see uploaded files
+                // All-documents: only files whose agent is on the org/user plan
                 const library = await Document.find(await buildDocumentFilter(req.user, {}))
-                    .select('documentId pythonDocumentId originalFilename mimeType storagePath')
+                    .select('documentId pythonDocumentId originalFilename mimeType storagePath classification metadata')
                     .sort({ createdAt: -1 })
-                    .limit(40)
+                    .limit(80)
                     .lean();
-                await ensureDocumentsInAi(library as any[], orgId, req.user.userId);
-                scopedPythonIds = undefined;
+                const planLibrary = library.filter(agentAllowed);
+                await ensureDocumentsInAi(planLibrary as any[], orgId, req.user.userId);
+                scopedPythonIds = planLibrary
+                    .map((d) => d.pythonDocumentId)
+                    .filter(Boolean) as string[];
+                if (!scopedPythonIds.length) {
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply:
+                                'No documents on your plan agents are ready for chat yet. Upload files for agents included in your plan, wait for processing, then ask again.',
+                            citations: [],
+                            model: 'docs-ai',
+                        },
+                    });
+                }
             }
-
-            const phase3AgentRaw = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
-            const documentType = (req.body.document_type || req.body.documentType || '').toString().trim() || undefined;
-            const provider = (req.body.provider || req.body.modelProvider || '').toString().trim() || undefined;
-            const model = (req.body.model || req.body.aiModel || '').toString().trim() || undefined;
 
             const providerConfig = await resolveChatProviderConfig(orgId, provider, model);
             if (!providerConfig) {
@@ -239,24 +288,6 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             // Chitchat already sends providerConfig in the chat payload — skip extra sync round-trip.
             if (!isChitchat) {
                 await syncProviderToAIBackend(providerConfig);
-            }
-
-            let phase3Agent = phase3AgentRaw;
-            let allowedAgents: string[] | undefined;
-            if (!isChitchat && req.user.role !== 'superAdmin') {
-                const { requireAllowedAgent } = await import('../services/planService');
-                const check = await requireAllowedAgent(req.user, phase3AgentRaw);
-                if (!check.ok) {
-                    return res.status(403).json({
-                        success: false,
-                        code: check.code,
-                        message: check.message,
-                        data: { allowedAgents: check.entitlement.agentIds },
-                    });
-                }
-                allowedAgents = check.entitlement.agentIds;
-                // If chat inferred an agent outside plan via docs, still clamp explicit request only;
-                // AI receives allowed_agents for all routing.
             }
 
             const result = await chatWithAi({
@@ -276,14 +307,25 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             });
 
             const seenCite = new Set<string>();
-            const citations = (result.sources || [])
+            let citations = (result.sources || [])
                 .map((source: any) => {
-                    const nodeDoc = pythonIdToDoc.get(source.document_id || source.documentId);
+                    const pyId = String(source.document_id || source.documentId || '');
+                    let nodeDoc = pythonIdToDoc.get(pyId);
+                    const rawTitle = source.document_title || source.title || source.filename || '';
+                    const filename =
+                        nodeDoc?.originalFilename ||
+                        (rawTitle && !/^[0-9a-f-]{16,}$/i.test(String(rawTitle)) ? String(rawTitle) : '') ||
+                        nodeDoc?.originalFilename ||
+                        undefined;
                     return {
-                        documentId: nodeDoc?.documentId || source.document_id,
-                        filename: nodeDoc?.originalFilename || source.document_title || source.title,
+                        documentId: nodeDoc?.documentId || pyId,
+                        pythonDocumentId: pyId || undefined,
+                        filename,
                         pageNumber: source.page_number,
                         score: source.score,
+                        snippet: source.snippet || source.chunk_text || undefined,
+                        phase3Agent: source.phase3_agent || undefined,
+                        documentType: source.document_type || undefined,
                     };
                 })
                 .filter((c) => {
@@ -292,7 +334,56 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     seenCite.add(key);
                     return true;
                 })
-                .slice(0, 3);
+                .slice(0, 8);
+
+            // Resolve any leftover AI/python ids to Mongo documentIds so "Open" works
+            const unresolved = citations
+                .map((c) => c.documentId)
+                .filter((id) => id && !String(id).startsWith('doc_'));
+            if (unresolved.length) {
+                const found = await Document.find({
+                    ...(await buildDocumentFilter(req.user, {})),
+                    pythonDocumentId: { $in: unresolved },
+                })
+                    .select('documentId pythonDocumentId originalFilename classification metadata')
+                    .lean();
+                const byPy = new Map(found.map((d) => [d.pythonDocumentId as string, d]));
+                for (const c of citations) {
+                    const mapped = byPy.get(String(c.documentId));
+                    if (mapped) {
+                        c.documentId = mapped.documentId;
+                        c.filename = c.filename || mapped.originalFilename;
+                        c.documentType = c.documentType || mapped.classification || undefined;
+                        c.phase3Agent =
+                            c.phase3Agent ||
+                            (mapped.metadata as any)?.phase3Agent ||
+                            undefined;
+                    }
+                }
+            }
+
+            // Only cite documents whose agent is on the user's plan
+            if (allowedAgents?.length) {
+                const allowed = new Set(allowedAgents);
+                const mongoIds = citations
+                    .map((c) => c.documentId)
+                    .filter((id) => id && String(id).startsWith('doc_'));
+                const metaDocs = mongoIds.length
+                    ? await Document.find({ documentId: { $in: mongoIds } })
+                          .select('documentId classification metadata')
+                          .lean()
+                    : [];
+                const metaById = new Map(metaDocs.map((d) => [d.documentId, d]));
+                citations = citations.filter((c) => {
+                    const d = metaById.get(String(c.documentId));
+                    const agent =
+                        c.phase3Agent ||
+                        (d?.metadata as any)?.phase3Agent ||
+                        DOC_TYPE_TO_AGENT[String(c.documentType || d?.classification || '')] ||
+                        'other_agent';
+                    return allowed.has(agent);
+                });
+            }
 
             res.json({
                 success: true,

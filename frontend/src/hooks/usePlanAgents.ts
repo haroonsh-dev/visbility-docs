@@ -10,28 +10,38 @@ export type PlanAgentOption = { value: string; label: string };
 const ALL_AGENTS: PlanAgentOption[] = AGENT_OPTIONS.filter((o) => o.value);
 
 /**
- * Agents the current org may use (from active/free plan).
- * Super Admin sees all agents. Until loaded, returns all to avoid empty UI flash —
- * backend still enforces.
+ * Agents the current user may use:
+ * - Super Admin: all
+ * - Org admin: full org plan
+ * - Team: org plan ∩ department.allowedAgents
+ *
+ * orgAllowedIds is always the org subscription (for department admin UI).
  */
 export function usePlanAgents() {
     const { role } = usePermissions();
     const [allowedIds, setAllowedIds] = useState<string[] | null>(null);
+    const [orgAllowedIds, setOrgAllowedIds] = useState<string[] | null>(null);
     const [loading, setLoading] = useState(true);
 
     const reload = useCallback(async () => {
         if (role === "superAdmin") {
-            setAllowedIds(ALL_AGENTS.map((a) => a.value));
+            const all = ALL_AGENTS.map((a) => a.value);
+            setAllowedIds(all);
+            setOrgAllowedIds(all);
             setLoading(false);
             return;
         }
         setLoading(true);
         try {
             const data = await apiRequest("/docs/plans/subscription");
-            const ids: string[] = data?.data?.entitlement?.agentIds || [];
-            setAllowedIds(ids.length ? ids : ["other_agent"]);
+            const ent = data?.data?.entitlement;
+            const effective: string[] = ent?.agentIds || [];
+            const org: string[] = ent?.orgAgentIds || effective;
+            setAllowedIds(effective.length ? effective : ["other_agent"]);
+            setOrgAllowedIds(org.length ? org : ["other_agent"]);
         } catch {
             setAllowedIds(["other_agent"]);
+            setOrgAllowedIds(["other_agent"]);
         } finally {
             setLoading(false);
         }
@@ -41,16 +51,39 @@ export function usePlanAgents() {
         reload();
     }, [reload]);
 
+    // Never flash the full catalog for org/team while entitlement is unknown
     const agentOptions: PlanAgentOption[] =
-        role === "superAdmin" || !allowedIds
+        role === "superAdmin"
             ? ALL_AGENTS
-            : ALL_AGENTS.filter((a) => allowedIds.includes(a.value));
+            : allowedIds
+              ? ALL_AGENTS.filter((a) => allowedIds.includes(a.value))
+              : [];
 
-    const isAgentAllowed = (agentId: string) => {
-        if (role === "superAdmin") return true;
-        if (!allowedIds) return true;
-        return allowedIds.includes(agentId);
+    const orgAgentOptions: PlanAgentOption[] =
+        role === "superAdmin"
+            ? ALL_AGENTS
+            : orgAllowedIds
+              ? ALL_AGENTS.filter((a) => orgAllowedIds.includes(a.value))
+              : [];
+
+    const isAgentAllowed = useCallback(
+        (agentId: string) => {
+            if (role === "superAdmin") return true;
+            if (!agentId) return true;
+            // Until entitlement loads, do not block uploads/classify
+            if (loading || allowedIds === null) return true;
+            return allowedIds.includes(agentId);
+        },
+        [role, loading, allowedIds]
+    );
+
+    return {
+        agentOptions,
+        orgAgentOptions,
+        allowedIds,
+        orgAllowedIds,
+        loading,
+        reload,
+        isAgentAllowed,
     };
-
-    return { agentOptions, allowedIds, loading, reload, isAgentAllowed };
 }

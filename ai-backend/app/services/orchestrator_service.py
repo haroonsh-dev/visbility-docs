@@ -213,20 +213,23 @@ class OrchestratorService:
                 log.warn(f"Low confidence ({classification['confidence']:.2f}), falling back to 'other'")
 
             allowed = parse_allowed_agents(doc.get("allowed_agents"))
+            natural_agent = agent_type
+            agent_clamped = False
             if allowed:
                 clamped = clamp_agent(agent_type, allowed)
                 if clamped and clamped != agent_type:
                     log.warn(f"Agent {agent_type} not in plan allowlist — clamping to {clamped}")
                     agent_type = clamped
-                    if clamped == "other_agent":
-                        doc_type = "other"
-                        log.warn(f"doc_type clamped to 'other' (original was '{classification['document_type']}')")
+                    agent_clamped = True
+                    # Keep original document_type for library/visibility; skills follow phase3_agent only.
 
             SupabaseDB.update("documents", {
                 "document_type": doc_type,
                 "phase3_agent": agent_type,
                 "language": classification.get("language", "en"),
                 "status": "classified",
+                "natural_agent": natural_agent,
+                "agent_clamped": 1 if agent_clamped else 0,
             }, "id", document_id)
             self.update_stage(document_id, organization_id, "classified", 60, "completed")
 
@@ -236,6 +239,8 @@ class OrchestratorService:
                 "document_id": document_id,
                 "document_type": doc_type,
                 "agent_type": agent_type,
+                "natural_agent": natural_agent,
+                "agent_clamped": agent_clamped,
                 "confidence": classification.get("confidence", 0),
                 "reasoning": classification.get("reasoning", ""),
                 "language": classification.get("language", "en"),
@@ -369,25 +374,29 @@ class OrchestratorService:
                 log.warn(f"Low confidence ({classification['confidence']:.2f}) — falling back to 'other'")
 
             allowed = parse_allowed_agents(doc.get("allowed_agents"))
+            natural_agent = agent_type
+            agent_clamped = False
             if allowed:
                 clamped = clamp_agent(agent_type, allowed)
                 if clamped and clamped != agent_type:
                     log.warn(f"Agent {agent_type} not in plan allowlist — clamping to {clamped}")
                     agent_type = clamped
-                    # Also clamp doc_type to 'other' so restricted skill.md prompts are not loaded
-                    if clamped == "other_agent":
-                        doc_type = "other"
-                        log.warn(f"doc_type clamped to 'other' (original was '{classification['document_type']}')")
+                    agent_clamped = True
+                    # Keep original document_type; extraction uses phase3_agent skills only.
 
             SupabaseDB.update("documents", {
                 "document_type": doc_type,
                 "phase3_agent": agent_type,
                 "language": classification.get("language", "en"),
                 "status": "classified",
+                "natural_agent": natural_agent,
+                "agent_clamped": 1 if agent_clamped else 0,
             }, "id", document_id)
             self.update_stage(document_id, organization_id, "classified", 60)
 
             log.result("Route → Phase 3 Agent", agent_type, C.MAGENTA)
+            if agent_clamped:
+                log.warn(f"Skills clamped: natural={natural_agent} → effective={agent_type}")
 
             # ── Step 4: Table Extraction (PDF only) ──
             log.step("TABLE EXTRACTION")

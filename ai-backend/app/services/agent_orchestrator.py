@@ -24,25 +24,17 @@ def _load_phase3_prompt(filename: str) -> str:
 
 
 def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str, str]:
-    """Resolve per-type prompt under phase3/{agent}/{doc_type}/skill.md, then agent fallback."""
+    """Resolve skill.md for the *effective* agent only.
+
+    Never loads another specialist's skills when agent_type is clamped
+    (e.g. invoice + other_agent must not load finance/invoice/skill.md).
+    """
     canonical_agent = DOCUMENT_TO_PHASE3_AGENT.get(doc_type, "other_agent") if doc_type else "other_agent"
     agent = agent_type or canonical_agent
     folder_name = agent.replace("_agent", "")
-    canonical_folder = canonical_agent.replace("_agent", "")
 
-    # Try canonical agent subfolder first (e.g. phase3/procurement/purchase_order/skill.md)
-    if doc_type and doc_type != "other" and canonical_folder != "other":
-        subfolder_path = os.path.join("phase3", canonical_folder, doc_type, "skill.md")
-        content = _load_prompt(subfolder_path)
-        if content:
-            print("\n" + "★"*65)
-            print(f"[SKILL.MD LOADED] Subfolder Skill File Used: app/prompts/{subfolder_path}")
-            print(f"[SKILL.MD LOADED] Category: '{canonical_folder}' | DocType: '{doc_type}' | Agent: '{agent}'")
-            print("★"*65 + "\n")
-            return content, subfolder_path
-
-    # Try passed folder_name if different from canonical
-    if doc_type and doc_type != "other" and folder_name != "other" and folder_name != canonical_folder:
+    # Per-type skill under the effective agent only
+    if agent != "other_agent" and doc_type and doc_type != "other":
         subfolder_path = os.path.join("phase3", folder_name, doc_type, "skill.md")
         content = _load_prompt(subfolder_path)
         if content:
@@ -52,21 +44,21 @@ def get_phase3_prompt_for_doc(doc_type: str, agent_type: str = "") -> tuple[str,
             print("★"*65 + "\n")
             return content, subfolder_path
 
-    # Try passed agent or canonical parent agent file
-    for ag in (agent, canonical_agent):
-        if ag and ag != "other_agent":
-            agent_path = os.path.join("phase3", f"{ag}.md")
-            content = _load_prompt(agent_path)
-            if content:
-                print("\n" + "★"*65)
-                print(f"[PARENT AGENT PROMPT LOADED] Main Agent File Used: app/prompts/{agent_path}")
-                print(f"[PARENT AGENT PROMPT LOADED] Agent: '{ag}'")
-                print("★"*65 + "\n")
-                return content, agent_path
+    # Parent agent prompt for the effective agent
+    if agent and agent != "other_agent":
+        agent_path = os.path.join("phase3", f"{agent}.md")
+        content = _load_prompt(agent_path)
+        if content:
+            print("\n" + "★"*65)
+            print(f"[PARENT AGENT PROMPT LOADED] Main Agent File Used: app/prompts/{agent_path}")
+            print(f"[PARENT AGENT PROMPT LOADED] Agent: '{agent}'")
+            print("★"*65 + "\n")
+            return content, agent_path
 
     fallback_path = os.path.join("phase3", "other.md")
     print("\n" + "★"*65)
     print(f"[FALLBACK PROMPT LOADED] Generic File Used: app/prompts/{fallback_path}")
+    print(f"[FALLBACK PROMPT LOADED] Effective agent: '{agent}' (canonical for type was '{canonical_agent}')")
     print("★"*65 + "\n")
     return _load_prompt(fallback_path), fallback_path
 
