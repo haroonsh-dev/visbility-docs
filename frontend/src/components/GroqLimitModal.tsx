@@ -176,7 +176,7 @@ export function GroqLimitProvider({ children }: { children: ReactNode }) {
             {open && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                     <div
-                        className="w-full max-w-lg surface-card border border-[var(--border)] p-5 sm:p-6 space-y-4 shadow-2xl"
+                        className="w-full max-w-lg surface-card border border-border p-5 sm:p-6 space-y-4 shadow-2xl"
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="groq-limit-title"
@@ -188,11 +188,11 @@ export function GroqLimitProvider({ children }: { children: ReactNode }) {
                             <div className="min-w-0">
                                 <h2
                                     id="groq-limit-title"
-                                    className="text-lg font-bold text-[var(--foreground)]"
+                                    className="text-lg font-bold text-foreground"
                                 >
                                     Groq limit reached
                                 </h2>
-                                <p className="text-sm text-[var(--foreground-muted)] mt-1 leading-relaxed">
+                                <p className="text-sm text-foreground-muted mt-1 leading-relaxed">
                                     Daily token limit for the AI model is finished. Upload, chat, and
                                     other Groq features are paused until you add a new API key or the
                                     cooldown ends.
@@ -200,27 +200,27 @@ export function GroqLimitProvider({ children }: { children: ReactNode }) {
                             </div>
                         </div>
 
-                        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/60 px-4 py-3 flex items-center gap-3">
-                            <Timer size={18} className="text-[var(--accent)] shrink-0" />
+                        <div className="rounded-xl border border-border bg-surface-2/60 px-4 py-3 flex items-center gap-3">
+                            <Timer size={18} className="text-accent shrink-0" />
                             <div>
-                                <p className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)]">
+                                <p className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted">
                                     Try again in
                                 </p>
-                                <p className="text-2xl font-mono font-bold tabular-nums text-[var(--foreground)]">
+                                <p className="text-2xl font-mono font-bold tabular-nums text-foreground">
                                     {formatCountdown(secondsLeft)}
                                 </p>
                             </div>
                         </div>
 
                         <div className="space-y-2 text-sm">
-                            <p className="text-[var(--foreground-secondary)]">
+                            <p className="text-foreground-secondary">
                                 Create a Groq account, generate an API key, then paste it below:
                             </p>
                             <a
                                 href={consoleUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[var(--accent)] hover:underline font-medium"
+                                className="inline-flex items-center gap-1.5 text-accent hover:underline font-medium"
                             >
                                 Open Groq Console <ExternalLink size={14} />
                             </a>
@@ -228,14 +228,14 @@ export function GroqLimitProvider({ children }: { children: ReactNode }) {
                                 href={billingUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="block text-xs text-[var(--foreground-muted)] hover:underline"
+                                className="block text-xs text-foreground-muted hover:underline"
                             >
                                 Or upgrade billing / Dev Tier
                             </a>
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)] flex items-center gap-1.5">
+                            <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted flex items-center gap-1.5">
                                 <KeyRound size={12} /> New Groq API key
                             </label>
                             <input
@@ -267,7 +267,7 @@ export function GroqLimitProvider({ children }: { children: ReactNode }) {
                                 Dismiss (timer keeps running)
                             </button>
                         </div>
-                        <p className="text-[11px] text-[var(--foreground-muted)]">
+                        <p className="text-[11px] text-foreground-muted">
                             Closing this dialog does not unlock AI. Any chat/upload using Groq will
                             show this screen again until the timer ends or a valid key is saved.
                         </p>

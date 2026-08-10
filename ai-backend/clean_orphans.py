@@ -31,10 +31,19 @@ def clean_orphaned_chunks():
     for doc_id in orphaned_ids:
         print(f"Deleting orphaned chunks for document: {doc_id}")
         try:
-            # Delete from Pinecone
+            ns = ""
+            chunk_org = (
+                client.table("document_chunks")
+                .select("organization_id")
+                .eq("document_id", doc_id)
+                .limit(1)
+                .execute()
+            )
+            if chunk_org.data and chunk_org.data[0].get("organization_id"):
+                ns = chunk_org.data[0]["organization_id"]
             if pinecone_service.available:
-                pinecone_service.delete_by_document(doc_id, namespace="")
-                print(f"  - Deleted from Pinecone")
+                pinecone_service.delete_by_document(doc_id, namespace=ns)
+                print(f"  - Deleted from Pinecone (namespace={ns!r})")
             
             # Delete from Supabase
             client.table("document_chunks").delete().eq("document_id", doc_id).execute()

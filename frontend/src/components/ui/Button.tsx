@@ -11,19 +11,19 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const variants: Record<ButtonVariant, string> = {
     primary:
-        "bg-[var(--accent)] text-[#042f2e] hover:bg-[var(--accent-hover)] shadow-sm hover:shadow-[0_8px_24px_rgba(45,212,191,0.25)] dark:text-[#042f2e] [html[data-theme=light]_&]:text-white",
+        "bg-(--vb-color-primary-btn-bg) text-(--vb-color-primary-btn-fg) hover:bg-(--accent-hover) shadow-[var(--vb-glow)] hover:shadow-[var(--vb-glow-strong)]",
     secondary:
-        "bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover-bg)] hover:border-[var(--btn-secondary-hover-border)] hover:text-[var(--btn-secondary-hover-text)]",
+        "bg-(--btn-secondary-bg) border border-(--btn-secondary-border) text-(--btn-secondary-text) hover:bg-(--btn-secondary-hover-bg) hover:border-(--btn-secondary-hover-border) hover:text-(--btn-secondary-hover-text)",
     ghost:
-        "bg-transparent text-[var(--foreground-muted)] hover:bg-[var(--accent-muted)] hover:text-[var(--accent)]",
+        "bg-transparent text-foreground-muted hover:bg-accent-muted hover:text-[var(--vb-blue-dark)]",
     danger:
-        "bg-[var(--error-muted)] border border-[rgba(248,113,113,0.3)] text-[var(--error)] hover:bg-rose-500/20",
+        "bg-error-muted border border-[rgba(248,113,113,0.3)] text-error hover:bg-rose-500/20",
 };
 
 const sizes: Record<ButtonSize, string> = {
-    sm: "h-8 px-3 text-xs gap-1.5 rounded-[var(--radius-md)]",
-    md: "h-10 px-4 text-sm gap-2 rounded-[var(--radius-md)]",
-    lg: "h-11 px-5 text-sm gap-2 rounded-[var(--radius-lg)]",
+    sm: "h-8 px-3 text-xs gap-1.5 rounded-(--vb-radius-btn)",
+    md: "h-10 px-4 text-sm gap-2 rounded-(--vb-radius-btn)",
+    lg: "h-11 px-5 text-sm gap-2 rounded-(--vb-radius-btn)",
 };
 
 export function Button({

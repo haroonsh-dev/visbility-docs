@@ -2,12 +2,12 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Download, Loader2, RefreshCw, Send, Star, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Download, FileText, Loader2, RefreshCw, Send, Star, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/apiClient";
 import { inferDocTypeFromFilename } from "@/lib/documentAgents";
 import { appendAuthToken, getDocumentAiImageUrl } from "@/lib/documents";
 import SendToIntegrationModal from "@/components/SendToIntegrationModal";
-
 type DocRecord = {
     documentId: string;
     originalFilename: string;
@@ -19,7 +19,12 @@ type DocRecord = {
     classification?: string | null;
     pageCount?: number;
     createdAt: string;
-    metadata?: { cvScore?: number; phase3Agent?: string } | null;
+    metadata?: {
+        cvScore?: number;
+        phase3Agent?: string;
+        generatedFromDocumentId?: string;
+        generatedFromFilename?: string;
+    } | null;
 };
 
 type SimilarHit = {
@@ -58,9 +63,9 @@ function statusBadgeClass(status: string) {
 
 function typeBadgeClass(docType: string) {
     const t = docType.toLowerCase();
-    if (t === "resume" || t === "cv") return "bg-cyan-500/15 text-cyan-300 border-cyan-500/25";
-    if (t === "invoice") return "bg-[var(--accent-muted)] text-[var(--accent)] border-[rgba(45,212,191,0.25)]";
-    if (t === "contract") return "bg-teal-500/15 text-teal-300 border-teal-500/25";
+    if (t === "resume" || t === "cv") return "bg-blue-500/15 text-(--vb-blue-bright) border-[rgba(56,182,255,0.25)]";
+    if (t === "invoice") return "bg-accent-muted text-accent border-[rgba(56,182,255,0.25)]";
+    if (t === "contract") return "bg-[rgba(56,182,255,0.15)] text-(--vb-blue-bright) border-[rgba(56,182,255,0.25)]";
     return "bg-slate-500/15 text-slate-300 border-slate-500/25";
 }
 
@@ -112,8 +117,8 @@ function DetailSkeleton() {
                     <div className="h-6 w-14 rounded-full bg-white/5 animate-shimmer" />
                 </div>
             </div>
-            <div className="surface-card !rounded-xl overflow-hidden min-h-[50vh]">
-                <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+            <div className="surface-card rounded-xl! overflow-hidden min-h-[50vh]">
+                <div className="px-5 py-4 border-b border-border flex items-center gap-2">
                     <div className="h-4 w-4 rounded bg-amber-400/30 animate-pulse" />
                     <div className="h-4 w-32 rounded bg-white/5 animate-shimmer" />
                     <div className="ml-auto h-6 w-24 rounded-full bg-white/5 animate-shimmer" />
@@ -127,7 +132,7 @@ function DetailSkeleton() {
                             </div>
                             <div className="h-2.5 w-full rounded-full bg-white/5 overflow-hidden">
                                 <div
-                                    className="h-full rounded-full bg-gradient-to-r from-teal-500/30 via-teal-400/50 to-teal-500/30 animate-shimmer"
+                                    className="h-full rounded-full bg-linear-to-r from-[rgba(56,182,255,0.3)] via-[rgba(126,224,255,0.5)] to-[rgba(56,182,255,0.3)] animate-shimmer"
                                     style={{ width: `${55 + i * 8}%` }}
                                 />
                             </div>
@@ -143,8 +148,8 @@ function DetailSkeleton() {
                     </div>
                 </div>
             </div>
-            <p className="text-center text-xs text-[var(--foreground-muted)] flex items-center justify-center gap-2">
-                <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
+            <p className="text-center text-xs text-foreground-muted flex items-center justify-center gap-2">
+                <Loader2 size={12} className="animate-spin text-accent" />
                 Loading evaluation…
             </p>
         </div>
@@ -178,6 +183,7 @@ export default function DocumentDetailPanel({
     const [reprocessMsg, setReprocessMsg] = useState<string | null>(null);
     const [sendOpen, setSendOpen] = useState(false);
     const [sendMsg, setSendMsg] = useState<string | null>(null);
+    const router = useRouter();
 
     const inferredType = inferDocTypeFromFilename(doc.originalFilename);
     const docType = String(ai?.document_type || doc.classification || inferredType || "unknown");
@@ -212,6 +218,18 @@ export default function DocumentDetailPanel({
     };
     const isProcessing = analyzing && !finished && (displayStatus === "processing" || doc.status === "processing");
     const showCv = docType === "resume" || inferredType === "resume";
+    const filenameLooksLikeCv = /\b(cv|cvs|resume|curriculum|biodata|bio[\s_-]?data)\b/i.test(
+        doc.originalFilename || ""
+    );
+    const isOfferLetterDoc =
+        docType === "offer_letter" ||
+        String(doc.classification || "").toLowerCase() === "offer_letter" ||
+        /\boffer[\s_-]?letter\b/i.test(doc.originalFilename || "");
+    const isExperienceLetterDoc =
+        docType === "experience_letter" ||
+        String(doc.classification || "").toLowerCase() === "experience_letter" ||
+        /\bexperience[\s_-]?letter\b/i.test(doc.originalFilename || "");
+    const canGenerateOffer = showCv || filenameLooksLikeCv;
     const showSkeleton = isProcessing || (analyzing && !hasModelData(ai));
 
     useEffect(() => {
@@ -262,7 +280,7 @@ export default function DocumentDetailPanel({
         }
     };
 
-    const cardClass = "surface-card !rounded-xl";
+    const cardClass = "surface-card rounded-xl!";
 
     if (showSkeleton) {
         return <DetailSkeleton />;
@@ -302,14 +320,44 @@ export default function DocumentDetailPanel({
                     ["Size", formatBytes(doc.sizeBytes)],
                     ["Created", doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : "—"],
                 ].map(([label, value]) => (
-                    <div key={label} className={`${cardClass} !rounded-xl px-3 py-2.5 sm:px-4 sm:py-3`}>
+                    <div key={label} className={`${cardClass} rounded-xl! px-3 py-2.5 sm:px-4 sm:py-3`}>
                         <p className={`text-[10px] font-semibold uppercase tracking-wider ${colors.textMuted}`}>{label}</p>
                         <p className={`text-sm font-semibold mt-0.5 truncate ${colors.textPrimary}`}>{value}</p>
                     </div>
                 ))}
             </div>
 
+            {doc.metadata?.generatedFromDocumentId && (
+                <div className="surface-card px-4 py-3 text-sm border border-[rgba(56,182,255,0.25)] rounded-xl">
+                    <span className={colors.textMuted}>Created from resume: </span>
+                    <Link
+                        href={`/documents/${doc.metadata.generatedFromDocumentId}/details`}
+                        className="text-(--vb-blue-bright) font-medium hover:underline"
+                    >
+                        {doc.metadata.generatedFromFilename || doc.metadata.generatedFromDocumentId}
+                    </Link>
+                </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
+                {isOfferLetterDoc && finished && (
+                    <Link
+                        href={`/documents/${doc.documentId}`}
+                        className="btn-gradient rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
+                    >
+                        <FileText size={14} />
+                        Open PDF · Print
+                    </Link>
+                )}
+                {isExperienceLetterDoc && finished && (
+                    <Link
+                        href={`/documents/${doc.documentId}`}
+                        className="btn-gradient rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
+                    >
+                        <FileText size={14} />
+                        Open PDF · Print
+                    </Link>
+                )}
                 <button
                     type="button"
                     onClick={() => setSendOpen(true)}
@@ -318,7 +366,27 @@ export default function DocumentDetailPanel({
                     <Send size={14} />
                     Send to integration
                 </button>
-                {canReprocess && (
+                {canGenerateOffer && finished && doc.pythonDocumentId && (
+                    <>
+                    <button
+                        type="button"
+                        onClick={() => router.push(`/documents/${doc.documentId}/offer-letter`)}
+                        className="btn-secondary rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
+                    >
+                        <FileText size={14} />
+                        Generate offer letter
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => router.push(`/documents/${doc.documentId}/experience-letter`)}
+                        className="btn-secondary rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
+                    >
+                        <FileText size={14} />
+                        Experience letter
+                    </button>
+                    </>
+                )}
+                {canReprocess && !(canGenerateOffer && finished) && (
                     <button
                         type="button"
                         onClick={reclassify}
@@ -334,7 +402,7 @@ export default function DocumentDetailPanel({
                         className={`text-xs ${
                             (reprocessMsg || sendMsg || "").toLowerCase().includes("fail")
                                 ? "text-rose-400"
-                                : "text-teal-400"
+                                : "text-(--vb-blue-bright)"
                         }`}
                     >
                         {sendMsg || reprocessMsg}
@@ -354,7 +422,7 @@ export default function DocumentDetailPanel({
             />
 
             {finished && !hasModelData(ai) && (
-                <div className="surface-card px-4 py-3 text-sm text-[var(--foreground-secondary)] border border-[var(--border)]">
+                <div className="surface-card px-4 py-3 text-sm text-foreground-secondary border border-border">
                     Analysis finished but scores are not available yet. Try re-opening this document in a moment.
                 </div>
             )}
@@ -374,15 +442,15 @@ export default function DocumentDetailPanel({
                                     target="_blank"
                                     rel="noreferrer"
                                     onClick={(e) => e.stopPropagation()}
-                                    className="text-xs font-medium text-[var(--accent)] hover:underline"
+                                    className="text-xs font-medium text-accent hover:underline"
                                 >
                                     Download All Descriptions
                                 </a>
                             )}
-                            <span className="text-[var(--foreground-muted)] text-xs group-open:rotate-180 transition-transform">▼</span>
+                            <span className="text-foreground-muted text-xs group-open:rotate-180 transition-transform">▼</span>
                         </span>
                     </summary>
-                    <div className={`max-h-96 overflow-y-auto px-5 pb-5 text-xs font-mono leading-relaxed whitespace-pre-wrap border-t border-[var(--border)] pt-4 ${colors.textMuted}`}>
+                    <div className={`max-h-96 overflow-y-auto px-5 pb-5 text-xs font-mono leading-relaxed whitespace-pre-wrap border-t border-border pt-4 ${colors.textMuted}`}>
                         {rawText.slice(0, 10000)}
                         {rawText.length > 10000 && "…"}
                     </div>
@@ -393,9 +461,9 @@ export default function DocumentDetailPanel({
                 <details className={`${cardClass} overflow-hidden group`}>
                     <summary className={`px-5 py-4 text-sm font-semibold cursor-pointer list-none flex items-center justify-between gap-3 ${colors.textPrimary}`}>
                         <span>Image Previews ({images.length})</span>
-                        <span className="text-[var(--foreground-muted)] text-xs group-open:rotate-180 transition-transform">▼</span>
+                        <span className="text-foreground-muted text-xs group-open:rotate-180 transition-transform">▼</span>
                     </summary>
-                    <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
+                    <div className="divide-y divide-border border-t border-border">
                         {images.map((img, i) => {
                             const src = img.image_path
                                 ? getDocumentAiImageUrl(doc.documentId, img.image_path)
@@ -410,7 +478,7 @@ export default function DocumentDetailPanel({
                                         <img
                                             src={src}
                                             alt={`Page ${img.page ?? i + 1}`}
-                                            className="max-h-48 rounded-lg border border-[var(--border)] mb-2 object-contain bg-white/5"
+                                            className="max-h-48 rounded-lg border border-border mb-2 object-contain bg-white/5"
                                         />
                                     )}
                                     {img.description && (
@@ -425,7 +493,7 @@ export default function DocumentDetailPanel({
 
             {showCv && cvData && (
                 <div className={`${cardClass} overflow-hidden min-h-[60vh]`}>
-                    <div className={`px-5 py-4 flex items-center gap-2 border-b border-[var(--border)] ${colors.textPrimary}`}>
+                    <div className={`px-5 py-4 flex items-center gap-2 border-b border-border ${colors.textPrimary}`}>
                         <Star size={16} className="text-amber-400" />
                         <span className="text-base font-semibold">CV Evaluation</span>
                         {!Number.isNaN(cvScore) && (
@@ -484,7 +552,7 @@ export default function DocumentDetailPanel({
                         {typeof cvData.recommendation === "string" && cvData.recommendation && (
                             <div>
                                 <p className={`text-sm font-semibold mb-2 ${colors.textPrimary}`}>Recommendation</p>
-                                <p className={`text-sm rounded-xl p-4 bg-[var(--accent-muted)] border border-[rgba(45,212,191,0.2)] ${colors.textPrimary} leading-relaxed`}>
+                                <p className={`text-sm rounded-xl p-4 bg-accent-muted border border-[rgba(56,182,255,0.2)] ${colors.textPrimary} leading-relaxed`}>
                                     {cvData.recommendation}
                                 </p>
                             </div>
@@ -493,7 +561,7 @@ export default function DocumentDetailPanel({
                         {typeof cvData.evaluation_summary === "string" && cvData.evaluation_summary && (
                             <div>
                                 <p className={`text-sm font-semibold mb-2 ${colors.textPrimary}`}>Evaluation Summary</p>
-                                <p className={`text-sm rounded-xl p-4 bg-white/[0.03] border border-[var(--border)] ${colors.textMuted} leading-relaxed`}>
+                                <p className={`text-sm rounded-xl p-4 bg-white/3 border border-border ${colors.textMuted} leading-relaxed`}>
                                     {cvData.evaluation_summary}
                                 </p>
                             </div>
@@ -509,7 +577,7 @@ export default function DocumentDetailPanel({
                         <button
                             type="button"
                             onClick={downloadTablesMarkdown}
-                            className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                            className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-xs font-semibold text-foreground transition hover:border-accent hover:text-accent"
                         >
                             <Download size={14} />
                             Download Markdown
@@ -524,19 +592,19 @@ export default function DocumentDetailPanel({
                             const source = typeof extractedData?.tables === "object" && Array.isArray(extractedData.tables) && extractedData.tables[index]?.source ? String(extractedData.tables[index].source) : undefined;
 
                             return (
-                                <div key={index} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                                <div key={index} className="rounded-2xl border border-border bg-surface p-4">
                                     <div className="flex flex-wrap items-center gap-2 mb-3">
                                         <span className="text-sm font-semibold">Table extraction #{index + 1}</span>
-                                        <span className="text-xs text-[var(--foreground-muted)]">count: {tableCount}</span>
-                                        {page != null && <span className="text-xs text-[var(--foreground-muted)]">page: {page}</span>}
-                                        {source && <span className="text-xs text-[var(--foreground-muted)]">source: {source}</span>}
+                                        <span className="text-xs text-foreground-muted">count: {tableCount}</span>
+                                        {page != null && <span className="text-xs text-foreground-muted">page: {page}</span>}
+                                        {source && <span className="text-xs text-foreground-muted">source: {source}</span>}
                                     </div>
                                     {tableText ? (
                                         <pre className={`text-xs overflow-x-auto max-h-[40vh] font-mono whitespace-pre-wrap ${colors.textMuted}`}>
                                             {tableText}
                                         </pre>
                                     ) : (
-                                        <div className="text-sm text-[var(--foreground-muted)]">No table markdown available.</div>
+                                        <div className="text-sm text-foreground-muted">No table markdown available.</div>
                                     )}
                                 </div>
                             );
@@ -553,7 +621,7 @@ export default function DocumentDetailPanel({
             )}
 
             {showCv && !cvData && finished && (
-                <div className="surface-card px-5 py-8 text-center text-sm text-[var(--foreground-muted)]">
+                <div className="surface-card px-5 py-8 text-center text-sm text-foreground-muted">
                     No CV evaluation data available for this document.
                 </div>
             )}
@@ -566,12 +634,12 @@ export default function DocumentDetailPanel({
                             const targetId = s.nodeDocumentId || s.previewDocumentId || "";
                             const title = s.document_title || s.document_id?.slice(0, 12) || "Document";
                             const pct = s.score != null ? `${Math.round(Number(s.score) * 100)}% match` : "";
-                            const rowClass = `${cardClass} !rounded-xl px-4 py-3 flex items-center justify-between gap-3 transition-colors hover:border-[rgba(45,212,191,0.35)]`;
+                            const rowClass = `${cardClass} rounded-xl! px-4 py-3 flex items-center justify-between gap-3 transition-colors hover:border-[rgba(56,182,255,0.35)]`;
                             if (targetId) {
                                 return (
                                     <Link key={i} href={`/documents/details?doc=${targetId}`} className={rowClass}>
                                         <span className={`text-sm truncate ${colors.textPrimary}`}>{title}</span>
-                                        {pct && <span className={`text-xs shrink-0 text-teal-400`}>{pct}</span>}
+                                        {pct && <span className={`text-xs shrink-0 text-(--vb-blue-bright)`}>{pct}</span>}
                                     </Link>
                                 );
                             }

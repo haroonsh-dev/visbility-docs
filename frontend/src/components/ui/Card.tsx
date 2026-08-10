@@ -19,7 +19,7 @@ export function Card({ className, hover, padding = "md", children, ...props }: C
             className={cn(
                 "surface-card overflow-hidden",
                 paddings[padding],
-                hover && "transition-colors duration-200 hover:border-[var(--border-strong)]",
+                hover && "transition-colors duration-200 hover:border-border-strong",
                 className
             )}
             {...props}
@@ -33,7 +33,7 @@ export function Panel({ className, children, ...props }: React.HTMLAttributes<HT
     return (
         <div
             className={cn(
-                "bg-[var(--surface)] border border-[var(--border)] rounded-[var(--radius-xl)] overflow-hidden",
+                "bg-surface border border-border rounded-(--radius-xl) overflow-hidden",
                 className
             )}
             {...props}

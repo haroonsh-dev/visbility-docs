@@ -8,6 +8,8 @@ import logger from '../utils/logger';
 const BASE_URL = (process.env.AI_SERVICE_URL || 'http://localhost:8001').replace(/\/$/, '');
 const TIMEOUT = parseInt(process.env.AI_SERVICE_TIMEOUT_MS || '300000', 10);
 const CHAT_TIMEOUT = parseInt(process.env.AI_CHAT_TIMEOUT_MS || '300000', 10);
+/** Status polls / document GET — ai-backend can queue behind OCR/LLM; 8s was too aggressive */
+const QUICK_FETCH_TIMEOUT = parseInt(process.env.AI_QUICK_FETCH_TIMEOUT_MS || '30000', 10);
 const ENABLED = process.env.AI_SERVICE_ENABLED !== 'false';
 
 export function isAiServiceEnabled(): boolean {
@@ -123,6 +125,7 @@ export type AiChatResult = {
     session_id?: string;
     provider?: string;
     model?: string;
+    chart_data?: Record<string, unknown> | null;
 };
 
 export type AiProviderConfig = {
@@ -216,6 +219,34 @@ export async function chatWithAi(params: {
     return res.data as AiChatResult;
 }
 
+export async function appendChatExchange(params: {
+    organizationId: string;
+    question: string;
+    answer: string;
+    sessionId?: string;
+    userId?: string;
+    sources?: Array<Record<string, unknown>>;
+}): Promise<{ session_id: string; answer: string }> {
+    if (!ENABLED) {
+        throw new Error('AI service is disabled');
+    }
+
+    const res = await client().post(
+        '/api/v1/chat/append-exchange',
+        {
+            organization_id: params.organizationId,
+            question: params.question,
+            answer: params.answer,
+            session_id: params.sessionId,
+            user_id: params.userId,
+            sources: params.sources || [],
+        },
+        { timeout: 15_000 }
+    );
+    throwIfAiFailed(res, 'Chat append failed');
+    return res.data as { session_id: string; answer: string };
+}
+
 export type AiSearchResult = {
     results: Array<{
         document_id: string;
@@ -278,7 +309,11 @@ export async function getDocumentJobStatus(
 
     try {
         const params = organizationId ? { organization_id: organizationId } : {};
-        const res = await client().get(`/api/v1/documents/${pythonDocumentId}/job`, { params });
+        const res = await client().get(`/api/v1/documents/${pythonDocumentId}/job`, {
+            params,
+            timeout: QUICK_FETCH_TIMEOUT,
+            validateStatus: (s) => s < 500,
+        });
         if (res.status >= 400) return null;
         return res.data as AiJobStatus;
     } catch (e: any) {
@@ -295,16 +330,27 @@ export async function getAiDocument(
 ): Promise<AiDocumentDetails | null> {
     if (!ENABLED || !pythonDocumentId) return null;
 
-    const res = await client().get(`/api/v1/documents/${pythonDocumentId}`, {
-        params: organizationId ? { organization_id: organizationId } : {},
-    });
-    if (res.status >= 400 && organizationId) {
-        const fallback = await client().get(`/api/v1/documents/${pythonDocumentId}`);
-        if (fallback.status < 400) return fallback.data as AiDocumentDetails;
+    try {
+        const res = await client().get(`/api/v1/documents/${pythonDocumentId}`, {
+            params: organizationId ? { organization_id: organizationId } : {},
+            timeout: QUICK_FETCH_TIMEOUT,
+            validateStatus: (s) => s < 500,
+        });
+        if (res.status < 400) return res.data as AiDocumentDetails;
+
+        // One fallback without org filter (handles org-id mismatch), then stop
+        if (organizationId && res.status === 404) {
+            const fallback = await client().get(`/api/v1/documents/${pythonDocumentId}`, {
+                timeout: QUICK_FETCH_TIMEOUT,
+                validateStatus: (s) => s < 500,
+            });
+            if (fallback.status < 400) return fallback.data as AiDocumentDetails;
+        }
+        return null;
+    } catch (e: any) {
+        logger.warn(`AI document fetch failed: ${e.message}`);
         return null;
     }
-    if (res.status >= 400) return null;
-    return res.data as AiDocumentDetails;
 }
 
 export async function updateAiDocumentSettings(params: {
@@ -390,6 +436,146 @@ export async function getDocumentExtractions(
     const data = res.data;
     if (Array.isArray(data?.extractions)) return data.extractions as AiDocumentExtraction[];
     return [];
+}
+
+export type OfferLetterPrefill = {
+    candidate_name?: string | null;
+    job_title?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    location?: string | null;
+    resume_summary?: string | null;
+    source_fields_used?: string[];
+};
+
+export async function getOfferLetterPrefill(
+    pythonDocumentId: string,
+    organizationId: string
+): Promise<{ prefill: OfferLetterPrefill; extraction_count: number } | null> {
+    if (!ENABLED || !pythonDocumentId) return null;
+
+    const res = await client().get(
+        `/api/v1/hr/documents/${pythonDocumentId}/offer-letter/prefill`,
+        { params: { organization_id: organizationId }, timeout: QUICK_FETCH_TIMEOUT }
+    );
+    if (res.status >= 400) return null;
+    return res.data as { prefill: OfferLetterPrefill; extraction_count: number };
+}
+
+export async function generateOfferLetterDocx(params: {
+    pythonDocumentId: string;
+    organizationId: string;
+    offer: Record<string, unknown>;
+}): Promise<{
+    filename: string;
+    mime_type: string;
+    pdf_base64?: string;
+    docx_base64?: string;
+    size_bytes: number;
+}> {
+    if (!ENABLED || !params.pythonDocumentId) {
+        throw new Error('AI service is disabled');
+    }
+
+    const res = await client().post(
+        `/api/v1/hr/documents/${params.pythonDocumentId}/offer-letter/generate`,
+        {
+            organization_id: params.organizationId,
+            offer: params.offer,
+        },
+        { timeout: 60_000 }
+    );
+    if (res.status >= 400) {
+        const detail = res.data?.detail || res.data?.message || JSON.stringify(res.data);
+        throw new Error(typeof detail === 'string' ? detail : 'Offer letter generation failed');
+    }
+    return res.data as {
+        filename: string;
+        mime_type: string;
+        pdf_base64?: string;
+        docx_base64?: string;
+        size_bytes: number;
+    };
+}
+
+export type ExperienceLetterPrefill = OfferLetterPrefill & {
+    duties_summary?: string | null;
+};
+
+export async function getExperienceLetterPrefill(
+    pythonDocumentId: string,
+    organizationId: string
+): Promise<{ prefill: ExperienceLetterPrefill; extraction_count: number } | null> {
+    if (!ENABLED || !pythonDocumentId) return null;
+
+    const res = await client().get(
+        `/api/v1/hr/documents/${pythonDocumentId}/experience-letter/prefill`,
+        { params: { organization_id: organizationId }, timeout: QUICK_FETCH_TIMEOUT }
+    );
+    if (res.status >= 400) return null;
+    return res.data as { prefill: ExperienceLetterPrefill; extraction_count: number };
+}
+
+export async function generateExperienceLetterPdf(params: {
+    pythonDocumentId: string;
+    organizationId: string;
+    experience: Record<string, unknown>;
+}): Promise<{
+    filename: string;
+    mime_type: string;
+    pdf_base64?: string;
+    size_bytes: number;
+}> {
+    if (!ENABLED || !params.pythonDocumentId) {
+        throw new Error('AI service is disabled');
+    }
+
+    const res = await client().post(
+        `/api/v1/hr/documents/${params.pythonDocumentId}/experience-letter/generate`,
+        {
+            organization_id: params.organizationId,
+            experience: params.experience,
+        },
+        { timeout: 60_000 }
+    );
+    if (res.status >= 400) {
+        const detail = res.data?.detail || res.data?.message || JSON.stringify(res.data);
+        throw new Error(typeof detail === 'string' ? detail : 'Experience letter generation failed');
+    }
+    return res.data as {
+        filename: string;
+        mime_type: string;
+        pdf_base64?: string;
+        size_bytes: number;
+    };
+}
+
+export async function generateExtractionReportHtml(
+    organizationId: string,
+    phase3Agent = ''
+): Promise<{ subject: string; html: string }> {
+    if (!ENABLED || !organizationId) {
+        throw new Error('AI service is disabled');
+    }
+
+    const res = await client().post(
+        '/api/v1/reports/generate',
+        {
+            organization_id: organizationId,
+            phase3_agent: phase3Agent || '',
+        },
+        { timeout: 120_000 }
+    );
+    if (res.status >= 400) {
+        const detail = res.data?.detail || res.data?.message || JSON.stringify(res.data);
+        throw new Error(typeof detail === 'string' ? detail : 'Extraction report generation failed');
+    }
+    const subject = String(res.data?.subject || 'Visibility Docs extraction report');
+    const html = String(res.data?.html || '');
+    if (!html) {
+        throw new Error('AI returned an empty report');
+    }
+    return { subject, html };
 }
 
 export type AiSimilarDocument = {
@@ -651,24 +837,36 @@ export async function listChatSessions(
     const params: Record<string, string> = { organization_id: organizationId };
     if (userId) params.user_id = userId;
 
-    const res = await client().get('/api/v1/chat/sessions', { params });
-    if (res.status >= 400) return [];
-    return (res.data?.sessions || []) as ChatSessionSummary[];
+    try {
+        const res = await client().get('/api/v1/chat/sessions', { params });
+        if (res.status >= 400) return [];
+        return (res.data?.sessions || []) as ChatSessionSummary[];
+    } catch {
+        return []; // AI service down — treat as "no sessions" so the UI degrades cleanly
+    }
 }
 
 export async function getChatSession(sessionId: string): Promise<ChatSessionDetails | null> {
     if (!ENABLED || !sessionId) return null;
 
-    const res = await client().get(`/api/v1/chat/sessions/${sessionId}`);
-    if (res.status >= 400) return null;
-    return res.data as ChatSessionDetails;
+    try {
+        const res = await client().get(`/api/v1/chat/sessions/${sessionId}`);
+        if (res.status >= 400) return null;
+        return res.data as ChatSessionDetails;
+    } catch {
+        return null;
+    }
 }
 
 export async function deleteChatSession(sessionId: string): Promise<boolean> {
     if (!ENABLED || !sessionId) return false;
 
-    const res = await client().delete(`/api/v1/chat/sessions/${sessionId}`);
-    return res.status < 400;
+    try {
+        const res = await client().delete(`/api/v1/chat/sessions/${sessionId}`);
+        return res.status < 400;
+    } catch {
+        return false;
+    }
 }
 
 export async function renameChatSession(
@@ -679,9 +877,13 @@ export async function renameChatSession(
     const trimmed = title.trim();
     if (!trimmed) return null;
 
-    const res = await client().post(`/api/v1/chat/sessions/${sessionId}/rename`, { title: trimmed });
-    if (res.status >= 400) return null;
-    return (res.data?.session || { id: sessionId, title: trimmed, document_ids: [] }) as ChatSessionSummary;
+    try {
+        const res = await client().post(`/api/v1/chat/sessions/${sessionId}/rename`, { title: trimmed });
+        if (res.status >= 400) return null;
+        return (res.data?.session || { id: sessionId, title: trimmed, document_ids: [] }) as ChatSessionSummary;
+    } catch {
+        return null;
+    }
 }
 
 export async function checkAiHealth(): Promise<boolean> {
@@ -711,11 +913,16 @@ export async function getGroqStatus(): Promise<GroqLimitStatus> {
         return { limited: false, configured: false, retry_after_seconds: 0 };
     }
     // Status must never hang behind the 120s AI default — the frontend polls this.
-    const res = await client().get('/api/v1/groq/status', { timeout: 5_000 });
-    if (res.status >= 400) {
+    try {
+        const res = await client().get('/api/v1/groq/status', { timeout: 5_000 });
+        if (res.status >= 400) {
+            return { limited: false, configured: false, retry_after_seconds: 0 };
+        }
+        return res.data as GroqLimitStatus;
+    } catch {
+        // AI service down — treat as not limited so the UI doesn't spam the modal
         return { limited: false, configured: false, retry_after_seconds: 0 };
     }
-    return res.data as GroqLimitStatus;
 }
 
 export async function setGroqApiKey(apiKey: string): Promise<Record<string, unknown>> {

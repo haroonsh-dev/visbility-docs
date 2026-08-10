@@ -9,6 +9,7 @@ import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
     Plus, Trash2, Pencil, Check, X, MessageSquare, MessageCircle, Copy, Upload, Loader2,
     ThumbsUp, ThumbsDown, Search, Download, RotateCcw, PanelLeft, PanelLeftClose, ChevronDown, MoreHorizontal,
+    BarChart3,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatScopePanel, {
@@ -23,6 +24,18 @@ import { usePermissions } from "@/context/PermissionsContext";
 import { resolveDocAgent, agentLabel } from "@/lib/documentAgents";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { useToast } from "@/components/Toast";
+import ChatAnalyticsSidePanel, {
+    WORKSPACE_SPLIT_HEADER,
+    type AnalyticsPanelView,
+} from "@/components/ChatAnalyticsSidePanel";
+import type { ChatVisualSpec, FinanceAnalyticsCoverage } from "@/types/chatVisuals";
+import { isFinanceAnalyticsDoc } from "@/lib/financeAnalyticsScope";
+import {
+    filterComplianceAnalyticsDocIds,
+    isComplianceAnalyticsDoc,
+} from "@/lib/complianceAnalyticsScope";
+import { filterAnalyticsScopeDocIds } from "@/lib/analyticsScope";
+import ChatGraphRenderer, { type ChartDataPayload } from "@/components/ChatGraphRenderer";
 
 type ChatMessage = {
     id: string;
@@ -31,6 +44,7 @@ type ChatMessage = {
     agentId?: string;
     aiProvider?: string;
     aiModel?: string;
+    chartData?: ChartDataPayload;
     citations?: Array<{
         documentId?: string;
         filename?: string;
@@ -38,6 +52,7 @@ type ChatMessage = {
         snippet?: string;
         score?: number;
     }>;
+    visuals?: ChatVisualSpec[];
 };
 
 type LibraryDoc = ScopeLibraryDoc;
@@ -56,6 +71,28 @@ type ChatModelOption = {
     model: string;
     baseUrl?: string | null;
 };
+
+const ANALYTICS_AGENT_IDS = new Set([
+    "finance_agent",
+    "hr_agent",
+    "compliance_agent",
+    "procurement_agent",
+    "legal_agent",
+]);
+
+function messageMayUseAnalytics(message: string, agentId?: string | null): boolean {
+    if (agentId && !ANALYTICS_AGENT_IDS.has(agentId) && agentId !== "other_agent") {
+        // Still allow when message itself asks for charts with scoped docs
+    }
+    const q = message.toLowerCase();
+    return (
+        /\b(chart|graph|graphs|visuali[sz]e|visual|plot|analytics|breakdown|dashboard)\b/.test(q) ||
+        /\b(vendor|items?|line[\s-]?items?|spend|invoice|score|rank|expiry|findings|top\s+\d+|supplier|po|quotation)\b/.test(
+            q
+        ) ||
+        /\b(show|list|give)\b.*\b(items?|numbers|stats|graph|chart)\b/.test(q)
+    );
+}
 
 const WELCOME_MSG: ChatMessage = {
     id: "welcome",
@@ -115,6 +152,7 @@ function isChitchatMessage(text: string): boolean {
         "resume", "cv", "invoice", "document", "file", "score", "candidate",
         "pdf", "contract", "find", "show", "list", "who", "what is", "kitne",
         "kitna", "batao", "tell me", "search", "summar", "extract",
+        "chart", "graph", "visualize", "visualise", "vendor", "spend", "invoice", "aging",
     ];
     if (docHints.some((h) => q.includes(h))) return false;
     return /^(hi|hii+|hello|hey|hy|helo|hola|salam|assalam|aoa|slm|good\s*(morning|afternoon|evening|night)|gm|gn|how are you|how's it going|how r u|whats? up|sup|thanks?|thank you|thx|ty|shukriya|ok|okay|k|cool|great|nice|bye|goodbye|yes|no|yep|yup|nope|yeah|help|who are you|what can you do)\b/i.test(
@@ -337,6 +375,16 @@ function ChatContent() {
     const msgsContainerRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const streamRevealRef = useRef<{ cancelled: boolean }>({ cancelled: false });
+    const [analyticsVisuals, setAnalyticsVisuals] = useState<ChatVisualSpec[]>([]);
+    const [analyticsAgentId, setAnalyticsAgentId] = useState<string | undefined>();
+    const [analyticsPanelOpen, setAnalyticsPanelOpen] = useState(false);
+    const chatAnalyticsLockRef = useRef(false);
+    const [analyticsLoading, setAnalyticsLoading] = useState(false);
+    const [analyticsView, setAnalyticsView] = useState<AnalyticsPanelView>("overview");
+    const [analyticsDocCount, setAnalyticsDocCount] = useState<number | undefined>();
+    const [analyticsCoverage, setAnalyticsCoverage] = useState<FinanceAnalyticsCoverage | null>(null);
+    const [analyticsScopeMode, setAnalyticsScopeMode] = useState<"all" | "selected">("all");
+    const [chatContextDocIds, setChatContextDocIds] = useState<string[]>([]);
     const lastPromptRef = useRef<string>("");
     const prevPathRef = useRef<string | null>(null);
     const deepLinkAppliedRef = useRef(false);
@@ -403,8 +451,134 @@ function ChatContent() {
         loadModels();
     }, [loadDocs, loadSessions, loadModels]);
 
+    // Refresh library when returning to chat (uploads finish on Documents page)
+    useEffect(() => {
+        const onFocus = () => loadDocs();
+        const onVis = () => {
+            if (document.visibilityState === "visible") loadDocs();
+        };
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVis);
+        return () => {
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVis);
+        };
+    }, [loadDocs]);
+
+    // While anything is still processing, re-list so phase3Agent heal + ready status show up
+    useEffect(() => {
+        const pending = libraryDocs.some((d) => {
+            if (!d.pythonDocumentId) return false;
+            if (d.status === "processing" || d.status === "uploaded") return true;
+            // Classified but missing clamped agent → chat may wrongly hide as off-plan
+            return Boolean(d.classification) && !d.metadata?.phase3Agent;
+        });
+        if (!pending) return;
+        const t = window.setInterval(() => loadDocs(), 8000);
+        return () => window.clearInterval(t);
+    }, [libraryDocs, loadDocs]);
+
     const searchParams = useSearchParams();
     const agentUrlParam = searchParams?.get("agent");
+
+    const showAnalyticsRail =
+        analyticsPanelOpen &&
+        (ANALYTICS_AGENT_IDS.has(analyticsAgentId || "") ||
+            ANALYTICS_AGENT_IDS.has(agentUrlParam || ""));
+
+    const chatColumnMax = showAnalyticsRail ? "max-w-none w-full" : "max-w-3xl";
+
+    useEffect(() => {
+        if (agentUrlParam && ANALYTICS_AGENT_IDS.has(agentUrlParam)) {
+            setAnalyticsAgentId(agentUrlParam);
+            setAnalyticsView("overview");
+            setAnalyticsVisuals([]);
+            chatAnalyticsLockRef.current = false;
+        }
+    }, [agentUrlParam]);
+
+    const loadAgentAnalytics = useCallback(
+        async (agentId: string, view: AnalyticsPanelView = "overview", scopeDocIds?: string[]) => {
+            if (!ANALYTICS_AGENT_IDS.has(agentId)) return;
+            setAnalyticsLoading(true);
+            try {
+                const params = new URLSearchParams({ agent: agentId });
+                if (agentId === "finance_agent" && view !== "overview") {
+                    params.set("view", view);
+                }
+                if (agentId === "hr_agent" && view !== "overview") {
+                    params.set("view", view);
+                }
+                if (agentId === "compliance_agent" && view !== "overview") {
+                    params.set("view", view);
+                }
+                if (scopeDocIds?.length) {
+                    params.set("documentIds", scopeDocIds.join(","));
+                }
+                const data = await apiRequest(`/docs/chat/analytics?${params.toString()}`);
+                const visuals = Array.isArray(data?.data?.visuals)
+                    ? (data.data.visuals as ChatVisualSpec[])
+                    : [];
+                setAnalyticsVisuals(visuals);
+                setAnalyticsAgentId(data?.data?.agentId || agentId);
+                const count = data?.data?.documentCount;
+                setAnalyticsDocCount(typeof count === "number" ? count : undefined);
+                const cov = data?.data?.coverage;
+                setAnalyticsCoverage(cov && typeof cov === "object" ? (cov as FinanceAnalyticsCoverage) : null);
+                const mode = data?.data?.scopeMode;
+                setAnalyticsScopeMode(mode === "selected" ? "selected" : "all");
+            } catch {
+                setAnalyticsVisuals([]);
+                setAnalyticsDocCount(undefined);
+            } finally {
+                setAnalyticsLoading(false);
+            }
+        },
+        []
+    );
+
+    const analyticsScopeDocIds = useMemo(() => {
+        const selected =
+            chatScope === "selected" && selectedDocIds.length
+                ? filterAnalyticsScopeDocIds(libraryDocs, selectedDocIds)
+                : [];
+        const cited = chatContextDocIds.filter(
+            (id) => filterAnalyticsScopeDocIds(libraryDocs, [id]).length > 0
+        );
+        const merged = [...new Set([...selected, ...cited])];
+        return merged.length ? merged : undefined;
+    }, [chatScope, selectedDocIds, libraryDocs, chatContextDocIds]);
+
+    useEffect(() => {
+        if (!agentUrlParam || !ANALYTICS_AGENT_IDS.has(agentUrlParam) || !analyticsPanelOpen) return;
+        if (chatAnalyticsLockRef.current) return;
+        void loadAgentAnalytics(agentUrlParam, analyticsView, analyticsScopeDocIds);
+    }, [agentUrlParam, analyticsPanelOpen, analyticsView, analyticsScopeDocIds, loadAgentAnalytics]);
+
+    const openAnalyticsPanel = useCallback(
+        (fetchDashboard = true) => {
+            setAnalyticsPanelOpen(true);
+            if (fetchDashboard && !chatAnalyticsLockRef.current) {
+                const aid = analyticsAgentId || agentUrlParam;
+                if (aid && ANALYTICS_AGENT_IDS.has(aid)) {
+                    void loadAgentAnalytics(aid, analyticsView, analyticsScopeDocIds);
+                }
+            }
+        },
+        [agentUrlParam, analyticsAgentId, analyticsView, analyticsScopeDocIds, loadAgentAnalytics]
+    );
+
+    const handleAnalyticsViewChange = useCallback(
+        (view: AnalyticsPanelView) => {
+            chatAnalyticsLockRef.current = false;
+            setAnalyticsView(view);
+            const aid = analyticsAgentId || agentUrlParam;
+            if (aid && ANALYTICS_AGENT_IDS.has(aid)) {
+                void loadAgentAnalytics(aid, view, analyticsScopeDocIds);
+            }
+        },
+        [agentUrlParam, analyticsAgentId, analyticsScopeDocIds, loadAgentAnalytics]
+    );
     const isNewChatReq = searchParams?.get("new") === "1" || searchParams?.get("new") === "true";
 
     useEffect(() => {
@@ -416,10 +590,70 @@ function ChatContent() {
     }, [isNewChatReq, agentUrlParam]);
 
     useEffect(() => {
+        if (isNewChatReq) return;
+        if (!agentUrlParam) return;
+        const financeWelcome: ChatMessage = {
+            id: "welcome",
+            role: "assistant",
+            content:
+                "I chart finance files in your Document scope — vendor/client spend, line items, aging, trends. Name a file in your message to chart **only that invoice**. Low-quality extractions show a data badge with Reprocess.",
+        };
+        const hrWelcome: ChatMessage = {
+            id: "welcome",
+            role: "assistant",
+            content:
+                "I can chart CV scores in scope, or draft an offer/experience letter for one person you name. Payroll/attendance prompts still use document Q&A — charts cover ranking and score distribution today.",
+        };
+        const complianceWelcome: ChatMessage = {
+            id: "welcome",
+            role: "assistant",
+            content:
+                "I chart certificates and audits in scope — expiry, findings, status. Name a file in your message to focus on one document.",
+        };
+        const procurementWelcome: ChatMessage = {
+            id: "welcome",
+            role: "assistant",
+            content:
+                "Select POs, quotations, or RFQs in scope. I can chart supplier amounts and **PO vs invoice** totals when those fields are extracted.",
+        };
+        const legalWelcome: ChatMessage = {
+            id: "welcome",
+            role: "assistant",
+            content:
+                "Select contracts in scope. I can chart **risk flags**, **clause type mix**, and values by party when extractions include those fields.",
+        };
+        const byAgent: Record<string, ChatMessage> = {
+            finance_agent: financeWelcome,
+            hr_agent: hrWelcome,
+            compliance_agent: complianceWelcome,
+            procurement_agent: procurementWelcome,
+            legal_agent: legalWelcome,
+        };
+        const next = byAgent[agentUrlParam];
+        if (!next) return;
+        setMessages((prev) => {
+            if (prev.length !== 1 || prev[0].id !== "welcome") return prev;
+            return [next];
+        });
+    }, [agentUrlParam, isNewChatReq]);
+
+    useEffect(() => {
         if (!agentUrlParam || !libraryDocs.length) return;
         const matchingDocs = libraryDocs.filter((d) => resolveDocAgent(d) === agentUrlParam);
-        if (matchingDocs.length > 0) {
-            setSelectedDocIds(matchingDocs.map((d) => d.documentId));
+        const scoped =
+            agentUrlParam === "finance_agent"
+                ? matchingDocs.filter((d) => isFinanceAnalyticsDoc(d))
+                : agentUrlParam === "compliance_agent"
+                  ? matchingDocs.filter((d) => isComplianceAnalyticsDoc(d))
+                  : agentUrlParam === "hr_agent"
+                    ? matchingDocs.filter(
+                          (d) =>
+                              String(d.classification || "").toLowerCase() === "resume" ||
+                              /\b(cv|resume)\b/i.test(d.originalFilename || "")
+                      )
+                    : matchingDocs;
+        if (scoped.length > 0) {
+            setSelectedDocIds(scoped.map((d) => d.documentId));
             setChatScope("selected");
         } else {
             setSelectedDocIds([]);
@@ -610,6 +844,8 @@ function ChatContent() {
         setSessionId(undefined);
         setMessages([WELCOME_MSG]);
         setFocusedExcerpt("");
+        setAnalyticsVisuals([]);
+        chatAnalyticsLockRef.current = false;
         localStorage.removeItem(LAST_SESSION_KEY);
     };
 
@@ -840,6 +1076,9 @@ function ChatContent() {
                 provider: activeProvider,
                 model: activeModel,
             };
+            if (agentUrlParam && isAgentAllowed(agentUrlParam)) {
+                body.phase3Agent = agentUrlParam;
+            }
             if (chatScope === "selected") {
                 body.documentIds = selectedDocIds;
                 const selected = libraryDocs.filter((d) => selectedDocIds.includes(d.documentId));
@@ -863,6 +1102,34 @@ function ChatContent() {
                 body.provider = chosenModel.provider;
                 body.model = chosenModel.model;
             }
+            if (analyticsScopeDocIds?.length) {
+                body.analyticsDocumentIds = analyticsScopeDocIds;
+            }
+            let focusFromLastTurn: string[] = [];
+            for (const m of [...messages].reverse()) {
+                if (m.role !== "assistant") continue;
+                const ids = (m.citations || [])
+                    .map((c) => c.documentId)
+                    .filter((id): id is string => Boolean(id));
+                if (ids.length) {
+                    focusFromLastTurn = ids;
+                    break;
+                }
+            }
+            const focusIds = [
+                ...new Set([...focusFromLastTurn, ...chatContextDocIds]),
+            ].filter(Boolean);
+            if (focusIds.length) {
+                body.focusDocumentIds = focusIds.slice(0, 3);
+            }
+
+            const effectiveAgent =
+                (typeof body.phase3Agent === "string" ? body.phase3Agent : undefined) || agentUrlParam;
+            if (messageMayUseAnalytics(trimmed, effectiveAgent)) {
+                chatAnalyticsLockRef.current = false;
+                setAnalyticsVisuals([]);
+                setAnalyticsLoading(true);
+            }
 
             const data = await apiRequest("/docs/chat", {
                 method: "POST",
@@ -882,9 +1149,38 @@ function ChatContent() {
             }
 
             const fullReply = data?.data?.reply || "No response.";
+            const nextVisuals = Array.isArray(data?.data?.visuals) ? (data.data.visuals as ChatVisualSpec[]) : [];
+            setAnalyticsLoading(false);
+            if (data?.data?.model === "agent-analytics" && data?.data?.agentId && ANALYTICS_AGENT_IDS.has(data.data.agentId)) {
+                setAnalyticsPanelOpen(true);
+                setAnalyticsAgentId(data.data.agentId);
+            }
+            if (nextVisuals.length) {
+                chatAnalyticsLockRef.current = true;
+                setAnalyticsVisuals(nextVisuals);
+                setAnalyticsPanelOpen(true);
+                const vizAgent = data?.data?.agentId;
+                if (vizAgent && ANALYTICS_AGENT_IDS.has(vizAgent)) {
+                    setAnalyticsAgentId(vizAgent);
+                }
+                const citIds = (data?.data?.citations || [])
+                    .map((c: { documentId?: string }) => c.documentId)
+                    .filter((id: string | undefined): id is string => Boolean(id));
+                if (citIds.length) setChatContextDocIds(citIds);
+            }
+            patchAssistant(assistantId, {
+                agentId: data?.data?.agentId,
+                visuals: nextVisuals.length ? nextVisuals : undefined,
+            });
+            const replyForChat =
+                nextVisuals.length && data?.data?.model === "agent-analytics"
+                    ? fullReply
+                    : nextVisuals.length
+                      ? `${fullReply}\n\nI’ve put the chart(s) in the Analytics panel.`
+                      : fullReply;
             await revealStreamText(
                 assistantId,
-                fullReply,
+                replyForChat,
                 (id, content) => patchAssistant(id, { content }),
                 streamRevealRef.current,
                 controller.signal
@@ -903,7 +1199,15 @@ function ChatContent() {
                 agentId: data?.data?.agentId,
                 aiProvider: data?.data?.aiProvider,
                 aiModel: data?.data?.aiModel,
+                chartData: data?.data?.chartData,
             });
+            // Track only what this turn discussed — never the full scope (breaks "chart of that")
+            if (citations.length) {
+                const fromCitations = citations
+                    .map((c) => c.documentId)
+                    .filter((id): id is string => Boolean(id));
+                if (fromCitations.length) setChatContextDocIds(fromCitations);
+            }
         } catch (e: unknown) {
             if (e instanceof Error && e.name === "AbortError") {
                 patchAssistant(assistantId, { content: "Response stopped." });
@@ -915,6 +1219,7 @@ function ChatContent() {
         } finally {
             abortRef.current = null;
             setSending(false);
+            setAnalyticsLoading(false);
         }
     };
 
@@ -1062,8 +1367,10 @@ function ChatContent() {
 
     const scopeLabel =
         chatScope === "all"
-            ? `All documents (${selectableDocs.length})`
-            : `Selected (${selectedDocIds.length} of ${selectableDocs.length})`;
+            ? agentUrlParam
+                ? `All ${agentLabel(agentUrlParam)} docs (${filteredDocs.length})`
+                : `All documents (${selectableDocs.length})`
+            : `Selected (${selectedDocIds.length} of ${agentUrlParam ? filteredDocs.length : selectableDocs.length})`;
 
     const isWelcomeOnly = messages.length === 1 && messages[0].id === "welcome";
     const canUploadChat = !isWelcomeOnly && messages.some((m) => m.id !== "welcome");
@@ -1151,7 +1458,7 @@ function ChatContent() {
                         }}
                         className={`mx-2 mb-2 flex w-[calc(100%-16px)] items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                             !sessionId
-                                ? "bg-accent-muted border border-[rgba(45,212,191,0.25)] text-accent"
+                                ? "bg-accent-muted border border-[rgba(56,182,255,0.25)] text-accent"
                                 : isDark
                                   ? "border border-transparent text-foreground-secondary hover:bg-white/4"
                                   : "border border-transparent text-foreground-secondary hover:bg-slate-100/80"
@@ -1182,7 +1489,7 @@ function ChatContent() {
                                     key={s.id}
                                     className={`group mx-2 mb-1 flex items-start gap-1 rounded-xl px-2 py-2 transition-colors ${
                                         active
-                                            ? "bg-accent-muted border border-[rgba(45,212,191,0.25)]"
+                                            ? "bg-accent-muted border border-[rgba(56,182,255,0.25)]"
                                             : isDark
                                               ? "border border-transparent hover:bg-white/4"
                                               : "border border-transparent hover:bg-slate-100/80"
@@ -1217,7 +1524,7 @@ function ChatContent() {
                                                 type="button"
                                                 onClick={() => void saveRename(s.id)}
                                                 disabled={renameSaving || !renameDraft.trim()}
-                                                className="btn-ghost p-1.5 text-teal-500 hover:text-teal-400 shrink-0 rounded-lg disabled:opacity-40"
+                                                className="btn-ghost p-1.5 text-(--vb-blue) hover:text-(--vb-blue-bright) shrink-0 rounded-lg disabled:opacity-40"
                                                 aria-label="Save name"
                                             >
                                                 {renameSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
@@ -1282,8 +1589,11 @@ function ChatContent() {
                 </div>
             </aside>
 
-            <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-linear-to-br from-transparent via-teal-500/2 to-cyan-500/4">
-                <div className="px-3 sm:px-6 lg:px-8 py-3 sm:py-4 border-b border-border shrink-0 flex flex-wrap items-center gap-2 sm:gap-3">
+            <div
+                className={`flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-linear-to-br from-transparent via-[rgba(56,182,255,0.02)] to-blue-600/4`}
+            >
+            {showAnalyticsRail && (
+                <div className={`${WORKSPACE_SPLIT_HEADER} justify-between`}>
                     <button
                         type="button"
                         onClick={() => setSidebarOpen((o) => !o)}
@@ -1295,17 +1605,19 @@ function ChatContent() {
                     </button>
                     <div
                         className={`h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center shrink-0 ${
-                            isDark ? "bg-teal-500/15 text-teal-300" : "bg-teal-100 text-teal-700"
+                            isDark ? "bg-[rgba(56,182,255,0.15)] text-(--vb-blue-bright)" : "bg-[rgba(56,182,255,0.14)] text-(--vb-blue-dark)"
                         }`}
                     >
                         <Sparkles size={18} />
                     </div>
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                            <h1 className={`text-base sm:text-xl font-bold tracking-tight ${colors.textPrimary}`}>AI Chat</h1>
+                            <h1 className={`text-base sm:text-xl font-bold tracking-tight ${colors.textPrimary}`}>
+                                AI Chat
+                            </h1>
                             {agentUrlParam && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 text-xs text-teal-400 font-semibold shrink-0">
-                                    <span>Agent: {agentLabel(agentUrlParam)}</span>
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.3)] bg-[rgba(56,182,255,0.1)] px-2.5 py-0.5 text-xs text-(--vb-blue-bright) font-semibold shrink-0">
+                                    <span>{agentLabel(agentUrlParam)}</span>
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -1324,7 +1636,9 @@ function ChatContent() {
                             )}
                         </div>
                         <p className={`text-xs sm:text-sm ${colors.textMuted} truncate hidden sm:block`}>
-                            {agentUrlParam ? `Chatting with ${agentLabel(agentUrlParam)} documents` : "Ask questions across your document library"}
+                            {showAnalyticsRail
+                                ? "Charts follow your last analytics question or panel tabs"
+                                : "Ask for a chart to open analytics"}
                         </p>
                     </div>
                     <button
@@ -1339,7 +1653,7 @@ function ChatContent() {
                         className={`inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-xs sm:text-sm transition-colors min-h-10 ${
                             scopePanelOpen
                                 ? "border-accent bg-accent-muted"
-                                : "border-border hover:border-[rgba(45,212,191,0.4)] hover:bg-accent-muted"
+                                : "border-border hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
                         }`}
                     >
                         <FileText size={14} className="text-accent shrink-0" />
@@ -1353,12 +1667,21 @@ function ChatContent() {
                     </button>
                     <button
                         type="button"
+                        onClick={() => setAnalyticsPanelOpen(false)}
+                        className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-accent bg-accent-muted px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 text-accent"
+                        title="Hide analytics panel"
+                    >
+                        <BarChart3 size={14} className="shrink-0" />
+                        <span className="font-medium">Analytics</span>
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => {
                             setHeaderMenuOpen(false);
                             setScopePanelOpen(false);
                             startNewChat();
                         }}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors hover:border-[rgba(45,212,191,0.4)] hover:bg-accent-muted"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
                     >
                         <Plus size={14} className="text-accent shrink-0" />
                         <span className={`hidden sm:inline font-medium ${colors.textPrimary}`}>New chat</span>
@@ -1423,16 +1746,183 @@ function ChatContent() {
                         )}
                     </div>
                 </div>
+            )}
+            <div
+                className={`flex-1 min-h-0 grid overflow-hidden min-w-0 ${
+                    showAnalyticsRail ? "lg:grid-cols-[minmax(0,1fr)_minmax(320px,42%)]" : "grid-cols-1"
+                }`}
+            >
+            <div className="min-w-0 min-h-0 flex flex-col overflow-hidden border-border lg:border-r">
+                {!showAnalyticsRail && (
+                <div className="px-3 sm:px-6 lg:px-8 py-3 sm:py-4 border-b border-border shrink-0 flex flex-wrap items-center gap-2 sm:gap-3">
+                    <button
+                        type="button"
+                        onClick={() => setSidebarOpen((o) => !o)}
+                        className="btn-ghost rounded-lg p-2.5 min-h-11 min-w-11 flex items-center justify-center"
+                        aria-label={sidebarOpen ? "Hide chats" : "Show chats"}
+                        title={sidebarOpen ? "Hide chats" : "Show chats"}
+                    >
+                        {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
+                    </button>
+                    <div
+                        className={`h-9 w-9 sm:h-10 sm:w-10 rounded-xl flex items-center justify-center shrink-0 ${
+                            isDark ? "bg-[rgba(56,182,255,0.15)] text-(--vb-blue-bright)" : "bg-[rgba(56,182,255,0.14)] text-(--vb-blue-dark)"
+                        }`}
+                    >
+                        <Sparkles size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                            <h1 className={`text-base sm:text-xl font-bold tracking-tight ${colors.textPrimary}`}>AI Chat</h1>
+                            {agentUrlParam && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.3)] bg-[rgba(56,182,255,0.1)] px-2.5 py-0.5 text-xs text-(--vb-blue-bright) font-semibold shrink-0">
+                                    <span>Agent: {agentLabel(agentUrlParam)}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const url = new URL(window.location.href);
+                                            url.searchParams.delete("agent");
+                                            url.searchParams.delete("new");
+                                            window.history.replaceState({}, "", url.toString());
+                                            window.dispatchEvent(new Event("popstate"));
+                                        }}
+                                        className="hover:text-rose-400 text-slate-400 p-0.5"
+                                        title="Clear agent filter"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            )}
+                        </div>
+                        <p className={`text-xs sm:text-sm ${colors.textMuted} truncate hidden sm:block`}>
+                            {agentUrlParam ? `Chatting with ${agentLabel(agentUrlParam)} documents` : "Ask questions across your document library"}
+                        </p>
+                    </div>
+                    <button
+                        ref={scopeButtonRef}
+                        type="button"
+                        onClick={() => {
+                            setHeaderMenuOpen(false);
+                            setScopePanelOpen((o) => !o);
+                        }}
+                        aria-expanded={scopePanelOpen}
+                        aria-haspopup="dialog"
+                        className={`inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-xs sm:text-sm transition-colors min-h-10 ${
+                            scopePanelOpen
+                                ? "border-accent bg-accent-muted"
+                                : "border-border hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
+                        }`}
+                    >
+                        <FileText size={14} className="text-accent shrink-0" />
+                        <span className={`${colors.textPrimary} font-medium truncate max-w-25 sm:max-w-55`}>
+                            {scopeLabel}
+                        </span>
+                        <ChevronDown
+                            size={14}
+                            className={`text-accent shrink-0 transition-transform ${scopePanelOpen ? "rotate-180" : ""}`}
+                        />
+                    </button>
+                    {(ANALYTICS_AGENT_IDS.has(agentUrlParam || "") || analyticsVisuals.length > 0) && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (showAnalyticsRail) setAnalyticsPanelOpen(false);
+                                else openAnalyticsPanel(true);
+                            }}
+                            className={`hidden sm:inline-flex items-center gap-1.5 rounded-full border px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors ${
+                                showAnalyticsRail
+                                    ? "border-accent bg-accent-muted text-accent"
+                                    : "border-border bg-surface hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
+                            }`}
+                            title={showAnalyticsRail ? "Hide analytics panel" : "Show analytics panel"}
+                        >
+                            <BarChart3 size={14} className="shrink-0" />
+                            <span className="font-medium">Analytics</span>
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setHeaderMenuOpen(false);
+                            setScopePanelOpen(false);
+                            startNewChat();
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
+                    >
+                        <Plus size={14} className="text-accent shrink-0" />
+                        <span className={`hidden sm:inline font-medium ${colors.textPrimary}`}>New chat</span>
+                    </button>
+                    <div className="relative shrink-0" ref={headerMenuRef}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setScopePanelOpen(false);
+                                setHeaderMenuOpen((o) => !o);
+                            }}
+                            aria-expanded={headerMenuOpen}
+                            aria-haspopup="menu"
+                            aria-label="More actions"
+                            title="More actions"
+                            className={`inline-flex items-center justify-center rounded-xl border min-h-10 min-w-10 transition-colors ${
+                                headerMenuOpen
+                                    ? "border-accent bg-accent-muted text-accent"
+                                    : "border-border bg-surface text-foreground-muted hover:bg-accent-muted hover:text-accent"
+                            }`}
+                        >
+                            <MoreHorizontal size={18} />
+                        </button>
+                        {headerMenuOpen && (
+                            <div
+                                role="menu"
+                                className="absolute right-0 top-full mt-2 z-40 w-48 rounded-xl border border-border bg-surface shadow-xl py-1 animate-fade-in-up"
+                            >
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    disabled={!canUploadChat || uploadingBusy}
+                                    onClick={() => {
+                                        setHeaderMenuOpen(false);
+                                        uploadFullChatAsFile();
+                                    }}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.textPrimary} hover:bg-accent-muted`}
+                                    title="Send this chat as a .txt to the connected integration (Drive)"
+                                >
+                                    {uploadingTxtId === "full-chat" ? (
+                                        <Loader2 size={14} className="animate-spin text-accent shrink-0" />
+                                    ) : (
+                                        <Upload size={14} className="text-accent shrink-0" />
+                                    )}
+                                    Send chat
+                                </button>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    disabled={isWelcomeOnly}
+                                    onClick={() => {
+                                        setHeaderMenuOpen(false);
+                                        exportToPdf();
+                                    }}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.textPrimary} hover:bg-accent-muted`}
+                                    title="Export conversation as text file"
+                                >
+                                    <Download size={14} className="text-accent shrink-0" />
+                                    Export
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                )}
 
                 <div
                     className="flex-1 min-h-0 overflow-y-auto"
                     ref={msgsContainerRef}
                     onMouseUp={handleSelection}
                 >
-                    <div className={`max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 space-y-8 min-h-full flex flex-col ${!isWelcomeOnly ? "justify-end" : ""}`}>
+                    <div className={`${chatColumnMax} mx-auto w-full px-4 sm:px-6 py-8 space-y-8 min-h-full flex flex-col ${!isWelcomeOnly ? "justify-end" : ""}`}>
                         {isWelcomeOnly ? (
                             <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-12 animate-fade-in-up">
-                                <div className="h-14 w-14 rounded-2xl bg-accent-muted border border-[rgba(45,212,191,0.25)] flex items-center justify-center text-accent mb-4">
+                                <div className="h-14 w-14 rounded-2xl bg-accent-muted border border-[rgba(56,182,255,0.25)] flex items-center justify-center text-accent mb-4">
                                     <Sparkles size={26} />
                                 </div>
                                 <h2 className={`text-xl font-bold tracking-tight ${colors.textPrimary}`}>
@@ -1449,6 +1939,76 @@ function ChatContent() {
                                     <FileText size={14} className="text-accent" />
                                     {scopeLabel}
                                 </button>
+                                {agentUrlParam === "finance_agent" && !showAnalyticsRail && (
+                                    <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-lg">
+                                        {[
+                                            "Show items list and chart",
+                                            "Vendor totals for scoped invoices",
+                                            "Chart invoice trend by month",
+                                        ].map((prompt) => (
+                                            <button
+                                                key={prompt}
+                                                type="button"
+                                                onClick={() => {
+                                                    setInput(prompt);
+                                                    void sendWithText(prompt);
+                                                }}
+                                                className="rounded-full border border-border bg-surface px-3.5 py-1.5 text-xs font-medium text-foreground hover:border-accent hover:bg-accent-muted transition-colors"
+                                            >
+                                                {prompt}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {agentUrlParam === "hr_agent" && !showAnalyticsRail && (
+                                    <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-lg">
+                                        {[
+                                            "Chart top CV scores",
+                                            "Show top resumes by CV score",
+                                            "Generate experience letter for [name]. Company Visibility Bots, title Software Engineer, from 2024-01-01 to 2026-08-01",
+                                        ].map((prompt) => (
+                                            <button
+                                                key={prompt}
+                                                type="button"
+                                                onClick={() => {
+                                                    setInput(prompt);
+                                                    void sendWithText(prompt);
+                                                }}
+                                                className="rounded-full border border-border bg-surface px-3.5 py-1.5 text-xs font-medium text-foreground hover:border-accent hover:bg-accent-muted transition-colors"
+                                            >
+                                                {prompt}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {(agentUrlParam === "procurement_agent" ||
+                                    agentUrlParam === "legal_agent" ||
+                                    agentUrlParam === "compliance_agent") &&
+                                    !showAnalyticsRail && (
+                                    <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-lg">
+                                        {(agentUrlParam === "compliance_agent"
+                                            ? [
+                                                  "Chart certificate expiry",
+                                                  "Show audit findings by severity",
+                                              ]
+                                            : agentUrlParam === "procurement_agent"
+                                              ? ["Chart spend by supplier", "Document type mix in scope"]
+                                              : ["Chart contract values by party", "Document type mix in scope"]
+                                        ).map((prompt) => (
+                                            <button
+                                                key={prompt}
+                                                type="button"
+                                                onClick={() => {
+                                                    setInput(prompt);
+                                                    void sendWithText(prompt);
+                                                }}
+                                                className="rounded-full border border-border bg-surface px-3.5 py-1.5 text-xs font-medium text-foreground hover:border-accent hover:bg-accent-muted transition-colors"
+                                            >
+                                                {prompt}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             messages.map((msg, msgIdx) => {
@@ -1470,7 +2030,9 @@ function ChatContent() {
                                         <div className="flex w-full min-w-0 gap-3 sm:gap-4">
                                             <div
                                                 className={`mt-1 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
-                                                    isDark ? "bg-teal-500/15 text-teal-300" : "bg-slate-100 text-slate-600"
+                                                    isDark
+                                                        ? "bg-[rgba(56,182,255,0.15)] text-(--vb-blue-bright)"
+                                                        : "bg-[rgba(56,182,255,0.12)] text-(--vb-blue-dark)"
                                                 }`}
                                                 aria-hidden
                                             >
@@ -1481,11 +2043,11 @@ function ChatContent() {
                                                 data-role="assistant"
                                                 className={`w-full min-w-0 rounded-2xl border shadow-sm ${
                                                     isDark
-                                                        ? "bg-white/5 border-white/10 shadow-black/20"
-                                                        : "bg-white border-slate-200 shadow-slate-200/60"
+                                                        ? "bg-(--vb-dark-3) border-(--vb-hairline) shadow-black/20"
+                                                        : "bg-(--vb-paper) border-(--vb-line) shadow-(--vb-shadow-sm)"
                                                 }`}
                                             >
-                                                <div className={`chat-assistant-prose max-w-none px-4 sm:px-5 py-4 ${isDark ? "is-dark text-slate-100" : "text-slate-800"}`}>
+                                                <div className={`chat-assistant-prose max-w-none px-4 sm:px-5 py-4 ${isDark ? "is-dark text-(--vb-color-fg-inverse)" : "text-(--vb-ink)"}`}>
                                                 {isThinking ? (
                                                     <p className="text-slate-400 text-[15px] animate-pulse m-0">
                                                         Thinking…
@@ -1575,10 +2137,13 @@ function ChatContent() {
                                                     {formatAssistantMarkdown(msg.content)}
                                                 </ReactMarkdown>
                                                 )}
+                                                {msg.chartData && (
+                                                    <ChatGraphRenderer chartData={msg.chartData} />
+                                                )}
                                                 {msg.agentId && (
                                                     <div className="mt-3">
                                                         <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${agentColorMap[msg.agentId] || agentColorMap.other_agent}`}>
-                                                            {agentLabel(msg.agentId)} Agent
+                                                            {agentLabel(msg.agentId)}
                                                         </span>
                                                     </div>
                                                 )}
@@ -1605,8 +2170,8 @@ function ChatContent() {
                                                                 const chipClass = `inline-flex items-center gap-1.5 text-[11px] rounded-lg px-2.5 py-1.5 border transition-colors ${
                                                                     href
                                                                         ? isDark
-                                                                            ? "bg-white/5 border-white/10 text-slate-200 hover:border-teal-400/50 hover:bg-teal-500/10 hover:text-teal-200"
-                                                                            : "bg-slate-50 border-slate-200 text-slate-700 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-800"
+                                                                            ? "bg-white/5 border-white/10 text-slate-200 hover:border-(--vb-blue)/50 hover:bg-[rgba(56,182,255,0.1)] hover:text-(--vb-blue-bright)"
+                                                                            : "bg-slate-50 border-slate-200 text-slate-700 hover:border-(--vb-blue) hover:bg-[rgba(56,182,255,0.1)] hover:text-(--vb-blue-dark)"
                                                                         : isDark
                                                                           ? "bg-white/5 border-white/10 text-slate-400 opacity-80"
                                                                           : "bg-slate-50 border-slate-200 text-slate-500 opacity-80"
@@ -1769,11 +2334,12 @@ function ChatContent() {
                                         )
                                     ) : (
                                         <div
-                                            className="max-w-[85%] sm:max-w-[75%] rounded-3xl px-4 py-3 text-[15px] leading-relaxed"
+                                            className="max-w-[85%] sm:max-w-[75%] min-w-13 rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-relaxed font-medium"
                                             style={{
-                                                background: "#0d9488",
-                                                color: "#ffffff",
-                                                boxShadow: "0 8px 24px rgba(13, 148, 136, 0.28)",
+                                                background: "rgba(56,182,255,0.12)",
+                                                color: "var(--vb-ink)",
+                                                border: "1px solid rgba(56,182,255,0.28)",
+                                                boxShadow: "var(--vb-shadow-sm)",
                                             }}
                                         >
                                             {msg.content}
@@ -1798,7 +2364,9 @@ function ChatContent() {
                             <div className="flex w-full min-w-0 gap-3 sm:gap-4" aria-live="polite" aria-label="Assistant is thinking">
                                 <div
                                     className={`mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
-                                        isDark ? "bg-teal-500/15 text-teal-300" : "bg-slate-100 text-slate-700"
+                                        isDark
+                                            ? "bg-[rgba(56,182,255,0.15)] text-(--vb-blue-bright)"
+                                            : "bg-[rgba(56,182,255,0.12)] text-(--vb-blue-dark)"
                                     }`}
                                     aria-hidden
                                 >
@@ -1807,11 +2375,11 @@ function ChatContent() {
                                 <div
                                     className={`rounded-2xl border px-4 py-3 shadow-sm ${
                                         isDark
-                                            ? "bg-white/5 border-white/10"
-                                            : "bg-white border-slate-200"
+                                            ? "bg-(--vb-dark-3) border-(--vb-hairline)"
+                                            : "bg-(--vb-paper) border-(--vb-line) shadow-(--vb-shadow-sm)"
                                     }`}
                                 >
-                                    <p className={`text-[15px] m-0 animate-pulse ${isDark ? "text-slate-400" : "text-slate-400"}`}>
+                                    <p className={`text-[15px] m-0 animate-pulse ${isDark ? "text-(--vb-color-fg-inverse-muted)" : "text-(--vb-muted)"}`}>
                                         {agentIdFromScope ? `${agentLabel(agentIdFromScope)} Agent is thinking…` : "Thinking…"}
                                     </p>
                                 </div>
@@ -1824,7 +2392,7 @@ function ChatContent() {
 
                 {focusedExcerpt && (
                     <div className="shrink-0 px-4 sm:px-6 lg:px-8 pt-2">
-                        <div className="max-w-3xl mx-auto flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                        <div className={`${chatColumnMax} mx-auto flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25`}>
                             <MessageCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
                             <div className="min-w-0 flex-1">
                                 <div className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mb-0.5">
@@ -1864,8 +2432,8 @@ function ChatContent() {
                     </button>
                 )}
 
-                <div className="px-4 sm:px-6 lg:px-8 py-4 border-t border-border shrink-0 bg-linear-to-t from-surface via-surface/90 to-transparent">
-                    <div className="max-w-3xl mx-auto w-full space-y-2">
+                <div className="px-4 sm:px-6 lg:px-8 py-4 border-t border-border shrink-0 bg-surface/80 backdrop-blur-sm">
+                    <div className={`${chatColumnMax} mx-auto w-full space-y-2`}>
                         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
                             <button
                                 type="button"
@@ -1908,7 +2476,7 @@ function ChatContent() {
                             </div>
                         </div>
                         <ChatComposer
-                            key="composer-v2-teal"
+                            key="composer-v2-blue"
                             value={input}
                             onChange={setInput}
                             onSend={send}
@@ -1924,6 +2492,67 @@ function ChatContent() {
                         />
                     </div>
                 </div>
+            </div>
+
+            <ChatAnalyticsSidePanel
+                open={showAnalyticsRail}
+                onClose={() => setAnalyticsPanelOpen(false)}
+                agentId={analyticsAgentId || agentUrlParam}
+                visuals={analyticsVisuals}
+                isDark={isDark}
+                onRunPrompt={(p) => void sendWithText(p)}
+                loading={analyticsLoading}
+                onRefresh={() => {
+                    chatAnalyticsLockRef.current = false;
+                    const aid = analyticsAgentId || agentUrlParam;
+                    if (aid) void loadAgentAnalytics(aid, analyticsView, analyticsScopeDocIds);
+                }}
+                view={analyticsView}
+                onViewChange={
+                    agentUrlParam && ANALYTICS_AGENT_IDS.has(agentUrlParam)
+                        ? handleAnalyticsViewChange
+                        : undefined
+                }
+                visualsKey={analyticsVisuals.map((v) => v.id).join("|") || "empty"}
+                documentCount={analyticsDocCount}
+                unifiedHeader={showAnalyticsRail}
+                scopeMode={analyticsScopeMode}
+                coverage={analyticsCoverage}
+                resolveFilename={(id) =>
+                    libraryDocs.find((d) => d.documentId === id)?.originalFilename || id
+                }
+                scopeDocCount={analyticsScopeDocIds?.length}
+                onApplyChatScope={(ids) => {
+                    setChatScope("selected");
+                    setSelectedDocIds(ids);
+                    setChatContextDocIds(ids);
+                    setScopePanelOpen(false);
+                }}
+                onVisualAction={async (action) => {
+                    if (action.kind === "open_document" && action.documentId) {
+                        window.open(`/documents/${action.documentId}`, "_blank", "noopener,noreferrer");
+                        return;
+                    }
+                    if (action.kind === "reprocess" && action.documentId) {
+                        try {
+                            await apiRequest(`/docs/documents/${action.documentId}/reprocess`, {
+                                method: "POST",
+                            });
+                            void sendWithText(
+                                `Reprocessing started for that invoice — I'll wait, then chart it again when ready.`
+                            );
+                        } catch (e: unknown) {
+                            const msg = e instanceof Error ? e.message : "Reprocess failed";
+                            void sendWithText(`Could not reprocess: ${msg}`);
+                        }
+                        return;
+                    }
+                    if (action.kind === "ask" && action.prompt) {
+                        void sendWithText(action.prompt);
+                    }
+                }}
+            />
+            </div>
             </div>
 
             <ChatScopePanel

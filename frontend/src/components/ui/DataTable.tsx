@@ -18,7 +18,7 @@ export function DataTable({
 export function THead({ children }: { children: React.ReactNode }) {
     return (
         <thead>
-            <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]/60">
+            <tr className="border-b border-border bg-surface-2/60">
                 {children}
             </tr>
         </thead>
@@ -35,7 +35,7 @@ export function Th({
     return (
         <th
             className={cn(
-                "text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--foreground-muted)] px-4 py-3",
+                "text-left text-[11px] font-semibold uppercase tracking-wider text-foreground-muted px-4 py-3",
                 className
             )}
         >
@@ -45,7 +45,7 @@ export function Th({
 }
 
 export function TBody({ children }: { children: React.ReactNode }) {
-    return <tbody className="divide-y divide-[var(--border)]">{children}</tbody>;
+    return <tbody className="divide-y divide-border">{children}</tbody>;
 }
 
 export function Tr({
@@ -61,7 +61,7 @@ export function Tr({
         <tr
             onClick={onClick}
             className={cn(
-                "transition-colors duration-150 hover:bg-[var(--accent-muted)]/40",
+                "transition-colors duration-150 hover:bg-accent-muted/40",
                 onClick && "cursor-pointer",
                 className
             )}
@@ -79,7 +79,7 @@ export function Td({
     className?: string;
 }) {
     return (
-        <td className={cn("px-4 py-3.5 text-[var(--foreground-secondary)] align-middle", className)}>
+        <td className={cn("px-4 py-3.5 text-foreground-secondary align-middle", className)}>
             {children}
         </td>
     );

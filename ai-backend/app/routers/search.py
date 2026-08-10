@@ -1,8 +1,22 @@
 from fastapi import APIRouter, HTTPException, Query, Body, status
+import json
 from ..models.schemas import SearchRequest, SearchResponse, SearchResult
 from ..services.rag_service import rag_service
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
+
+
+def _coerce_metadata(meta):
+    """Legacy rows can store metadata as a JSON string. Ensure the API always returns a dict."""
+    if isinstance(meta, dict):
+        return meta
+    if isinstance(meta, str):
+        try:
+            parsed = json.loads(meta)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 
 @router.post(
@@ -42,7 +56,7 @@ async def search_documents(request: SearchRequest = Body(...)):
             filename=r.get("filename"),
             score=r["score"],
             cv_score=r.get("cv_score"),
-            metadata=r.get("metadata"),
+            metadata=_coerce_metadata(r.get("metadata")),
         )
         for r in results
     ]
@@ -101,7 +115,7 @@ async def similar_documents(document_id: str, organization_id: str = "", limit: 
         page_number=r.get("page_number"),
         score=r["score"],
         cv_score=r.get("cv_score"),
-        metadata=r.get("metadata"),
+        metadata=_coerce_metadata(r.get("metadata")),
     ) for r in results], "total": len(results)}
 
 

@@ -342,7 +342,7 @@ export default function AdminPlansPage() {
                                 </div>
                                 <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                                     <div
-                                        className="h-full rounded-full bg-teal-500 transition-all"
+                                        className="h-full rounded-full bg-[rgba(56,182,255,0.1)] transition-all"
                                         style={{ width: `${storagePct}%` }}
                                     />
                                 </div>
@@ -397,7 +397,7 @@ export default function AdminPlansPage() {
                                                 }
                                                 className={`rounded-lg border px-2.5 py-1 text-xs font-medium inline-flex items-center gap-1 transition-colors ${
                                                     on
-                                                        ? "border-teal-300 bg-teal-50 text-teal-700"
+                                                        ? "border-[rgba(56,182,255,0.4)] bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark)"
                                                         : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
                                                 }`}
                                             >
@@ -471,7 +471,7 @@ export default function AdminPlansPage() {
                                         key={p.planId}
                                         className={`rounded-2xl border bg-white p-5 flex flex-col ${
                                             isCurrent
-                                                ? "border-teal-300 ring-1 ring-teal-100"
+                                                ? "border-[rgba(56,182,255,0.4)] ring-1 ring-[rgba(56,182,255,0.2)]"
                                                 : "border-slate-200"
                                         }`}
                                     >
@@ -499,7 +499,7 @@ export default function AdminPlansPage() {
                                             </p>
                                         )}
                                         {isCurrent ? (
-                                            <p className="mt-5 w-full text-center py-2.5 text-sm font-medium text-teal-700">
+                                            <p className="mt-5 w-full text-center py-2.5 text-sm font-medium text-(--vb-blue-dark)">
                                                 Current plan
                                             </p>
                                         ) : (
@@ -507,7 +507,7 @@ export default function AdminPlansPage() {
                                                 type="button"
                                                 disabled={sending || !!pending}
                                                 onClick={() => requestNamedPlan(p)}
-                                                className="mt-5 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 hover:border-teal-300 hover:text-teal-700 transition-colors disabled:opacity-40"
+                                                className="mt-5 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 hover:border-[rgba(56,182,255,0.4)] hover:text-(--vb-blue-dark) transition-colors disabled:opacity-40"
                                             >
                                                 Request
                                             </button>
@@ -567,7 +567,7 @@ export default function AdminPlansPage() {
                                                 }
                                                 className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors ${
                                                     on
-                                                        ? "border-teal-300 bg-teal-50/60"
+                                                        ? "border-[rgba(56,182,255,0.4)] bg-[rgba(56,182,255,0.06)]"
                                                         : "border-slate-200 bg-white hover:border-slate-300"
                                                 }`}
                                             >
@@ -575,7 +575,7 @@ export default function AdminPlansPage() {
                                                     <span
                                                         className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${
                                                             on
-                                                                ? "bg-teal-600 border-teal-600 text-white"
+                                                                ? "bg-(--vb-blue) border-(--vb-blue) text-(--vb-color-primary-btn-fg)"
                                                                 : "border-slate-300"
                                                         }`}
                                                     >

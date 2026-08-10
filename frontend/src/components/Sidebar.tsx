@@ -5,11 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-    FileText, MessageSquare, LogOut, Shield, FolderOpen, Activity,
-    X, Building2, ChevronDown, Settings, LayoutDashboard, User,
-    CreditCard, Plug, Mail,
+    Activity, ChevronDown, LogOut, User, X, Building2,
 } from "lucide-react";
-import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
 import { clearAuthState, getStoredUser } from "@/lib/authSession";
 import { apiRequest } from "@/lib/apiClient";
@@ -26,7 +23,6 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
     const router = useRouter();
     const searchParams = useSearchParams();
     const currentAgent = searchParams?.get("agent") || "";
-    const { theme } = useTheme();
     const {
         role: permRole,
         canAccessPage,
@@ -170,7 +166,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                 open ? "translate-x-0" : "-translate-x-full"
             )}>
                 {/* Logo */}
-                <div className="px-3 py-3 border-b border-white/7 relative z-1 flex items-center gap-2 bg-linear-to-r from-teal-500/8 via-transparent to-cyan-500/5 min-h-19">
+                <div className="px-3 py-3 border-b border-white/7 relative z-1 flex items-center gap-2 bg-linear-to-r from-[rgba(56,182,255,0.08)] via-transparent to-blue-600/5 min-h-19">
                     <Link
                         href="/dashboard"
                         onClick={() => onClose?.()}
@@ -236,7 +232,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                             const dActive = pathname === `/departments/${d.departmentId}`;
                                             return (
                                                 <Link key={d.departmentId} href={`/departments/${d.departmentId}`} onClick={() => onClose?.()}
-                                                    className={cn("flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-colors", dActive && "text-teal-400 bg-teal-500/10")}>
+                                                    className={cn("flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-colors", dActive && "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.1)]")}>
                                                     <Building2 size={11} className="shrink-0 opacity-60" />
                                                     <span className="truncate">{d.name}</span>
                                                 </Link>
@@ -256,8 +252,8 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                                     className={cn(
                                                         "block px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors truncate",
                                                         isSelected
-                                                            ? "text-teal-300 bg-teal-500/20 font-semibold border border-teal-500/30"
-                                                            : "text-slate-400 hover:text-teal-300 hover:bg-white/5"
+                                                            ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.2)] font-semibold border border-[rgba(56,182,255,0.3)]"
+                                                            : "text-slate-400 hover:text-[var(--vb-blue-bright)] hover:bg-white/5"
                                                     )}
                                                     title={`Start new chat with ${ag.label}`}
                                                 >

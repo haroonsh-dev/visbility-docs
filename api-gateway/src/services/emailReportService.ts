@@ -5,8 +5,10 @@ import EmailReportConfig, {
     DEFAULT_EMAIL_REPORT_SECTIONS,
     EmailReportFrequency,
     EmailReportSections,
+    EmailReportType,
     IEmailReportConfig,
 } from '../models/EmailReportConfig';
+import { generateExtractionReportHtml, isAiServiceEnabled } from './aiServiceClient';
 import { sendHtmlEmail, isEmailConfigured } from './emailService';
 import logger from '../utils/logger';
 
@@ -293,12 +295,45 @@ export async function buildOrgSummaryHtml(
     };
 }
 
+export async function buildScheduledEmailReport(
+    organizationId: string,
+    doc: Pick<
+        IEmailReportConfig,
+        'reportType' | 'phase3Agent' | 'sections' | 'latestFilesLimit'
+    >
+): Promise<{ subject: string; html: string; stats?: Record<string, unknown> }> {
+    const reportType: EmailReportType =
+        doc.reportType === 'extraction' ? 'extraction' : 'library';
+
+    if (reportType === 'extraction') {
+        if (!isAiServiceEnabled()) {
+            throw Object.assign(new Error('AI service is required for extraction reports'), {
+                statusCode: 503,
+            });
+        }
+        const { subject, html } = await generateExtractionReportHtml(
+            organizationId,
+            doc.phase3Agent || ''
+        );
+        return { subject, html };
+    }
+
+    const built = await buildOrgSummaryHtml(
+        organizationId,
+        doc.sections,
+        doc.latestFilesLimit
+    );
+    return { subject: built.subject, html: built.html, stats: built.stats };
+}
+
 export function publicEmailReportConfig(doc: IEmailReportConfig | null, organizationId: string) {
     if (!doc) {
         return {
             organizationId,
             enabled: false,
             frequency: 'daily' as EmailReportFrequency,
+            reportType: 'library' as EmailReportType,
+            phase3Agent: '',
             weekday: 1,
             time: '09:00',
             recipients: [] as string[],
@@ -315,6 +350,8 @@ export function publicEmailReportConfig(doc: IEmailReportConfig | null, organiza
         organizationId: doc.organizationId,
         enabled: !!doc.enabled,
         frequency: doc.frequency || 'daily',
+        reportType: doc.reportType === 'extraction' ? 'extraction' : 'library',
+        phase3Agent: doc.phase3Agent || '',
         weekday: doc.weekday ?? 1,
         time: doc.time || '09:00',
         recipients: doc.recipients || [],
@@ -353,6 +390,8 @@ export async function getOrCreateEmailReportConfig(organizationId: string) {
             organizationId,
             enabled: false,
             frequency: 'daily',
+            reportType: 'library',
+            phase3Agent: '',
             weekday: 1,
             time: '09:00',
             recipients: [],
@@ -372,6 +411,12 @@ export async function updateEmailReportConfig(
     if (body.enabled !== undefined) doc.enabled = !!body.enabled;
     if (body.frequency === 'daily' || body.frequency === 'weekly') {
         doc.frequency = body.frequency;
+    }
+    if (body.reportType === 'library' || body.reportType === 'extraction') {
+        doc.reportType = body.reportType;
+    }
+    if (body.phase3Agent !== undefined) {
+        doc.phase3Agent = String(body.phase3Agent || '').trim();
     }
     if (body.weekday !== undefined) {
         doc.weekday = Math.max(0, Math.min(6, Number(body.weekday)));
@@ -397,6 +442,12 @@ export async function updateEmailReportConfig(
                 { statusCode: 400 }
             );
         }
+        if (doc.reportType === 'extraction' && !isAiServiceEnabled()) {
+            throw Object.assign(
+                new Error('AI service must be running to schedule extraction reports'),
+                { statusCode: 503 }
+            );
+        }
         doc.nextSendAt = computeNextEmailSendAt({
             frequency: doc.frequency,
             time: doc.time,
@@ -420,11 +471,7 @@ export async function sendOrgEmailReportNow(organizationId: string, recipientsOv
         throw Object.assign(new Error('No recipients configured'), { statusCode: 400 });
     }
 
-    const { subject, html, stats } = await buildOrgSummaryHtml(
-        organizationId,
-        doc.sections,
-        doc.latestFilesLimit
-    );
+    const { subject, html, stats } = await buildScheduledEmailReport(organizationId, doc);
 
     await sendHtmlEmail({ to: recipients, subject, html });
 
@@ -466,11 +513,7 @@ export async function runDueEmailReports(): Promise<void> {
                 continue;
             }
 
-            const { subject, html } = await buildOrgSummaryHtml(
-                doc.organizationId,
-                doc.sections,
-                doc.latestFilesLimit
-            );
+            const { subject, html } = await buildScheduledEmailReport(doc.organizationId, doc);
             await sendHtmlEmail({ to: doc.recipients, subject, html });
 
             doc.lastSentAt = new Date();

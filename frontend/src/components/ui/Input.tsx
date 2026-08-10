@@ -11,7 +11,7 @@ export function Input({ className, label, hint, id, ...props }: InputProps) {
     return (
         <div className="space-y-1.5">
             {label && (
-                <label htmlFor={inputId} className="block text-xs font-medium text-[var(--foreground-secondary)]">
+                <label htmlFor={inputId} className="block text-xs font-medium text-foreground-secondary">
                     {label}
                 </label>
             )}
@@ -23,7 +23,7 @@ export function Input({ className, label, hint, id, ...props }: InputProps) {
                 )}
                 {...props}
             />
-            {hint && <p className="text-[11px] text-[var(--foreground-muted)]">{hint}</p>}
+            {hint && <p className="text-[11px] text-foreground-muted">{hint}</p>}
         </div>
     );
 }
@@ -37,7 +37,7 @@ export function Textarea({ className, label, id, ...props }: TextareaProps) {
     return (
         <div className="space-y-1.5">
             {label && (
-                <label htmlFor={inputId} className="block text-xs font-medium text-[var(--foreground-secondary)]">
+                <label htmlFor={inputId} className="block text-xs font-medium text-foreground-secondary">
                     {label}
                 </label>
             )}

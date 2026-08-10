@@ -9,6 +9,7 @@ import { useTheme } from "@/context/ColorContext";
 import { usePermissions } from "@/context/PermissionsContext";
 import { apiRequest } from "@/lib/apiClient";
 import { useToast } from "@/components/Toast";
+import { AGENT_FILTER_OPTIONS } from "@/lib/documentAgents";
 
 type Sections = {
     overview: boolean;
@@ -23,6 +24,8 @@ type Config = {
     organizationId: string;
     enabled: boolean;
     frequency: "daily" | "weekly";
+    reportType: "library" | "extraction";
+    phase3Agent: string;
     weekday: number;
     time: string;
     recipients: string[];
@@ -144,6 +147,8 @@ function EmailReportsContent() {
                 body: JSON.stringify({
                     enabled: config.enabled,
                     frequency: config.frequency,
+                    reportType: config.reportType || "library",
+                    phase3Agent: config.phase3Agent || "",
                     weekday: config.weekday,
                     time: config.time,
                     recipients: recipientsText,
@@ -172,6 +177,8 @@ function EmailReportsContent() {
                 body: JSON.stringify({
                     enabled: config?.enabled ?? false,
                     frequency: config?.frequency || "daily",
+                    reportType: config?.reportType || "library",
+                    phase3Agent: config?.phase3Agent || "",
                     weekday: config?.weekday ?? 1,
                     time: config?.time || "09:00",
                     recipients: recipientsText,
@@ -195,7 +202,7 @@ function EmailReportsContent() {
     if (!ready) {
         return (
             <div className="flex justify-center py-20">
-                <Loader2 className="animate-spin text-[var(--accent)]" size={22} />
+                <Loader2 className="animate-spin text-accent" size={22} />
             </div>
         );
     }
@@ -224,7 +231,7 @@ function EmailReportsContent() {
 
                 {loading || !config ? (
                     <div className="flex justify-center py-16">
-                        <Loader2 className="animate-spin text-[var(--accent)]" size={22} />
+                        <Loader2 className="animate-spin text-accent" size={22} />
                     </div>
                 ) : (
                     <>
@@ -239,7 +246,7 @@ function EmailReportsContent() {
                             </div>
                         )}
 
-                        <div className="surface-card border border-[var(--border)] rounded-2xl p-4 sm:p-5 space-y-4">
+                        <div className="surface-card border border-border rounded-2xl p-4 sm:p-5 space-y-4">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h3 className={`text-sm font-semibold ${colors.textPrimary}`}>
@@ -254,7 +261,7 @@ function EmailReportsContent() {
                                         type="checkbox"
                                         checked={config.enabled}
                                         onChange={(e) => patch("enabled", e.target.checked)}
-                                        className="rounded border-[var(--border)]"
+                                        className="rounded border-border"
                                     />
                                     Enabled
                                 </label>
@@ -273,7 +280,7 @@ function EmailReportsContent() {
                                                 e.target.value === "weekly" ? "weekly" : "daily"
                                             )
                                         }
-                                        className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm"
+                                        className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm"
                                     >
                                         <option value="daily">Daily</option>
                                         <option value="weekly">Weekly</option>
@@ -290,7 +297,7 @@ function EmailReportsContent() {
                                             onChange={(e) =>
                                                 patch("weekday", Number(e.target.value))
                                             }
-                                            className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm"
+                                            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm"
                                         >
                                             {WEEKDAYS.map((d) => (
                                                 <option key={d.value} value={d.value}>
@@ -309,13 +316,57 @@ function EmailReportsContent() {
                                         type="time"
                                         value={config.time || "09:00"}
                                         onChange={(e) => patch("time", e.target.value || "09:00")}
-                                        className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm"
+                                        className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm"
                                     />
                                 </label>
                             </div>
+
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                <label className="block space-y-1.5">
+                                    <span className={`text-xs font-semibold ${colors.textMuted}`}>
+                                        Report type
+                                    </span>
+                                    <select
+                                        value={config.reportType || "library"}
+                                        onChange={(e) =>
+                                            patch(
+                                                "reportType",
+                                                e.target.value === "extraction" ? "extraction" : "library"
+                                            )
+                                        }
+                                        className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm"
+                                    >
+                                        <option value="library">Library summary (counts & latest files)</option>
+                                        <option value="extraction">
+                                            AI extraction detail (per-document fields)
+                                        </option>
+                                    </select>
+                                </label>
+                                {config.reportType === "extraction" && (
+                                    <label className="block space-y-1.5">
+                                        <span className={`text-xs font-semibold ${colors.textMuted}`}>
+                                            Agent filter
+                                        </span>
+                                        <select
+                                            value={config.phase3Agent || ""}
+                                            onChange={(e) => patch("phase3Agent", e.target.value)}
+                                            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm"
+                                        >
+                                            {AGENT_FILTER_OPTIONS.map((o) => (
+                                                <option key={o.value || "all"} value={o.value}>
+                                                    {o.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className={`text-[11px] ${colors.textMuted}`}>
+                                            Use HR Agent for hiring packs (resumes, offers, payroll).
+                                        </p>
+                                    </label>
+                                )}
+                            </div>
                         </div>
 
-                        <div className="surface-card border border-[var(--border)] rounded-2xl p-4 sm:p-5 space-y-3">
+                        <div className="surface-card border border-border rounded-2xl p-4 sm:p-5 space-y-3">
                             <div>
                                 <h3 className={`text-sm font-semibold ${colors.textPrimary}`}>
                                     Recipients
@@ -330,18 +381,20 @@ function EmailReportsContent() {
                                 onChange={(e) => setRecipientsText(e.target.value)}
                                 rows={3}
                                 placeholder="admin@company.com"
-                                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm font-mono"
+                                className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm font-mono"
                             />
                         </div>
 
-                        <div className="surface-card border border-[var(--border)] rounded-2xl p-4 sm:p-5 space-y-3">
+                        <div className="surface-card border border-border rounded-2xl p-4 sm:p-5 space-y-3">
                             <div className="flex flex-wrap items-end justify-between gap-3">
                                 <div>
                                     <h3 className={`text-sm font-semibold ${colors.textPrimary}`}>
                                         What to include
                                     </h3>
                                     <p className={`text-xs mt-0.5 ${colors.textMuted}`}>
-                                        Choose sections for the HTML summary email.
+                                        {config.reportType === "extraction"
+                                            ? "Section toggles apply only to library summary reports."
+                                            : "Choose sections for the HTML summary email."}
                                     </p>
                                 </div>
                                 <label className="block space-y-1">
@@ -359,7 +412,7 @@ function EmailReportsContent() {
                                                 Math.max(1, Math.min(50, Number(e.target.value) || 10))
                                             )
                                         }
-                                        className="w-24 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                                        className="w-24 rounded-xl border border-border bg-surface px-3 py-2 text-sm"
                                     />
                                 </label>
                             </div>
@@ -370,16 +423,19 @@ function EmailReportsContent() {
                                         type="button"
                                         onClick={() => toggleSection(row.key)}
                                         className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                                            config.sections[row.key]
-                                                ? "border-[var(--accent)] bg-[var(--accent-muted)]"
-                                                : "border-[var(--border)] hover:bg-[var(--surface-2)]"
+                                            config.reportType === "extraction"
+                                                ? "opacity-50 cursor-not-allowed border-border"
+                                                : config.sections[row.key]
+                                                  ? "border-accent bg-accent-muted"
+                                                  : "border-border hover:bg-surface-2"
                                         }`}
+                                        disabled={config.reportType === "extraction"}
                                     >
                                         <span
                                             className={`mt-0.5 h-4 w-4 rounded border flex items-center justify-center shrink-0 ${
                                                 config.sections[row.key]
-                                                    ? "bg-[var(--accent)] border-[var(--accent)] text-white"
-                                                    : "border-[var(--border)]"
+                                                    ? "bg-accent border-accent text-white"
+                                                    : "border-border"
                                             }`}
                                         >
                                             {config.sections[row.key] ? <Check size={10} /> : null}
@@ -397,7 +453,7 @@ function EmailReportsContent() {
                             </div>
                         </div>
 
-                        <div className="surface-card border border-[var(--border)] rounded-2xl p-4 sm:p-5 space-y-2">
+                        <div className="surface-card border border-border rounded-2xl p-4 sm:p-5 space-y-2">
                             <h3
                                 className={`text-sm font-semibold inline-flex items-center gap-2 ${colors.textPrimary}`}
                             >

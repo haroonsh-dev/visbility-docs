@@ -2,6 +2,9 @@ import mongoose, { Document as MongooseDocument, Schema } from 'mongoose';
 
 export type EmailReportFrequency = 'daily' | 'weekly';
 
+/** library = Mongo file counts; extraction = AI per-document fields */
+export type EmailReportType = 'library' | 'extraction';
+
 export type EmailReportSections = {
     overview: boolean;
     byStatus: boolean;
@@ -15,6 +18,9 @@ export interface IEmailReportConfig extends MongooseDocument {
     organizationId: string;
     enabled: boolean;
     frequency: EmailReportFrequency;
+    reportType: EmailReportType;
+    /** Optional filter when reportType=extraction (e.g. hr_agent) */
+    phase3Agent: string;
     /** 0 = Sunday … 6 = Saturday (used when frequency=weekly) */
     weekday: number;
     /** HH:MM server local time */
@@ -44,6 +50,8 @@ const EmailReportConfigSchema = new Schema<IEmailReportConfig>(
         organizationId: { type: String, required: true, unique: true, index: true },
         enabled: { type: Boolean, default: false },
         frequency: { type: String, enum: ['daily', 'weekly'], default: 'daily' },
+        reportType: { type: String, enum: ['library', 'extraction'], default: 'library' },
+        phase3Agent: { type: String, default: '' },
         weekday: { type: Number, default: 1, min: 0, max: 6 },
         time: { type: String, default: '09:00' },
         recipients: { type: [String], default: [] },

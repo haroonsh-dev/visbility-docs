@@ -6,12 +6,13 @@ import Document, { IDocument } from '../models/Document';
 import DocumentChunk from '../models/DocumentChunk';
 import type { AIProvider } from '../models/ApiKey';
 import { isAllowedFile, sanitizeFilename } from '../utils/fileValidation';
-import { AuthUser } from './accessScope';
+import { AuthUser, canDeleteDocument } from './accessScope';
 import {
     AiUploadResult,
     deleteDocumentFromAi,
     isAiServiceEnabled,
     resolveAiOrganizationId,
+    resolveDocumentAiOrgId,
     setAiPrimaryProvider,
     uploadDocumentToAi,
 } from './aiServiceClient';
@@ -38,6 +39,7 @@ export const KNOWN_DOCUMENT_TYPES = new Set([
     'employee_record',
     'hr_document',
     'offer_letter',
+    'experience_letter',
     'employment_contract',
     'leave_application',
     'payroll',
@@ -88,6 +90,7 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     employee_record: 'hr_agent',
     hr_document: 'hr_agent',
     offer_letter: 'hr_agent',
+    experience_letter: 'hr_agent',
     employment_contract: 'hr_agent',
     leave_application: 'hr_agent',
     payroll: 'hr_agent',
@@ -175,7 +178,7 @@ export function normalizeDocumentType(raw?: string | null): string {
 
 export function inferDocumentTypeFromFilename(filename: string): string | null {
     const name = filename.toLowerCase();
-    if (/\b(cv|resume|curriculum)\b/.test(name)) return 'resume';
+    if (/\b(cv|cvs|resume|curriculum|biodata|bio[\s_-]?data)\b/.test(name)) return 'resume';
     if (name.includes('invoice')) return 'invoice';
     if (name.includes('contract')) return 'contract';
     if (name.includes('quotation') || name.includes('quote')) return 'quotation';
@@ -380,7 +383,68 @@ export interface UploadFileInput {
 export type SaveUploadResult = {
     doc: IDocument;
     aiModelResponse: AiUploadResult | null;
+    /** Automatic dedup / rename — no user "replace" prompt. */
+    uploadNotes?: {
+        replacedContentDuplicateId?: string;
+        replacedContentDuplicateFilename?: string;
+        renamedFrom?: string;
+    };
 };
+
+function hashFileAtPath(filePath: string): string {
+    const hash = crypto.createHash('sha256');
+    const fd = fs.openSync(filePath, 'r');
+    try {
+        const buf = Buffer.alloc(1024 * 1024);
+        let bytesRead = 0;
+        while ((bytesRead = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+            hash.update(bytesRead === buf.length ? buf : buf.subarray(0, bytesRead));
+        }
+    } finally {
+        fs.closeSync(fd);
+    }
+    return hash.digest('hex');
+}
+
+function escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function caseInsensitiveFilenameFilter(filename: string): Record<string, unknown> {
+    const escaped = escapeRegexLiteral(filename.trim());
+    return { originalFilename: { $regex: new RegExp(`^${escaped}$`, 'i') } };
+}
+
+/** Same display name, different bytes → auto `name (2).ext` (no UI). */
+async function ensureUniqueDisplayFilename(
+    scope: Record<string, unknown>,
+    desired: string,
+    contentHash: string
+): Promise<{ name: string; renamedFrom?: string }> {
+    let name = (desired || 'document').trim();
+    const original = name;
+    let suffix = 2;
+    for (;;) {
+        const collision = await Document.findOne({
+            ...scope,
+            ...caseInsensitiveFilenameFilter(name),
+            contentHash: { $ne: contentHash },
+        }).lean();
+        if (!collision) {
+            return name === original ? { name } : { name, renamedFrom: original };
+        }
+        const parsed = path.parse(name);
+        const ext = parsed.ext || '';
+        name = `${parsed.name} (${suffix})${ext}`;
+        suffix += 1;
+        if (suffix > 200) {
+            throw Object.assign(new Error('Could not allocate a unique filename in your library'), {
+                statusCode: 409,
+                code: 'DUPLICATE_NAME',
+            });
+        }
+    }
+}
 
 /**
  * The AI backend keeps a single active provider, so an upload-time choice has to be
@@ -421,6 +485,53 @@ export async function saveUploadedFile(
         throw Object.assign(new Error(validation.reason), { statusCode: 415 });
     }
 
+    const contentHash = hashFileAtPath(file.path);
+
+    // Content duplicates are organization-wide, regardless of whether the
+    // first copy came from manual upload, Drive, webhook, or AI sync status.
+    const duplicateScope = user.organizationId
+        ? { organizationId: user.organizationId }
+        : { uploadedBy: user.userId };
+
+    const uploadNotes: SaveUploadResult['uploadNotes'] = {};
+
+    const existingDup = await Document.findOne({
+        ...duplicateScope,
+        contentHash,
+    }).lean();
+
+    if (existingDup) {
+        const mayRemove = await canDeleteDocument(user, existingDup);
+        if (!mayRemove) {
+            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+            throw Object.assign(
+                new Error(
+                    `This file is already in the library as "${existingDup.originalFilename}". You do not have permission to replace it.`
+                ),
+                {
+                    statusCode: 409,
+                    code: 'DUPLICATE_CONTENT',
+                    existingDocumentId: existingDup.documentId,
+                }
+            );
+        }
+        await deleteDocumentFully(existingDup.documentId, existingDup.storagePath, {
+            pythonDocumentId: existingDup.pythonDocumentId,
+            aiOrgId: resolveDocumentAiOrgId(existingDup, user),
+        });
+        uploadNotes.replacedContentDuplicateId = existingDup.documentId;
+        uploadNotes.replacedContentDuplicateFilename = existingDup.originalFilename;
+        logger.info(
+            `Content-duplicate upload: removed ${existingDup.documentId}, new bytes from "${file.originalname}"`
+        );
+    }
+
+    const uniqueName = await ensureUniqueDisplayFilename(duplicateScope, file.originalname, contentHash);
+    file.originalname = uniqueName.name;
+    if (uniqueName.renamedFrom) {
+        uploadNotes.renamedFrom = uniqueName.renamedFrom;
+    }
+
     const documentId = `doc_${uuidv4()}`;
     const orgFolder = resolveOrgFolder(user.organizationId, user.userId);
 
@@ -432,28 +543,6 @@ export async function saveUploadedFile(
     const storedFilename = sanitizeFilename(file.originalname);
     const storagePath = path.join(destDir, storedFilename);
     fs.renameSync(file.path, storagePath);
-
-    const contentHash = crypto.createHash('sha256').update(fs.readFileSync(storagePath)).digest('hex');
-
-    // Content duplicates are organization-wide, regardless of whether the
-    // first copy came from manual upload, Drive, webhook, or AI sync status.
-    const duplicateScope = user.organizationId
-        ? { organizationId: user.organizationId }
-        : { uploadedBy: user.userId };
-    const existingDup = await Document.findOne({
-        ...duplicateScope,
-        contentHash,
-    }).lean();
-
-    if (existingDup) {
-        deleteDocumentFolder(storagePath);
-        throw Object.assign(
-            new Error(
-                `This file was already uploaded as "${existingDup.originalFilename}". Delete the existing copy first or upload a different file.`
-            ),
-            { statusCode: 409 }
-        );
-    }
 
     let pythonDocumentId: string | null = null;
     let aiProcessingStatus: string | null = null;
@@ -527,6 +616,13 @@ export async function saveUploadedFile(
             ...(phase3Agent ? { phase3Agent } : {}),
             ...(appliedProvider ? { aiProvider: appliedProvider } : {}),
             ...(pythonDocumentId && aiOrgId ? { aiOrgId } : {}),
+            ...(uploadNotes.replacedContentDuplicateId
+                ? {
+                      replacedContentDuplicateId: uploadNotes.replacedContentDuplicateId,
+                      replacedContentDuplicateFilename: uploadNotes.replacedContentDuplicateFilename,
+                  }
+                : {}),
+            ...(uploadNotes.renamedFrom ? { renamedFrom: uploadNotes.renamedFrom } : {}),
         },
     });
 
@@ -538,5 +634,7 @@ export async function saveUploadedFile(
         logger.warn(`Initial visibility assignment failed for ${doc.documentId}: ${e?.message || e}`);
     }
 
-    return { doc, aiModelResponse };
+    const hasNotes =
+        uploadNotes.replacedContentDuplicateId || uploadNotes.renamedFrom ? uploadNotes : undefined;
+    return { doc, aiModelResponse, uploadNotes: hasNotes };
 }

@@ -170,7 +170,7 @@ function TeamContent() {
 
             {!hasOrganization && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                    className="rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-700 px-5 py-4 text-sm flex items-start gap-3">
+                    className="rounded-2xl border border-amber-200 bg-linear-to-r from-amber-50 to-orange-50 text-amber-700 px-5 py-4 text-sm flex items-start gap-3">
                     <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><AlertTriangle size={16} className="text-amber-600" /></div>
                     <div>
                         <p className="font-medium">No organization linked to this admin account</p>
@@ -181,14 +181,14 @@ function TeamContent() {
 
             {error && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                    className="rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-red-50 text-rose-700 px-5 py-4 text-sm flex items-center gap-3">
+                    className="rounded-2xl border border-rose-200 bg-linear-to-r from-rose-50 to-red-50 text-rose-700 px-5 py-4 text-sm flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center shrink-0"><AlertTriangle size={16} className="text-rose-600" /></div>
                     {error}
                 </motion.div>
             )}
             {success && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                    className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-green-50 text-emerald-700 px-5 py-4 text-sm flex items-center gap-3">
+                    className="rounded-2xl border border-emerald-200 bg-linear-to-r from-emerald-50 to-green-50 text-emerald-700 px-5 py-4 text-sm flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0"><span className="text-emerald-600 text-lg">✓</span></div>
                     {success}
                 </motion.div>
@@ -203,8 +203,8 @@ function TeamContent() {
                     >
                         <form onSubmit={createMember} className="surface-card p-6 space-y-4">
                             <div className="flex items-center gap-3 mb-2">
-                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20">
-                                    <Plus size={18} className="text-white" />
+                                <div className="w-10 h-10 rounded-xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-[var(--vb-glow)]">
+                                    <Plus size={18} />
                                 </div>
                                 <div>
                                     <h3 className="text-sm font-bold text-slate-800">New Team Member</h3>
@@ -214,15 +214,15 @@ function TeamContent() {
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <div className="flex flex-col gap-1.5">
                                     <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 ml-0.5">Full Name</span>
-                                    <input className="premium-input rounded-xl px-4 py-3 text-sm h-[44px]" placeholder="Jane Doe" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} autoComplete="name" required />
+                                    <input className="premium-input rounded-xl px-4 py-3 text-sm h-11" placeholder="Jane Doe" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} autoComplete="name" required />
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                     <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 ml-0.5">Email</span>
-                                    <input className="premium-input rounded-xl px-4 py-3 text-sm h-[44px]" placeholder="member@company.com" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} autoComplete="off" required />
+                                    <input className="premium-input rounded-xl px-4 py-3 text-sm h-11" placeholder="member@company.com" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} autoComplete="off" required />
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                     <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 ml-0.5">Password</span>
-                                    <input className="premium-input rounded-xl px-4 py-3 text-sm h-[44px]" placeholder="Temporary password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" required />
+                                    <input className="premium-input rounded-xl px-4 py-3 text-sm h-11" placeholder="Temporary password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" required />
                                 </div>
                             </div>
                             <div className="flex justify-end gap-2 pt-1">
@@ -240,9 +240,9 @@ function TeamContent() {
             {/* Members List */}
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
                 className="surface-card overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-transparent">
+                <div className="px-5 py-4 border-b border-slate-100 bg-linear-to-r from-slate-50/50 to-transparent">
                     <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
+                        <div className="w-9 h-9 rounded-xl bg-linear-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
                             <Users size={16} className="text-white" />
                         </div>
                         <div>
@@ -260,7 +260,7 @@ function TeamContent() {
                             <Users size={28} className="text-slate-300" />
                         </div>
                         <p className="text-sm font-medium text-slate-500">No team members yet</p>
-                        <p className="text-xs text-slate-400 mt-1">Click "Add member" to get started</p>
+                        <p className="text-xs text-slate-400 mt-1">Click &quot;Add member&quot; to get started</p>
                     </div>
                 ) : (
                     <ul className="divide-y divide-slate-100">
@@ -276,8 +276,8 @@ function TeamContent() {
                                     <div className="flex items-center gap-3 min-w-0">
                                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold ${
                                             m.status === "active"
-                                                ? "bg-gradient-to-br from-teal-50 to-cyan-50 text-teal-600 border border-teal-200"
-                                                : "bg-gradient-to-br from-slate-50 to-slate-100 text-slate-400 border border-slate-200"
+                                                ? "bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)] text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.28)]"
+                                                : "bg-linear-to-br from-slate-50 to-slate-100 text-slate-400 border border-slate-200"
                                         }`}>
                                             {(m.fullName || m.email || "U").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                                         </div>
@@ -323,11 +323,11 @@ function TeamContent() {
                                                     {TEAM_PERM_LABELS.map(({ key, label, hint }) => (
                                                         <label
                                                             key={key}
-                                                            className="flex items-start gap-2.5 rounded-xl px-3.5 py-3 border border-slate-200 bg-white cursor-pointer hover:border-teal-300 hover:bg-teal-50/30 transition-all"
+                                                            className="flex items-start gap-2.5 rounded-xl px-3.5 py-3 border border-slate-200 bg-white cursor-pointer hover:border-[rgba(56,182,255,0.4)] hover:bg-[rgba(56,182,255,0.03)] transition-all"
                                                         >
                                                             <input
                                                                 type="checkbox"
-                                                                className="mt-0.5 accent-teal-500"
+                                                                className="mt-0.5 accent-[var(--vb-blue)]"
                                                                 checked={permDraft[key] ?? false}
                                                                 onChange={(e) =>
                                                                     setPermDraft((prev) =>

@@ -111,8 +111,8 @@ export default function AgentAccessBlockedNotice({
                                 href="/plans"
                                 className={
                                     compact
-                                        ? "font-semibold text-teal-300 hover:text-teal-200 underline-offset-2 hover:underline"
-                                        : "font-semibold text-teal-700 hover:text-teal-800 underline-offset-2 hover:underline"
+                                        ? "font-semibold text-[var(--vb-blue-bright)] hover:text-[var(--vb-blue-bright)] underline-offset-2 hover:underline"
+                                        : "font-semibold text-[var(--vb-blue-dark)] hover:text-[var(--vb-blue-dark)] underline-offset-2 hover:underline"
                                 }
                             >
                                 Upgrade / change plan

@@ -76,7 +76,7 @@ function FolderCheckbox({
             checked={checked}
             onChange={onChange}
             onClick={(e) => e.stopPropagation()}
-            className="accent-teal-500 shrink-0 w-3.5 h-3.5 rounded border-border"
+            className="accent-[var(--vb-blue)] shrink-0 w-3.5 h-3.5 rounded border-border"
         />
     );
 }
@@ -259,7 +259,7 @@ export default function ChatScopePanel({
                         name="chatScopePanel"
                         checked={chatScope === "all"}
                         onChange={() => onChatScopeChange("all")}
-                        className="accent-teal-500"
+                        className="accent-[var(--vb-blue)]"
                     />
                     <span className={textPrimary}>
                         All documents
@@ -272,7 +272,7 @@ export default function ChatScopePanel({
                         name="chatScopePanel"
                         checked={chatScope === "selected"}
                         onChange={() => onChatScopeChange("selected")}
-                        className="accent-teal-500"
+                        className="accent-[var(--vb-blue)]"
                     />
                     <span className={textPrimary}>
                         Selected only
@@ -360,7 +360,7 @@ export default function ChatScopePanel({
                                                     indeterminate={ag.indeterminate}
                                                     onChange={() => toggleFolder(agentDocs)}
                                                 />
-                                                <Folder size={13} className="text-teal-400 shrink-0" />
+                                                <Folder size={13} className="text-[var(--vb-blue-bright)] shrink-0" />
                                                 <span className="flex-1 truncate">{agentLabel(agent)}</span>
                                                 <span className={`text-[10px] font-semibold ${textMuted}`}>
                                                     {agentDocs.length}
@@ -417,12 +417,12 @@ export default function ChatScopePanel({
                                                                             className={cn(
                                                                                 "w-full flex items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm border border-transparent",
                                                                                 checked
-                                                                                    ? "bg-accent-muted border-[rgba(45,212,191,0.25)]"
+                                                                                    ? "bg-accent-muted border-[rgba(56,182,255,0.25)]"
                                                                                     : bgHover
                                                                             )}
                                                                         >
                                                                             {checked ? (
-                                                                                <CheckSquare size={14} className="text-teal-400 shrink-0 mt-0.5" />
+                                                                                <CheckSquare size={14} className="text-[var(--vb-blue-bright)] shrink-0 mt-0.5" />
                                                                             ) : (
                                                                                 <Square size={14} className={`${textMuted} shrink-0 mt-0.5`} />
                                                                             )}

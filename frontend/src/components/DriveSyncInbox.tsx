@@ -149,7 +149,7 @@ export default function DriveSyncInbox() {
             >
                 {/* Header */}
                 <div className="flex items-center gap-3 px-5 py-4 border-b border-border bg-linear-to-r from-accent-muted to-transparent">
-                    <div className="h-10 w-10 rounded-xl bg-accent text-white flex items-center justify-center shrink-0 shadow-sm shadow-teal-900/15">
+                    <div className="h-10 w-10 rounded-xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shrink-0 shadow-(--vb-glow)">
                         <HardDrive size={18} />
                     </div>
                     <div className="min-w-0 flex-1">

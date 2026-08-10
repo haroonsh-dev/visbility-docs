@@ -60,7 +60,7 @@ function DocumentDetailsContent() {
                 stopPolling();
                 setAnalyzing(false);
             }
-        }, 3000);
+        }, 6000);
     }, [load, stopPolling]);
 
     useEffect(() => {
@@ -75,11 +75,24 @@ function DocumentDetailsContent() {
             if (hasModelData(data?.aiDocument) || isAnalysisFinished(data?.aiDocument, data?.job, data?.document?.status)) return;
             if (attemptedRef.current) return;
             attemptedRef.current = true;
+
+            const stage = String(data?.job?.stage || data?.job?.status || "").toLowerCase();
+            const aiStatus = String(data?.aiDocument?.status || "").toLowerCase();
+            const docStatus = data?.document?.status;
+            const alreadyRunning =
+                ["queued", "running", "processing", "ocr_processing", "classifying", "extracting", "embedding"].some(
+                    (s) => stage.includes(s) || aiStatus.includes(s)
+                ) ||
+                docStatus === "processing" ||
+                docStatus === "uploaded";
+
             setAnalyzing(true);
-            try {
-                await apiRequest(`/docs/documents/${id}/processing?runModel=true`);
-            } catch {
-                /* may still trigger */
+            if (!alreadyRunning) {
+                try {
+                    await apiRequest(`/docs/documents/${id}/processing?runModel=true`);
+                } catch {
+                    /* may still trigger */
+                }
             }
             startPolling();
         })();
@@ -96,7 +109,7 @@ function DocumentDetailsContent() {
 
     useEffect(() => {
         if (!isProcessing || analyzing) return;
-        const interval = setInterval(load, 5000);
+        const interval = setInterval(load, 8000);
         return () => clearInterval(interval);
     }, [isProcessing, analyzing, load]);
 

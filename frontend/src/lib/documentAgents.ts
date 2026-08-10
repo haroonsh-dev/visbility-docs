@@ -11,6 +11,7 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     employee_record: "hr_agent",
     hr_document: "hr_agent",
     offer_letter: "hr_agent",
+    experience_letter: "hr_agent",
     employment_contract: "hr_agent",
     leave_application: "hr_agent",
     payroll: "hr_agent",
@@ -65,57 +66,48 @@ export const AGENT_FILTER_OPTIONS = [
     ...AGENT_OPTIONS.filter((o) => o.value),
 ];
 
-/** Capability skills per agent (mirrors ai-backend phase3 skill folders). */
-export const AGENT_SKILLS: Record<string, string[]> = {
+/** Skills that actually have chat charts / actions today (honest capability list). */
+export const AGENT_CHART_CAPABILITIES: Record<string, string[]> = {
     finance_agent: [
-        "Invoice extraction",
-        "Invoice search",
-        "Duplicate invoice detection",
-        "Expense summary",
-        "Payment term extraction",
-        "Bank statement analysis",
-        "Tax & budget docs",
+        "Vendor / client spend charts",
+        "Invoice line-item charts",
+        "Aging & monthly trend",
+        "Named-file targeting (e.g. digilog)",
+        "Data-quality + reprocess hints",
     ],
     hr_agent: [
-        "Resume / CV scoring",
-        "Employee records",
-        "Payroll & attendance",
-        "Offer letters",
-        "Employment contracts",
-        "Leave applications",
-        "Training certificates",
-        "Document completeness",
-    ],
-    legal_agent: [
-        "Contract summary",
-        "Clause extraction",
-        "Risk detection",
-        "NDA review",
-        "Agreements & leases",
-        "Version comparison",
-    ],
-    procurement_agent: [
-        "Purchase orders",
-        "Quotations & comparison",
-        "RFQ handling",
-        "Vendor lists",
-        "PO & invoice validation",
-        "Delivery notes",
+        "CV score ranking chart",
+        "Score distribution",
+        "Offer letter generation",
+        "Experience letter generation",
     ],
     compliance_agent: [
-        "SOP review",
-        "Audit reports & evidence",
-        "Certificates & expiry",
-        "Quality / inspection",
-        "Safety manuals",
-        "ISO & regulatory docs",
+        "Certificate expiry timeline",
+        "Findings by severity",
+        "Status mix",
+        "Named-file targeting",
     ],
-    other_agent: [
-        "General correspondence",
-        "Meeting minutes",
-        "Policies & memos",
-        "Project proposals",
+    procurement_agent: [
+        "Supplier spend bars",
+        "PO vs invoice amounts",
+        "Amounts by document",
     ],
+    legal_agent: [
+        "Risk flags by document",
+        "Clause type mix",
+        "Contract value by party",
+    ],
+    other_agent: ["Document type mix for scoped files"],
+};
+
+/** Skills that actually have chat charts / actions today (honest capability list). */
+export const AGENT_SKILLS: Record<string, string[]> = {
+    finance_agent: AGENT_CHART_CAPABILITIES.finance_agent,
+    hr_agent: AGENT_CHART_CAPABILITIES.hr_agent,
+    legal_agent: AGENT_CHART_CAPABILITIES.legal_agent,
+    procurement_agent: AGENT_CHART_CAPABILITIES.procurement_agent,
+    compliance_agent: AGENT_CHART_CAPABILITIES.compliance_agent,
+    other_agent: AGENT_CHART_CAPABILITIES.other_agent,
 };
 
 /** Document types covered by the given agents. */
@@ -165,6 +157,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
     employee_record: "Employee record",
     hr_document: "HR document",
     offer_letter: "Offer letter",
+    experience_letter: "Experience letter",
     employment_contract: "Employment contract",
     leave_application: "Leave application",
     payroll: "Payroll",

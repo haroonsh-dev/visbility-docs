@@ -57,7 +57,7 @@ function ProfileContent() {
 
     const roleColors: Record<string, { bg: string; text: string; border: string }> = {
         superAdmin: { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200" },
-        admin: { bg: "bg-teal-50", text: "text-teal-700", border: "border-teal-200" },
+        admin: { bg: "bg-[rgba(56,182,255,0.1)]", text: "text-[var(--vb-blue-dark)]", border: "border-[rgba(56,182,255,0.28)]" },
         team: { bg: "bg-slate-50", text: "text-slate-600", border: "border-slate-200" },
     };
     const rc = roleColors[displayRole] || roleColors.team;
@@ -72,7 +72,7 @@ function ProfileContent() {
             <motion.div
                 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.05, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-600 via-cyan-600 to-teal-500 px-5 py-4 sm:px-6 sm:py-5 text-white"
+                className="relative overflow-hidden rounded-2xl bg-linear-to-br from-[var(--vb-blue-dark)] via-[var(--vb-blue)] to-[var(--vb-blue-deep)] px-5 py-4 sm:px-6 sm:py-5 text-white"
             >
                 <div className="absolute inset-0 opacity-10">
                     <div className="absolute -top-16 -right-16 w-48 h-48 rounded-full bg-white/20 blur-3xl" />
@@ -89,7 +89,7 @@ function ProfileContent() {
                     </div>
                     <div className="flex-1 min-w-0">
                         <h2 className="text-lg sm:text-xl font-bold tracking-tight truncate">{user?.fullName || user?.username || "User"}</h2>
-                        <p className="text-teal-100 text-xs sm:text-sm truncate">{user?.email || "No email"}</p>
+                        <p className="text-[var(--vb-blue-bright)] text-xs sm:text-sm truncate">{user?.email || "No email"}</p>
                         <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/15 backdrop-blur-sm border border-white/20">
                                 <Shield size={10} /> {displayRole}
@@ -115,7 +115,7 @@ function ProfileContent() {
                         onClick={() => setActiveTab(tab.id)}
                         className={`relative px-4 py-2 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-all ${
                             activeTab === tab.id
-                                ? "text-teal-700"
+                                ? "text-[var(--vb-blue-dark)]"
                                 : "text-slate-500 hover:text-slate-700"
                         }`}
                     >
@@ -143,7 +143,7 @@ function ProfileContent() {
                             {[
                                 { icon: AtSign, label: "Username", value: user?.username || "--", accent: "cyan" },
                                 { icon: Mail, label: "Email", value: user?.email || "--", accent: "violet" },
-                                { icon: User, label: "Role", value: displayRole, accent: "teal" },
+                                { icon: User, label: "Role", value: displayRole, accent: "blue" },
                             ].map((item, i) => (
                                 <motion.div
                                     key={item.label}
@@ -170,10 +170,10 @@ function ProfileContent() {
                             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
                             className="surface-card overflow-hidden"
                         >
-                            <div className="px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-teal-50/50 to-cyan-50/50">
+                            <div className="px-5 py-3 border-b border-slate-100 bg-linear-to-r from-[rgba(56,182,255,0.04)] to-[rgba(63,116,255,0.03)]">
                                 <div className="flex items-center gap-2.5">
-                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-md shadow-teal-500/20">
-                                        <Pencil size={14} className="text-white" />
+                                    <div className="w-8 h-8 rounded-lg bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-[var(--vb-glow)]">
+                                        <Pencil size={14} />
                                     </div>
                                     <div>
                                         <h3 className="text-sm font-bold text-slate-800">Edit Profile</h3>
@@ -231,10 +231,10 @@ function ProfileContent() {
                         exit={{ opacity: 0, y: -15 }} transition={{ duration: 0.25 }}
                     >
                         <div className="surface-card overflow-hidden">
-                            <div className="px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-amber-50/50 to-orange-50/50">
+                            <div className="px-5 py-3 border-b border-slate-100 bg-linear-to-r from-amber-50/50 to-orange-50/50">
                                 <div className="flex items-center gap-2.5">
-                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-md shadow-amber-500/20">
-                                        <KeyRound size={14} className="text-white" />
+                                    <div className="w-8 h-8 rounded-lg bg-linear-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-md shadow-amber-500/20">
+                                        <KeyRound size={14} />
                                     </div>
                                     <div>
                                         <h3 className="text-sm font-bold text-slate-800">Change Password</h3>

@@ -129,7 +129,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="h-screen flex overflow-hidden app-shell text-foreground relative">
             <Sidebar open={navOpen} onClose={closeNav} />
             <div className="flex-1 min-w-0 min-h-0 flex flex-col relative z-1">
-                <header className="lg:hidden shrink-0 flex items-center gap-2.5 px-3 sm:px-4 py-2 border-b border-border bg-linear-to-r from-white/90 via-teal-50/80 to-cyan-50/70 backdrop-blur-md">
+                <header className="lg:hidden shrink-0 flex items-center gap-2.5 px-3 sm:px-4 py-2 border-b border-border bg-linear-to-r from-white/90 via-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.042)] backdrop-blur-md">
                     <button
                         type="button"
                         onClick={() => setNavOpen(true)}

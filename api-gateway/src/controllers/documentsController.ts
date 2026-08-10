@@ -38,6 +38,7 @@ import {
     streamAiAsset,
     triggerDocumentReprocess,
     updateAiDocumentSettings,
+    type AiDocumentExtraction,
 } from '../services/aiServiceClient';
 import { PERMISSIONS } from '../types/permissions';
 import logger from '../utils/logger';
@@ -54,6 +55,85 @@ const SORT_FIELDS: Record<string, string> = {
 
 const PYTHON_DONE_STATUSES = ['processed', 'embedded', 'classified', 'completed', 'ready'];
 const PYTHON_FAILED_STATUSES = ['failed', 'error'];
+const TERMINAL_MONGO_STATUSES = new Set(['ready', 'failed', 'review']);
+
+function pickCvEvaluation(data: Record<string, unknown>): Record<string, unknown> | null {
+    const nested = data.cv_evaluation;
+    if (nested && typeof nested === 'object') return nested as Record<string, unknown>;
+    if (data.overall_score != null && (data.strengths != null || data.skills_score != null)) {
+        return data;
+    }
+    return null;
+}
+
+function extractionPriority(row: AiDocumentExtraction): number {
+    const data = row.extracted_data;
+    if (data && typeof data === 'object' && pickCvEvaluation(data as Record<string, unknown>)) return 0;
+    const type = String(row.extraction_type || '').toLowerCase();
+    if (type === 'resume' || type === 'cv') return 1;
+    if (type.includes('classif')) return 90;
+    return 40;
+}
+
+function isClassificationOnlyPayload(data: Record<string, unknown>): boolean {
+    const keys = Object.keys(data);
+    if (!keys.length) return true;
+    const classifyKeys = new Set([
+        'document_type',
+        'phase3_agent',
+        'natural_agent',
+        'agent_clamped',
+        'confidence',
+        'classification',
+    ]);
+    return keys.every((k) => classifyKeys.has(k));
+}
+
+function mergeExtractionsIntoAiSnapshot(
+    doc: InstanceType<typeof Document>,
+    extractions: AiDocumentExtraction[],
+    base: Record<string, unknown> | null
+): Record<string, unknown> {
+    const aiDocument: Record<string, unknown> = {
+        ...(base || {}),
+        extractions,
+        status: String(base?.status || doc.status || 'ready'),
+    };
+    if (!aiDocument.document_type && doc.classification) {
+        aiDocument.document_type = doc.classification;
+    }
+    if (doc.metadata?.cvScore != null && aiDocument.cv_score == null) {
+        aiDocument.cv_score = Number(doc.metadata.cvScore);
+    }
+    if (base?.cv_extraction_data && typeof base.cv_extraction_data === 'object') {
+        aiDocument.cv_extraction_data = base.cv_extraction_data;
+    }
+    if (base?.cv_score != null) aiDocument.cv_score = base.cv_score;
+
+    const sorted = [...extractions].sort((a, b) => extractionPriority(a) - extractionPriority(b));
+    for (const row of sorted) {
+        const data = row.extracted_data;
+        if (!data || typeof data !== 'object') continue;
+        const payload = data as Record<string, unknown>;
+        const cvEval = pickCvEvaluation(payload);
+        if (cvEval) {
+            const score = cvEval.overall_score;
+            if (score != null && aiDocument.cv_score == null) aiDocument.cv_score = Number(score);
+            if (!aiDocument.cv_extraction_data) aiDocument.cv_extraction_data = cvEval;
+        }
+        if (!isClassificationOnlyPayload(payload)) {
+            const existing = aiDocument.extracted_data;
+            if (
+                !existing ||
+                (typeof existing === 'object' && Object.keys(existing as object).length === 0) ||
+                isClassificationOnlyPayload(existing as Record<string, unknown>)
+            ) {
+                aiDocument.extracted_data = payload;
+            }
+        }
+    }
+    return aiDocument;
+}
 
 async function syncStatusFromAiDocument(
     doc: InstanceType<typeof Document>,
@@ -84,26 +164,27 @@ async function syncStatusFromAiDocument(
         if (aiDoc.cv_score != null) {
             doc.metadata = { ...(doc.metadata || {}), cvScore: Number(aiDoc.cv_score) };
         }
-        if (aiDoc.phase3_agent) {
-            const naturalAgent =
-                aiDoc.natural_agent != null
-                    ? String(aiDoc.natural_agent)
-                    : undefined;
-            const agentClamped =
-                aiDoc.agent_clamped === true ||
-                aiDoc.agent_clamped === 1 ||
-                aiDoc.agent_clamped === '1' ||
-                (naturalAgent != null &&
-                    naturalAgent !== String(aiDoc.phase3_agent));
-            doc.metadata = {
-                ...(doc.metadata || {}),
-                phase3Agent: String(aiDoc.phase3_agent),
-                ...(naturalAgent ? { naturalAgent } : {}),
-                agentClamped: !!agentClamped,
-            };
-        }
     } else if (pyStatus) {
         doc.status = 'processing';
+    }
+
+    // Always copy the clamped agent (not only when ready). Chat filters by
+    // resolveDocAgent(); without phase3Agent it falls back to classification →
+    // finance/hr/etc and hides the doc when that agent is off-plan.
+    if (aiDoc.phase3_agent) {
+        const naturalAgent =
+            aiDoc.natural_agent != null ? String(aiDoc.natural_agent) : undefined;
+        const agentClamped =
+            aiDoc.agent_clamped === true ||
+            aiDoc.agent_clamped === 1 ||
+            aiDoc.agent_clamped === '1' ||
+            (naturalAgent != null && naturalAgent !== String(aiDoc.phase3_agent));
+        doc.metadata = {
+            ...(doc.metadata || {}),
+            phase3Agent: String(aiDoc.phase3_agent),
+            ...(naturalAgent ? { naturalAgent } : {}),
+            agentClamped: !!agentClamped,
+        };
     }
 
     // Relocate only after AI finishes (or fails) so we never move the file mid-OCR/pipeline
@@ -137,6 +218,256 @@ async function syncStatusFromAiDocument(
 
     return aiDoc;
 }
+
+export const getDocumentStats = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.DOCUMENT_VIEW)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+
+        const organizationId = (req.query.organizationId as string) || undefined;
+        const departmentId = ((req.query.departmentId as string) || '').trim() || undefined;
+        const uploadedBy = ((req.query.uploadedBy as string) || '').trim() || undefined;
+
+        const extra: Record<string, unknown> = {};
+        if (uploadedBy) {
+            extra.uploadedBy = uploadedBy;
+        }
+
+        const filter = await buildDocumentFilter(req.user, extra, {
+            organizationId: req.user.role === 'superAdmin' ? organizationId : undefined,
+            departmentId,
+        });
+
+        const fourteenDaysAgo = new Date();
+        fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+
+        const results = await Document.aggregate([
+            { $match: filter },
+            {
+                $facet: {
+                    stats: [
+                        {
+                            $group: {
+                                _id: null,
+                                total: { $sum: 1 },
+                                processed: {
+                                    $sum: {
+                                        $cond: [
+                                            {
+                                                $in: [
+                                                    { $toLower: '$status' },
+                                                    ['ready', 'processed', 'completed', 'embedded', 'classified', 'done']
+                                                ]
+                                            },
+                                            1,
+                                            0
+                                        ]
+                                    }
+                                },
+                                processing: {
+                                    $sum: {
+                                        $cond: [
+                                            {
+                                                $in: [
+                                                    { $toLower: '$status' },
+                                                    ['processing', 'uploaded', 'queued']
+                                                ]
+                                            },
+                                            1,
+                                            0
+                                        ]
+                                    }
+                                },
+                                failed: {
+                                    $sum: {
+                                        $cond: [
+                                            {
+                                                $or: [
+                                                    { $eq: [{ $toLower: '$status' }, 'failed'] },
+                                                    { $regexMatch: { input: { $toLower: '$status' }, regex: 'fail' } },
+                                                    { $regexMatch: { input: { $toLower: '$status' }, regex: 'error' } }
+                                                ]
+                                            },
+                                            1,
+                                            0
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    ],
+                    trendData: [
+                        { $match: { createdAt: { $gte: fourteenDaysAgo } } },
+                        {
+                            $group: {
+                                _id: {
+                                    $dateToString: { format: '%Y-%m-%d', date: '$createdAt' }
+                                },
+                                uploads: { $sum: 1 }
+                            }
+                        },
+                        { $sort: { _id: 1 } }
+                    ],
+                    departmentData: [
+                        {
+                            $group: {
+                                _id: { $ifNull: ['$departmentId', 'Unassigned'] },
+                                count: { $sum: 1 }
+                            }
+                        },
+                        { $sort: { count: -1 } },
+                        { $limit: 10 }
+                    ],
+                    statusData: [
+                        {
+                            $group: {
+                                _id: { $ifNull: ['$status', 'unknown'] },
+                                count: { $sum: 1 }
+                            }
+                        }
+                    ]
+                }
+            }
+        ]);
+
+        const rawFacet = results[0] || {};
+        const rawStats = rawFacet.stats?.[0] || { total: 0, processed: 0, processing: 0, failed: 0 };
+        const stats = {
+            total: rawStats.total || 0,
+            processed: rawStats.processed || 0,
+            processing: rawStats.processing || 0,
+            failed: rawStats.failed || 0
+        };
+
+        const trendData = (rawFacet.trendData || []).map((t: any) => {
+            const dateObj = new Date(t._id);
+            const formattedDate = !isNaN(dateObj.getTime())
+                ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                : String(t._id || '');
+            return {
+                rawDate: t._id,
+                date: formattedDate,
+                uploads: t.uploads || 0
+            };
+        });
+
+        const departmentData = (rawFacet.departmentData || []).map((d: any) => ({
+            departmentId: d._id,
+            name: d._id,
+            count: d.count || 0
+        }));
+
+        const statusData = (rawFacet.statusData || []).map((s: any) => ({
+            name: String(s._id).charAt(0).toUpperCase() + String(s._id).slice(1),
+            count: s.count || 0
+        }));
+
+        return res.json({
+            success: true,
+            data: {
+                stats,
+                trendData,
+                departmentData,
+                statusData
+            }
+        });
+    } catch (error) {
+        return next(error);
+    }
+};
+
+export const getHrAnalytics = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.DOCUMENT_VIEW)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+
+        const organizationId = (req.query.organizationId as string) || undefined;
+        const departmentId = ((req.query.departmentId as string) || '').trim() || undefined;
+
+        const hrFilter = await buildDocumentFilter(req.user, {
+            $or: [
+                { classification: { $in: ['resume', 'offer_letter', 'employee_record', 'payroll', 'employment_contract', 'leave_application', 'transcript', 'attendance', 'performance_review'] } },
+                { 'metadata.phase3Agent': 'hr_agent' }
+            ]
+        }, {
+            organizationId: req.user.role === 'superAdmin' ? organizationId : undefined,
+            departmentId
+        });
+
+        const hrDocs = await Document.find(hrFilter).select('documentId originalFilename classification metadata departmentId createdAt').lean();
+
+        const deptMap: Record<string, number> = {};
+        const salaryBands = { "< $50k": 0, "$50k - $100k": 0, "$100k - $150k": 0, "$150k+": 0 };
+        const now = new Date();
+        const in90 = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+
+        let expire30Count = 0;
+        let expire60Count = 0;
+        let expire90Count = 0;
+        const expiryAlerts: Array<{ documentId: string; title: string; expiryDate: string; daysLeft: number }> = [];
+
+        for (const doc of hrDocs) {
+            const dept = doc.departmentId || (doc.metadata as any)?.department || 'Unassigned';
+            deptMap[dept] = (deptMap[dept] || 0) + 1;
+
+            const sal = Number((doc.metadata as any)?.salary || (doc.metadata as any)?.offered_salary || 0);
+            if (sal > 0) {
+                if (sal < 50000) salaryBands["< $50k"]++;
+                else if (sal < 100000) salaryBands["$50k - $100k"]++;
+                else if (sal < 150000) salaryBands["$100k - $150k"]++;
+                else salaryBands["$150k+"]++;
+            }
+
+            const expDateStr = (doc.metadata as any)?.end_date || (doc.metadata as any)?.offer_valid_until;
+            if (expDateStr) {
+                const expDate = new Date(expDateStr);
+                if (!isNaN(expDate.getTime()) && expDate >= now && expDate <= in90) {
+                    const daysLeft = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                    if (daysLeft <= 30) expire30Count++;
+                    else if (daysLeft <= 60) expire60Count++;
+                    else expire90Count++;
+
+                    expiryAlerts.push({
+                        documentId: doc.documentId,
+                        title: doc.originalFilename || doc.documentId,
+                        expiryDate: expDateStr,
+                        daysLeft
+                    });
+                }
+            }
+        }
+
+        const headcountData = Object.entries(deptMap).map(([dept, count]) => ({
+            name: dept,
+            count
+        })).sort((a, b) => b.count - a.count);
+
+        const salaryBandData = Object.entries(salaryBands).map(([band, count]) => ({
+            name: band,
+            count
+        }));
+
+        return res.json({
+            success: true,
+            data: {
+                totalHrDocuments: hrDocs.length,
+                headcountData,
+                salaryBandData,
+                expirySummary: {
+                    expire30Days: expire30Count,
+                    expire60Days: expire60Count,
+                    expire90Days: expire90Count,
+                    totalUpcomingExpiries: expiryAlerts.length,
+                },
+                expiryAlerts: expiryAlerts.sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 10)
+            }
+        });
+    } catch (error) {
+        return next(error);
+    }
+};
 
 export const listDocuments = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -289,7 +620,7 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
             filter = { ...baseFilter, documentId: { $in: duplicateIds } };
         }
 
-        const [documents, total, duplicateSizes] = await Promise.all([
+        const [documentsRaw, total, duplicateSizes] = await Promise.all([
             Document.find(filter)
                 .sort({ [sortBy]: sortOrder })
                 .skip((page - 1) * limit)
@@ -301,6 +632,45 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
                 ? getDuplicateGroupSizes(baseFilter)
                 : Promise.resolve(new Map<string, number>()),
         ]);
+
+        // Heal AI status / phase3Agent so chat does not hide finished docs still marked
+        // "processing", and so plan-agent filtering uses the clamped agent (not natural type).
+        let documents = documentsRaw;
+        if (isAiServiceEnabled()) {
+            const healIds = documentsRaw
+                .filter((d) => {
+                    if (!d.pythonDocumentId) return false;
+                    const status = String(d.status || '');
+                    const missingAgent = !(d.metadata as { phase3Agent?: string } | null)?.phase3Agent;
+                    return (
+                        ['processing', 'uploaded'].includes(status) ||
+                        (missingAgent && status !== 'failed')
+                    );
+                })
+                .slice(0, 8)
+                .map((d) => d.documentId);
+            if (healIds.length) {
+                await Promise.all(
+                    healIds.map(async (documentId) => {
+                        try {
+                            const live = await Document.findOne({ documentId });
+                            if (!live?.pythonDocumentId) return;
+                            const orgId = resolveDocumentAiOrgId(live, req.user);
+                            await syncStatusFromAiDocument(live, orgId, req.user);
+                            if (live.isModified()) await live.save();
+                        } catch (e: any) {
+                            logger.warn(`List heal sync failed for ${documentId}: ${e?.message || e}`);
+                        }
+                    })
+                );
+                documents = await Document.find(filter)
+                    .sort({ [sortBy]: sortOrder })
+                    .skip((page - 1) * limit)
+                    .limit(limit)
+                    .select('-storagePath -contentHash -storedFilename -openRemoteUserId -errorMessage')
+                    .lean();
+            }
+        }
 
         const documentIds = documents.map((doc) => doc.documentId).filter(Boolean);
         const departmentIdQuery = (req.query.departmentId as string) || undefined;
@@ -455,19 +825,27 @@ export const uploadDocument = async (req: Request, res: Response, next: NextFunc
             return res.status(400).json({ success: false, message: `Unsupported AI provider: ${aiProvider}` });
         }
 
-        const { doc, aiModelResponse } = await saveUploadedFile(req.user, file, phase3Agent, aiProvider);
+        const { doc, aiModelResponse, uploadNotes } = await saveUploadedFile(req.user, file, phase3Agent, aiProvider);
         recordActivityFromReq(req, {
             action: 'document.upload',
             category: 'document',
             resourceType: 'document',
             resourceId: doc.documentId,
-            message: `Uploaded ${doc.originalFilename}`,
-            metadata: { filename: doc.originalFilename, mimeType: doc.mimeType },
+            message: uploadNotes?.replacedContentDuplicateId
+                ? `Uploaded ${doc.originalFilename} (replaced duplicate content)`
+                : uploadNotes?.renamedFrom
+                  ? `Uploaded ${doc.originalFilename} (renamed from ${uploadNotes.renamedFrom})`
+                  : `Uploaded ${doc.originalFilename}`,
+            metadata: {
+                filename: doc.originalFilename,
+                mimeType: doc.mimeType,
+                ...(uploadNotes || {}),
+            },
         });
         res.status(201).json({
             success: true,
             message: 'Document uploaded successfully',
-            data: { document: doc, aiModelResponse },
+            data: { document: doc, aiModelResponse, uploadNotes: uploadNotes || null },
         });
     } catch (error: any) {
         if (error.statusCode === 429 || error.code === 'GROQ_RATE_LIMIT') {
@@ -485,7 +863,14 @@ export const uploadDocument = async (req: Request, res: Response, next: NextFunc
             return res.status(415).json({ success: false, message: error.message });
         }
         if (error.statusCode === 409) {
-            return res.status(409).json({ success: false, code: 'DUPLICATE_FILE', message: error.message });
+            return res.status(409).json({
+                success: false,
+                code: error.code || 'DUPLICATE_FILE',
+                message: error.message,
+                data: error.existingDocumentId
+                    ? { existingDocumentId: error.existingDocumentId }
+                    : undefined,
+            });
         }
         next(error);
     }
@@ -581,10 +966,24 @@ export const getDocumentProcessing = async (req: Request, res: Response, next: N
         let aiDocument = null;
         const orgId = resolveDocumentAiOrgId(doc, req.user);
         const runModel = req.query.runModel === 'true' || req.query.runModel === '1';
+        const terminalStatuses = new Set(['ready', 'failed', 'review']);
+        const alreadyTerminal = terminalStatuses.has(String(doc.status || '').toLowerCase());
 
-        if (isAiServiceEnabled() && doc.pythonDocumentId) {
+        // Fast path: document already settled — skip AI round-trips on routine polls
+        if (isAiServiceEnabled() && doc.pythonDocumentId && !alreadyTerminal) {
             aiDocument = await syncStatusFromAiDocument(doc, orgId, req.user);
             aiJob = await getDocumentJobStatus(doc.pythonDocumentId, orgId);
+
+            // Orphan AI link: job/document gone → stop endless "processing" polls
+            const jobFailed =
+                String(aiJob?.status || '').toLowerCase() === 'failed' ||
+                String(aiJob?.stage || '').toLowerCase() === 'failed';
+            if (!aiDocument && jobFailed) {
+                doc.status = 'failed';
+                doc.aiErrorMessage =
+                    String(aiJob?.error_message || aiJob?.error || 'AI document missing') ||
+                    'AI document missing';
+            }
 
             const missingData =
                 !aiDocument?.cv_score &&
@@ -602,11 +1001,11 @@ export const getDocumentProcessing = async (req: Request, res: Response, next: N
                 jobStatus === 'running' ||
                 String(aiDocument?.status || '').toLowerCase() === 'processing';
 
+            // Only reprocess when explicitly requested AND nothing is already running
             if (runModel && missingData && !alreadyRunning) {
                 try {
                     doc.status = 'processing';
                     doc.aiErrorMessage = null;
-                    await doc.save();
                     await triggerDocumentReprocess(doc.pythonDocumentId, orgId);
                 } catch (e: any) {
                     const logger = (await import('../utils/logger')).default;
@@ -614,11 +1013,23 @@ export const getDocumentProcessing = async (req: Request, res: Response, next: N
                 }
             }
 
-            await doc.save();
-            aiDocument = await syncStatusFromAiDocument(doc, orgId, req.user);
-            await doc.save();
-            if (!aiJob) {
+            // Single save after sync (was double sync + double save — multi-second poll tax)
+            if (doc.isModified()) {
+                await doc.save();
+            }
+        } else if (alreadyTerminal && isAiServiceEnabled() && doc.pythonDocumentId && runModel) {
+            // Explicit re-run even if previously ready
+            try {
+                doc.status = 'processing';
+                doc.aiErrorMessage = null;
+                await doc.save();
+                await triggerDocumentReprocess(doc.pythonDocumentId, orgId);
+                aiDocument = await syncStatusFromAiDocument(doc, orgId, req.user);
                 aiJob = await getDocumentJobStatus(doc.pythonDocumentId, orgId);
+                if (doc.isModified()) await doc.save();
+            } catch (e: any) {
+                const logger = (await import('../utils/logger')).default;
+                logger.warn(`Forced model re-run failed for ${doc.documentId}: ${e.message}`);
             }
         }
 
@@ -738,20 +1149,37 @@ export const getDocumentIntelligence = async (req: Request, res: Response, next:
         let job = null;
         let validations: unknown[] = [];
 
+        const terminal = TERMINAL_MONGO_STATUSES.has(String(doc.status || '').toLowerCase());
+        const forceSync = req.query.sync === 'true' || req.query.sync === '1';
+
         if (isAiServiceEnabled() && doc.pythonDocumentId) {
-            const synced = await syncStatusFromAiDocument(doc, orgId, req.user);
-            await doc.save();
-            aiDocument = synced;
-            const [extractions, jobResult, validationResult] = await Promise.all([
-                getDocumentExtractions(doc.pythonDocumentId, orgId),
-                getDocumentJobStatus(doc.pythonDocumentId, orgId),
-                doc.status === 'ready' ? listAiValidations(orgId, doc.pythonDocumentId) : Promise.resolve([]),
-            ]);
-            if (Array.isArray(extractions) && extractions.length > 0) {
-                aiDocument = { ...(aiDocument || {}), extractions };
+            if (terminal && !forceSync) {
+                const [fullDoc, extractions, validationResult] = await Promise.all([
+                    getAiDocument(doc.pythonDocumentId, orgId),
+                    getDocumentExtractions(doc.pythonDocumentId, orgId),
+                    doc.status === 'ready'
+                        ? listAiValidations(orgId, doc.pythonDocumentId)
+                        : Promise.resolve([]),
+                ]);
+                aiDocument = mergeExtractionsIntoAiSnapshot(doc, extractions, fullDoc);
+                validations = validationResult;
+            } else {
+                const synced = await syncStatusFromAiDocument(doc, orgId, req.user);
+                await doc.save();
+                aiDocument = synced;
+                const [extractions, jobResult, validationResult] = await Promise.all([
+                    getDocumentExtractions(doc.pythonDocumentId, orgId),
+                    getDocumentJobStatus(doc.pythonDocumentId, orgId),
+                    doc.status === 'ready'
+                        ? listAiValidations(orgId, doc.pythonDocumentId)
+                        : Promise.resolve([]),
+                ]);
+                if (Array.isArray(extractions) && extractions.length > 0) {
+                    aiDocument = mergeExtractionsIntoAiSnapshot(doc, extractions, aiDocument);
+                }
+                job = jobResult;
+                validations = validationResult;
             }
-            job = jobResult;
-            validations = validationResult;
         }
 
         res.json({

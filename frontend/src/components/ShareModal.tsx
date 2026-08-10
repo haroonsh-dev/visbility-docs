@@ -196,22 +196,22 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
             <div
-                className="w-full max-w-lg surface-card border border-[var(--border)] shadow-2xl flex flex-col max-h-[85vh]"
+                className="w-full max-w-lg surface-card border border-border shadow-2xl flex flex-col max-h-[85vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                     <div className="flex items-center gap-3 min-w-0">
-                        <div className="h-9 w-9 rounded-lg bg-[var(--accent-muted)] text-[var(--accent)] flex items-center justify-center shrink-0">
+                        <div className="h-9 w-9 rounded-lg bg-accent-muted text-accent flex items-center justify-center shrink-0">
                             <Share2 size={16} />
                         </div>
                         <div className="min-w-0">
-                            <h2 className="text-sm font-bold text-[var(--foreground)]">Share Document</h2>
-                            <p className="text-xs text-[var(--foreground-muted)] truncate">{filename}</p>
+                            <h2 className="text-sm font-bold text-foreground">Share Document</h2>
+                            <p className="text-xs text-foreground-muted truncate">{filename}</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--surface-3)] transition-colors" aria-label="Close">
-                        <X size={16} className="text-[var(--foreground-muted)]" />
+                    <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-3 transition-colors" aria-label="Close">
+                        <X size={16} className="text-foreground-muted" />
                     </button>
                 </div>
 
@@ -220,7 +220,7 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                     {/* Mode selection (when not in a sub-view) */}
                     {!mode && (
                         <div className="space-y-2">
-                            <p className="text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider mb-3">
+                            <p className="text-xs font-semibold text-foreground-muted uppercase tracking-wider mb-3">
                                 Share with
                             </p>
 
@@ -229,14 +229,14 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                 <button
                                     type="button"
                                     onClick={() => setMode("own_dept")}
-                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent-muted)]/30 transition-all text-left group"
+                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:border-accent hover:bg-accent-muted/30 transition-all text-left group"
                                 >
-                                    <div className="h-10 w-10 rounded-lg bg-[var(--accent-muted)] text-[var(--accent)] flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                                    <div className="h-10 w-10 rounded-lg bg-accent-muted text-accent flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                                         <Users size={18} />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-semibold text-[var(--foreground)]">My Department</p>
-                                        <p className="text-xs text-[var(--foreground-muted)]">Share with all members of your department</p>
+                                        <p className="text-sm font-semibold text-foreground">My Department</p>
+                                        <p className="text-xs text-foreground-muted">Share with all members of your department</p>
                                     </div>
                                 </button>
                             )}
@@ -246,14 +246,14 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                 <button
                                     type="button"
                                     onClick={() => setMode("specific_users")}
-                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent-muted)]/30 transition-all text-left group"
+                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:border-accent hover:bg-accent-muted/30 transition-all text-left group"
                                 >
                                     <div className="h-10 w-10 rounded-lg bg-blue-500/15 text-blue-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                                         <UserCheck size={18} />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-semibold text-[var(--foreground)]">Specific People</p>
-                                        <p className="text-xs text-[var(--foreground-muted)]">Choose people in your department</p>
+                                        <p className="text-sm font-semibold text-foreground">Specific People</p>
+                                        <p className="text-xs text-foreground-muted">Choose people in your department</p>
                                     </div>
                                 </button>
                             )}
@@ -263,14 +263,14 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                 <button
                                     type="button"
                                     onClick={() => setMode("other_dept")}
-                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent-muted)]/30 transition-all text-left group"
+                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:border-accent hover:bg-accent-muted/30 transition-all text-left group"
                                 >
                                     <div className="h-10 w-10 rounded-lg bg-purple-500/15 text-purple-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                                         <Building2 size={18} />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-semibold text-[var(--foreground)]">Another Department</p>
-                                        <p className="text-xs text-[var(--foreground-muted)]">Share with a different department (leader only by default)</p>
+                                        <p className="text-sm font-semibold text-foreground">Another Department</p>
+                                        <p className="text-xs text-foreground-muted">Share with a different department (leader only by default)</p>
                                     </div>
                                 </button>
                             )}
@@ -280,14 +280,14 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                 <button
                                     type="button"
                                     onClick={() => setMode("everyone")}
-                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent-muted)]/30 transition-all text-left group"
+                                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:border-accent hover:bg-accent-muted/30 transition-all text-left group"
                                 >
                                     <div className="h-10 w-10 rounded-lg bg-amber-500/15 text-amber-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                                         <Globe size={18} />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-semibold text-[var(--foreground)]">Everyone</p>
-                                        <p className="text-xs text-[var(--foreground-muted)]">Share with all departments in the organization</p>
+                                        <p className="text-sm font-semibold text-foreground">Everyone</p>
+                                        <p className="text-xs text-foreground-muted">Share with all departments in the organization</p>
                                     </div>
                                 </button>
                             )}
@@ -297,12 +297,12 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                     {/* ── Own Department sub-view ── */}
                     {mode === "own_dept" && (
                         <div className="space-y-3">
-                            <button onClick={reset} className="text-xs text-[var(--accent)] hover:underline">&larr; Back</button>
-                            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/60 p-4">
-                                <p className="text-sm text-[var(--foreground)]">
+                            <button onClick={reset} className="text-xs text-accent hover:underline">&larr; Back</button>
+                            <div className="rounded-xl border border-border bg-surface-2/60 p-4">
+                                <p className="text-sm text-foreground">
                                     This will share the document with <strong>all members</strong> of your department.
                                 </p>
-                                <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                                <p className="text-xs text-foreground-muted mt-1">
                                     Everyone in your department will be able to see this document.
                                 </p>
                             </div>
@@ -321,10 +321,10 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                     {/* ── Specific Users sub-view ── */}
                     {mode === "specific_users" && (
                         <div className="space-y-3">
-                            <button onClick={reset} className="text-xs text-[var(--accent)] hover:underline">&larr; Back</button>
+                            <button onClick={reset} className="text-xs text-accent hover:underline">&larr; Back</button>
 
                             <div className="relative">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)]" />
+                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted" />
                                 <input
                                     type="text"
                                     value={userSearch}
@@ -334,9 +334,9 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                 />
                             </div>
 
-                            <div className="max-h-48 overflow-y-auto rounded-xl border border-[var(--border)] divide-y divide-[var(--border)]">
+                            <div className="max-h-48 overflow-y-auto rounded-xl border border-border divide-y divide-border">
                                 {filteredMembers.length === 0 && (
-                                    <p className="p-3 text-xs text-[var(--foreground-muted)]">No members found</p>
+                                    <p className="p-3 text-xs text-foreground-muted">No members found</p>
                                 )}
                                 {filteredMembers.map((m) => {
                                     const selected = selectedUserIds.includes(m.userId);
@@ -350,23 +350,23 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                                 );
                                             }}
                                             className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
-                                                selected ? "bg-[var(--accent-muted)]/30" : "hover:bg-[var(--surface-3)]"
+                                                selected ? "bg-accent-muted/30" : "hover:bg-surface-3"
                                             }`}
                                         >
                                             <div
                                                 className={`h-4 w-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                                                    selected ? "bg-[var(--accent)] border-[var(--accent)]" : "border-[var(--border)]"
+                                                    selected ? "bg-accent border-accent" : "border-border"
                                                 }`}
                                             >
                                                 {selected && (
                                                     <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                                                        <path d="M1 4L3.5 6.5L9 1" stroke="#042f2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                                        <path d="M1 4L3.5 6.5L9 1" stroke="#03111d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                                                     </svg>
                                                 )}
                                             </div>
                                             <div className="min-w-0">
-                                                <p className="text-sm font-medium text-[var(--foreground)] truncate">{m.user?.fullName || m.userId}</p>
-                                                {m.user?.email && <p className="text-xs text-[var(--foreground-muted)] truncate">{m.user.email}</p>}
+                                                <p className="text-sm font-medium text-foreground truncate">{m.user?.fullName || m.userId}</p>
+                                                {m.user?.email && <p className="text-xs text-foreground-muted truncate">{m.user.email}</p>}
                                             </div>
                                             {m.role?.isLeader && (
                                                 <Shield size={12} className="text-amber-400 shrink-0 ml-auto" />
@@ -377,7 +377,7 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                             </div>
 
                             {selectedUserIds.length > 0 && (
-                                <p className="text-xs text-[var(--accent)] font-medium">{selectedUserIds.length} person(s) selected</p>
+                                <p className="text-xs text-accent font-medium">{selectedUserIds.length} person(s) selected</p>
                             )}
 
                             <button
@@ -395,10 +395,10 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                     {/* ── Other Department sub-view ── */}
                     {mode === "other_dept" && (
                         <div className="space-y-3">
-                            <button onClick={reset} className="text-xs text-[var(--accent)] hover:underline">&larr; Back</button>
+                            <button onClick={reset} className="text-xs text-accent hover:underline">&larr; Back</button>
 
                             <div>
-                                <label className="text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider block mb-2">
+                                <label className="text-xs font-semibold text-foreground-muted uppercase tracking-wider block mb-2">
                                     Select Department
                                 </label>
                                 <select
@@ -415,16 +415,16 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                 </select>
                             </div>
 
-                            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/60 p-4 space-y-2">
-                                <p className="text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">Visibility</p>
+                            <div className="rounded-xl border border-border bg-surface-2/60 p-4 space-y-2">
+                                <p className="text-xs font-semibold text-foreground-muted uppercase tracking-wider">Visibility</p>
                                 <div className="flex gap-2">
                                     <button
                                         type="button"
                                         onClick={() => setVisibility("leader_only")}
                                         className={`flex-1 rounded-xl px-3 py-2 text-xs font-medium border transition-all ${
                                             visibility === "leader_only"
-                                                ? "bg-[var(--accent-muted)] border-[var(--accent)] text-[var(--accent)]"
-                                                : "border-[var(--border)] text-[var(--foreground-muted)] hover:border-[var(--accent)]"
+                                                ? "bg-accent-muted border-accent text-accent"
+                                                : "border-border text-foreground-muted hover:border-accent"
                                         }`}
                                     >
                                         <div className="flex items-center justify-center gap-1.5">
@@ -437,8 +437,8 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                         onClick={() => setVisibility("all_members")}
                                         className={`flex-1 rounded-xl px-3 py-2 text-xs font-medium border transition-all ${
                                             visibility === "all_members"
-                                                ? "bg-[var(--accent-muted)] border-[var(--accent)] text-[var(--accent)]"
-                                                : "border-[var(--border)] text-[var(--foreground-muted)] hover:border-[var(--accent)]"
+                                                ? "bg-accent-muted border-accent text-accent"
+                                                : "border-border text-foreground-muted hover:border-accent"
                                         }`}
                                     >
                                         <div className="flex items-center justify-center gap-1.5">
@@ -447,7 +447,7 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                         </div>
                                     </button>
                                 </div>
-                                <p className="text-[11px] text-[var(--foreground-muted)]">
+                                <p className="text-[11px] text-foreground-muted">
                                     {visibility === "leader_only"
                                         ? "Only the department leader can see this. They can re-share with their team."
                                         : "All members of the department will see this document."}
@@ -469,12 +469,12 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                     {/* ── Everyone sub-view ── */}
                     {mode === "everyone" && (
                         <div className="space-y-3">
-                            <button onClick={reset} className="text-xs text-[var(--accent)] hover:underline">&larr; Back</button>
-                            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/60 p-4">
-                                <p className="text-sm text-[var(--foreground)]">
+                            <button onClick={reset} className="text-xs text-accent hover:underline">&larr; Back</button>
+                            <div className="rounded-xl border border-border bg-surface-2/60 p-4">
+                                <p className="text-sm text-foreground">
                                     This will share the document with <strong>all departments</strong> in the organization.
                                 </p>
-                                <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                                <p className="text-xs text-foreground-muted mt-1">
                                     Every department leader and member will be able to see this document.
                                 </p>
                             </div>
@@ -500,13 +500,13 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
 
                     {/* Existing Shares */}
                     {existingShares.length > 0 && !mode && (
-                        <div className="space-y-2 pt-2 border-t border-[var(--border)]">
-                            <p className="text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                        <div className="space-y-2 pt-2 border-t border-border">
+                            <p className="text-xs font-semibold text-foreground-muted uppercase tracking-wider">
                                 Current Shares ({existingShares.length})
                             </p>
                             <div className="space-y-2">
                                 {existingShares.map((s) => (
-                                    <div key={s.shareId} className="flex items-center gap-3 p-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/40">
+                                    <div key={s.shareId} className="flex items-center gap-3 p-2.5 rounded-xl border border-border bg-surface-2/40">
                                         <div className="shrink-0">
                                             {s.scope === "user" && <UserCheck size={14} className="text-blue-400" />}
                                             {s.scope === "department" && <Building2 size={14} className="text-purple-400" />}
@@ -514,12 +514,12 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             {s.scope === "user" && (
-                                                <p className="text-xs text-[var(--foreground)] truncate">
+                                                <p className="text-xs text-foreground truncate">
                                                     {s.targetUserNames?.join(", ") || s.targetUserIds.join(", ")}
                                                 </p>
                                             )}
                                             {s.scope === "department" && (
-                                                <p className="text-xs text-[var(--foreground)]">
+                                                <p className="text-xs text-foreground">
                                                     {s.departmentName || s.departmentId}
                                                     {s.visibility === "leader_only" && (
                                                         <span className="ml-1.5 text-[10px] text-amber-400 font-medium">(Leader Only)</span>
@@ -527,7 +527,7 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                                 </p>
                                             )}
                                             {s.scope === "all" && (
-                                                <p className="text-xs text-[var(--foreground)]">Everyone in organization</p>
+                                                <p className="text-xs text-foreground">Everyone in organization</p>
                                             )}
                                         </div>
                                         {(s.sharedBy === me?.userId || isAdmin) && (
@@ -535,7 +535,7 @@ export default function ShareModal({ documentId, filename, currentDepartmentId, 
                                                 type="button"
                                                 onClick={() => unshare(s.scope, s.departmentId || undefined, s.targetUserIds?.[0])}
                                                 disabled={submitting}
-                                                className="p-1.5 rounded-lg hover:bg-red-500/15 text-[var(--foreground-muted)] hover:text-red-400 transition-colors shrink-0"
+                                                className="p-1.5 rounded-lg hover:bg-red-500/15 text-foreground-muted hover:text-red-400 transition-colors shrink-0"
                                                 title="Remove share"
                                             >
                                                 <Trash2 size={13} />

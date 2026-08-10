@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, status, Query
 from typing import Optional
+from pydantic import BaseModel, Field
 from ..models.schemas import ChatRequest, ChatResponse, ChatSessionResponse, ChatSessionListResponse
 from ..services.chat_service import chat_service
 from ..database import SupabaseDB
@@ -114,6 +115,38 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         session_id=result.get("session_id"),
         provider=result.get("provider"),
         model=result.get("model"),
+    )
+
+
+class AppendChatExchangeRequest(BaseModel):
+    organization_id: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1)
+    answer: str = Field(..., min_length=1)
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    sources: Optional[list] = None
+
+
+@router.post(
+    "/append-exchange",
+    response_model=ChatResponse,
+    summary="Append chat messages without RAG (gateway HR actions)",
+)
+async def append_chat_exchange(body: AppendChatExchangeRequest = Body(...)):
+    result = chat_service.append_exchange(
+        organization_id=body.organization_id,
+        question=body.question.strip(),
+        answer=body.answer.strip(),
+        session_id=body.session_id,
+        user_id=body.user_id,
+        sources=body.sources or [],
+    )
+    return ChatResponse(
+        answer=result["answer"],
+        sources=result.get("sources", []),
+        document_id=result.get("document_id", ""),
+        history=result.get("history", []),
+        session_id=result.get("session_id"),
     )
 
 

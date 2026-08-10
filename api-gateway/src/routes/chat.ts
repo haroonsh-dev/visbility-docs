@@ -3,6 +3,7 @@ import { authenticate } from '../middleware/auth';
 import {
     chatWithDocuments,
     deleteChatSessionHandler,
+    getChatAnalyticsHandler,
     getChatSessionHandler,
     listChatModelsHandler,
     listChatSessionsHandler,
@@ -13,6 +14,7 @@ import {
 const router = Router();
 
 router.get('/sessions', authenticate, listChatSessionsHandler);
+router.get('/analytics', authenticate, getChatAnalyticsHandler);
 router.get('/models', authenticate, listChatModelsHandler);
 router.get('/sessions/:id', authenticate, getChatSessionHandler);
 router.patch('/sessions/:id', authenticate, renameChatSessionHandler);

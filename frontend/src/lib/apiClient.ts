@@ -132,7 +132,7 @@ export async function apiRequest<T = any>(
 ): Promise<T> {
     const url = buildApiUrl(endpoint);
 
-    let token = getAuthValue("accessToken") || getAuthValue("token");
+    const token = getAuthValue("accessToken") || getAuthValue("token");
 
     const doFetch = async (accessToken: string | null) => {
         const headers = new Headers(options.headers || {});
@@ -162,9 +162,17 @@ export async function apiRequest<T = any>(
         }
         maybeNotifyGroqLimit(res.status, data);
         const gatewayDown = res.status === 502 || res.status === 503 || res.status === 504;
+        let detailMsg: string | undefined;
+        if (typeof data.detail === "string") detailMsg = data.detail;
+        else if (Array.isArray(data.detail)) {
+            detailMsg = data.detail
+                .map((item: { msg?: string }) => item?.msg || String(item))
+                .filter(Boolean)
+                .join("; ");
+        }
         const message = gatewayDown
             ? API_UNAVAILABLE_MESSAGE
-            : data.message || data.error || data.detail || `Request failed (${res.status})`;
+            : data.message || detailMsg || data.error || `Request failed (${res.status})`;
         throw new ApiError(message, res.status, data);
     }
     return data as T;
@@ -176,7 +184,7 @@ export async function apiFetchBlob(
 ): Promise<Blob> {
     const url = buildApiUrl(endpoint);
 
-    let token = getAuthValue("accessToken") || getAuthValue("token");
+    const token = getAuthValue("accessToken") || getAuthValue("token");
 
     const doFetch = async (accessToken: string | null) => {
         const headers = new Headers(options.headers || {});

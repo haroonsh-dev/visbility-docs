@@ -10,10 +10,13 @@ import {
 import { downloadDashboardReport } from "@/lib/dashboardExport";
 
 const COLORS = {
-    teal: "#0d9488", tealLight: "#5eead4", emerald: "#10b981",
-    amber: "#f59e0b", rose: "#f43f5e", violet: "#8b5cf6", cyan: "#06b6d4",
+    blue: "#38b6ff", blueBright: "#7ee0ff", blueDeep: "#3f74ff",
+    emerald: "#10b981", amber: "#f59e0b", rose: "#f43f5e", violet: "#8b5cf6",
 };
-const DEPT_COLORS = [COLORS.teal, COLORS.cyan, COLORS.emerald, COLORS.violet, COLORS.amber, COLORS.rose, COLORS.tealLight, COLORS.violet];
+const DEPT_COLORS = [
+    COLORS.blue, COLORS.blueDeep, COLORS.emerald, COLORS.violet,
+    COLORS.amber, COLORS.rose, COLORS.blueBright, COLORS.violet,
+];
 
 type UploadTrendData = { date: string; uploads: number }[];
 type DepartmentData = { name: string; count: number }[];
@@ -132,8 +135,8 @@ function FilterDropdown({
             <button type="button" onClick={() => setOpen(!open)}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg border transition-all ${
                     activeLabel
-                        ? "bg-teal-50 border-teal-300 text-teal-700 hover:bg-teal-100"
-                        : "bg-white border-slate-200 text-slate-500 hover:border-teal-300 hover:text-teal-600"
+                        ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.4)] text-(--vb-blue-dark) hover:bg-[rgba(56,182,255,0.14)]"
+                        : "bg-white border-slate-200 text-slate-500 hover:border-[rgba(56,182,255,0.4)] hover:text-(--vb-blue-dark)"
                 }`}>
                 <SlidersHorizontal size={12} />
                 {activeLabel || "Filter"}
@@ -158,16 +161,16 @@ function FilterDropdown({
                                 <p className="px-3.5 pt-1.5 pb-1 text-[9px] font-bold text-slate-400 uppercase tracking-widest">{label}</p>
                                 {PRESETS.map((p, i) => (
                                     <button key={i} type="button" onClick={() => applyPreset(p.days)}
-                                        className="w-full px-3.5 py-2.5 text-[12px] font-medium text-slate-600 hover:bg-teal-50 hover:text-teal-700 flex items-center justify-between transition-colors">
+                                        className="w-full px-3.5 py-2.5 text-[12px] font-medium text-slate-600 hover:bg-[rgba(56,182,255,0.1)] hover:text-(--vb-blue-dark) flex items-center justify-between transition-colors">
                                         {p.label}
                                         {(!dateFrom && !dateTo && p.days === 0) || (dateFrom === getPresetRange(p.days).from && dateTo === getPresetRange(p.days).to) ? (
-                                            <Check size={13} className="text-teal-500" />
+                                            <Check size={13} className="text-(--vb-blue)" />
                                         ) : null}
                                     </button>
                                 ))}
                                 <div className="mx-3 my-1 border-t border-slate-100" />
                                 <button type="button" onClick={() => setCustom(true)}
-                                    className="w-full px-3.5 py-2.5 text-[12px] font-medium text-slate-600 hover:bg-teal-50 hover:text-teal-700 flex items-center gap-2 transition-colors">
+                                    className="w-full px-3.5 py-2.5 text-[12px] font-medium text-slate-600 hover:bg-[rgba(56,182,255,0.1)] hover:text-(--vb-blue-dark) flex items-center gap-2 transition-colors">
                                     <SlidersHorizontal size={12} /> Custom Range
                                 </button>
                             </div>
@@ -198,7 +201,7 @@ function FilterDropdown({
                                         Cancel
                                     </button>
                                     <button type="button" onClick={applyCustom}
-                                        className="flex-1 py-2 text-[11px] font-semibold rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white hover:shadow-md transition-all">
+                                        className="flex-1 py-2 text-[11px] font-semibold rounded-lg btn-primary hover:shadow-md transition-all">
                                         Apply
                                     </button>
                                 </div>
@@ -231,8 +234,10 @@ export default function DashboardCharts({
 
     const filteredTrendData = useMemo(() => {
         if (!trendFrom && !trendTo) return trendData;
-        return trendData.filter((d) => {
-            const date = new Date(d.date);
+        return trendData.filter((d: any) => {
+            const raw = d.rawDate || d.date;
+            const date = new Date(raw);
+            if (isNaN(date.getTime())) return true;
             if (trendFrom) { const f = new Date(trendFrom); f.setHours(0, 0, 0, 0); if (date < f) return false; }
             if (trendTo) { const t = new Date(trendTo); t.setHours(23, 59, 59, 999); if (date > t) return false; }
             return true;
@@ -294,7 +299,7 @@ export default function DashboardCharts({
                             onExport={exportTrendReport} label="Uploads Filter"
                         />
                         <button type="button" onClick={exportTrendReport}
-                            className="p-2 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-sm hover:shadow-md transition-all"
+                            className="p-2 rounded-lg btn-primary shadow-sm hover:shadow-md transition-all"
                             title="Export full report (Excel)">
                             <Download size={13} />
                         </button>
@@ -306,15 +311,15 @@ export default function DashboardCharts({
                             <AreaChart data={filteredTrendData}>
                                 <defs>
                                     <linearGradient id="uploadGrad" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor={COLORS.teal} stopOpacity={0.2} />
-                                        <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
+                                        <stop offset="0%" stopColor={COLORS.blue} stopOpacity={0.2} />
+                                        <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
                                 <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} allowDecimals={false} />
                                 <Tooltip content={<CustomTooltip />} />
-                                <Area type="monotone" dataKey="uploads" name="Uploads" stroke={COLORS.teal} strokeWidth={2.5} fill="url(#uploadGrad)" animationDuration={1000} />
+                                <Area type="monotone" dataKey="uploads" name="Uploads" stroke={COLORS.blue} strokeWidth={2.5} fill="url(#uploadGrad)" animationDuration={1000} />
                             </AreaChart>
                         </ResponsiveContainer>
                     )}
@@ -343,7 +348,7 @@ export default function DashboardCharts({
                                 onExport={exportDeptReport} label="Department Filter"
                             />
                             <button type="button" onClick={exportDeptReport}
-                                className="p-2 rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-sm hover:shadow-md transition-all"
+                                className="p-2 rounded-lg btn-primary shadow-sm hover:shadow-md transition-all"
                                 title="Export full report (Excel)">
                                 <Download size={13} />
                             </button>

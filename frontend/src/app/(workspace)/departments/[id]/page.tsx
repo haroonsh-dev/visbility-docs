@@ -177,7 +177,7 @@ function DepartmentContent() {
 
     if (loadingOverview) return (
         <div className="flex flex-col items-center justify-center py-24 gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-teal-50 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-teal-600" /></div>
+            <div className="w-12 h-12 rounded-2xl bg-[rgba(56,182,255,0.1)] flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-(--vb-blue-dark)" /></div>
             <p className="text-sm text-slate-500 font-medium">Loading department...</p>
         </div>
     );
@@ -200,8 +200,8 @@ function DepartmentContent() {
             </motion.div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <DeptStatCard icon={Users} label="Members" value={overview.members.length} accent="cyan" delay={0.08} />
-                <DeptStatCard icon={FolderOpen} label="Documents" value={pagination.total} accent="teal" delay={0.12} />
+                <DeptStatCard icon={Users} label="Members" value={overview.members.length} accent="blue" delay={0.08} />
+                <DeptStatCard icon={FolderOpen} label="Documents" value={pagination.total} accent="blue" delay={0.12} />
                 <DeptStatCard icon={Crown} label="Leaders" value={leaderNames.length ? leaderNames.join(", ") : "None"} accent="amber" delay={0.16} />
             </div>
 
@@ -238,7 +238,7 @@ function DepartmentContent() {
                                         href={`/departments/${departmentId}/members/${m.userId}`}
                                         className="px-4 sm:px-5 py-4 flex items-center gap-3 hover:bg-slate-50/70 transition-colors"
                                     >
-                                        <div className="h-10 w-10 rounded-xl bg-linear-to-br from-teal-500/15 to-cyan-500/15 text-teal-700 flex items-center justify-center text-sm font-bold shrink-0 border border-teal-100">
+                                        <div className="h-10 w-10 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.15)] to-blue-600/15 text-(--vb-blue-dark) flex items-center justify-center text-sm font-bold shrink-0 border border-[rgba(56,182,255,0.2)]">
                                             {initials}
                                         </div>
                                         <div className="min-w-0 flex-1">
@@ -263,7 +263,7 @@ function DepartmentContent() {
                                                     : ""}
                                             </p>
                                         </div>
-                                        <span className="text-xs font-medium text-teal-700 inline-flex items-center gap-1 shrink-0">
+                                        <span className="text-xs font-medium text-(--vb-blue-dark) inline-flex items-center gap-1 shrink-0">
                                             View details <ChevronRight size={14} />
                                         </span>
                                     </Link>
@@ -277,7 +277,7 @@ function DepartmentContent() {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="surface-card">
                 <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-linear-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20"><FileText size={16} className="text-white" /></div>
+                        <div className="w-9 h-9 rounded-xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shadow-(--vb-glow)"><FileText size={16} /></div>
                         <div>
                             <h2 className="text-sm font-bold text-slate-800">Department Documents</h2>
                             <p className="text-[11px] text-slate-400">All files uploaded by this department</p>
@@ -295,10 +295,10 @@ function DepartmentContent() {
                             </div>
                             <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-11 shrink-0 sm:w-auto w-full">Search</button>
                             <button type="button" onClick={() => setFiltersOpen((v) => !v)}
-                                className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-teal-50 border-teal-200 text-teal-700" : "btn-secondary"}`}
+                                className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-(--vb-blue-dark)" : "btn-secondary"}`}
                                 aria-expanded={filtersOpen}>
                                 <Filter size={15} /> Filters
-                                {hasActiveFilters && <span className="h-5 min-w-5 px-1 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center">{[scoreFilter, agentFilter, scopeFilter, typeFilter, sortPreset !== "newest"].filter(Boolean).length}</span>}
+                                {hasActiveFilters && <span className="h-5 min-w-5 px-1 rounded-full bg-(--vb-blue) text-white text-[10px] font-bold flex items-center justify-center">{[scoreFilter, agentFilter, scopeFilter, typeFilter, sortPreset !== "newest"].filter(Boolean).length}</span>}
                             </button>
                         </div>
                         {filtersOpen && (
@@ -313,10 +313,10 @@ function DepartmentContent() {
                     </div>
                     {(q || scoreFilter || agentFilter || scopeFilter || typeFilter || sortPreset !== "newest") && (
                         <div className="flex flex-wrap items-center gap-2 mt-3">
-                            {q && <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">"{q}"<button type="button" onClick={() => { setSearchInput(""); setQ(""); setPage(1); }} className="hover:text-rose-500"><X size={11} /></button></span>}
+                            {q && <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">&quot;{q}&quot;<button type="button" onClick={() => { setSearchInput(""); setQ(""); setPage(1); }} className="hover:text-rose-500"><X size={11} /></button></span>}
                             {scoreFilter && <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-700">{SCORE_FILTER_OPTIONS.find((o) => o.value === scoreFilter)?.label}<button type="button" onClick={() => { setScoreFilter(""); setPage(1); }} className="hover:text-rose-500"><X size={11} /></button></span>}
-                            {agentFilter && <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] text-cyan-700">{agentLabel(agentFilter)}<button type="button" onClick={() => { setAgentFilter(""); setPage(1); }} className="hover:text-rose-500"><X size={11} /></button></span>}
-                            <button type="button" onClick={clearFilters} className="text-[11px] text-slate-400 hover:text-teal-600 underline-offset-2 hover:underline">Clear filters</button>
+                            {agentFilter && <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.28)] bg-[rgba(56,182,255,0.1)] px-2.5 py-1 text-[11px] text-(--vb-blue-dark)">{agentLabel(agentFilter)}<button type="button" onClick={() => { setAgentFilter(""); setPage(1); }} className="hover:text-rose-500"><X size={11} /></button></span>}
+                            <button type="button" onClick={clearFilters} className="text-[11px] text-slate-400 hover:text-(--vb-blue-dark) underline-offset-2 hover:underline">Clear filters</button>
                         </div>
                     )}
                 </div>
@@ -351,7 +351,7 @@ function DepartmentContent() {
                                             {doc.isDuplicate && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-amber-50 text-amber-700 border border-amber-200">Duplicate</span>}
                                         </div>
                                         <p className="text-xs mt-1 text-slate-500">
-                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase mr-2 bg-teal-50 text-teal-700 border border-teal-200">{getFileTypeLabel(doc.mimeType, doc.originalFilename)}</span>
+                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase mr-2 bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]">{getFileTypeLabel(doc.mimeType, doc.originalFilename)}</span>
                                             {formatBytes(doc.sizeBytes)} · {new Date(doc.createdAt).toLocaleString()}
                                             {doc.classification && ` · ${doc.classification}`}
                                             {doc.metadata?.phase3Agent && ` · ${agentLabel(doc.metadata.phase3Agent)}`}

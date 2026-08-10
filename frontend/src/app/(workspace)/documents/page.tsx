@@ -330,14 +330,14 @@ function DocumentsContent() {
                     metadata: u.metadata ? { ...(d.metadata || {}), ...u.metadata } : d.metadata,
                 };
             }));
-        }, 3000);
+        }, 4000);
         return () => clearInterval(interval);
     }, [processingDocIds.join(","), load]);
 
     const pollUntilTerminal = async (documentId: string): Promise<"done" | "error"> => {
-        for (let i = 0; i < 120; i++) {
+        for (let i = 0; i < 90; i++) {
             try { const data = await apiRequest(`/docs/documents/${documentId}/processing`); const status = data?.data?.status; if (status === "ready") return "done"; if (status === "failed") return "error"; } catch { /* retry */ }
-            await new Promise((r) => setTimeout(r, 3000));
+            await new Promise((r) => setTimeout(r, 2500));
         }
         return "error";
     };
@@ -443,7 +443,10 @@ function DocumentsContent() {
                     if (doc?.documentId && !failed) processingIds.push(doc.documentId);
                     setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, status: failed ? "error" : "processing", documentId: doc?.documentId, error: doc?.aiErrorMessage || (failed ? "Upload to model failed" : undefined) } : q));
                 } catch (e: any) {
-                    const isDuplicate = e?.status === 409 || e?.code === "DUPLICATE_FILE";
+                    const isDuplicate =
+                        e?.status === 409 ||
+                        e?.code === 'DUPLICATE_FILE' ||
+                        e?.code === 'DUPLICATE_CONTENT';
                     setQueueItems((prev) => prev.map((q) => q.id === pf.id ? { ...q, status: isDuplicate ? "duplicate" : "error", error: isDuplicate ? undefined : e.message } : q));
                 }
             }
@@ -605,7 +608,7 @@ function DocumentsContent() {
 
             {allowView && (
                 <div className="flex flex-wrap items-center gap-4">
-                    <StatMini icon={FileText} label="Total" value={totalDocs} accent="teal" delay={0.1} />
+                    <StatMini icon={FileText} label="Total" value={totalDocs} accent="blue" delay={0.1} />
                     <StatMini icon={CheckCircle} label="Ready" value={readyCount} accent="emerald" delay={0.15} />
                     <StatMini icon={Clock} label="Processing" value={processingCount} accent="amber" delay={0.2} />
                     <StatMini icon={AlertTriangle} label="Failed" value={failedCount} accent="rose" delay={0.25} />
@@ -623,19 +626,19 @@ function DocumentsContent() {
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}
                     className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all ${
                         dragOver
-                            ? "border-teal-400 bg-linear-to-br from-teal-50 to-cyan-50 shadow-lg shadow-teal-500/10"
-                            : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/30"
+                            ? "border-(--vb-blue) bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)] shadow-(--vb-glow)"
+                            : "border-slate-200 bg-white hover:border-[rgba(56,182,255,0.4)] hover:bg-[rgba(56,182,255,0.03)]"
                     }`}
                 >
                     <div className="absolute inset-0 opacity-[0.015]">
-                        <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-teal-500 blur-3xl" />
-                        <div className="absolute -bottom-10 -left-10 w-32 h-32 rounded-full bg-cyan-500 blur-3xl" />
+                        <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-[rgba(56,182,255,0.1)] blur-3xl" />
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 rounded-full bg-blue-500 blur-3xl" />
                     </div>
                     <div className="relative p-8 sm:p-10 flex flex-col items-center text-center gap-4">
                         <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all ${
                             dragOver
-                                ? "bg-teal-500 text-white shadow-lg shadow-teal-500/30 scale-110"
-                                : "bg-linear-to-br from-teal-50 to-cyan-50 text-teal-600 border border-teal-200"
+                                ? "bg-[rgba(56,182,255,0.1)] text-white shadow-(--vb-glow) scale-110"
+                                : "bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]"
                         }`}>
                             <Upload size={26} />
                         </div>
@@ -683,16 +686,29 @@ function DocumentsContent() {
                                     : "Review files, pick AI model and extraction agent, then click Upload"}
                             </p>
                         </div>
-                        <div className="flex gap-2">
-                            {pendingFiles.length > 0 && <button type="button" onClick={clearQueue} className="btn-ghost rounded-xl px-3 py-2 text-sm">Clear all</button>}
-                            <button type="button" onClick={uploadQueue} disabled={pendingFiles.length === 0} className="btn-gradient rounded-xl px-5 py-2.5 text-sm inline-flex items-center gap-2 disabled:opacity-50">
+                        <div className="flex gap-2 items-center">
+                            {pendingFiles.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={clearQueue}
+                                    className="rounded-xl px-3 py-2 text-sm font-medium text-(--vb-blue-dark) hover:bg-[rgba(56,182,255,0.1)] transition-colors"
+                                >
+                                    Clear all
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={uploadQueue}
+                                disabled={pendingFiles.length === 0}
+                                className="btn-primary rounded-xl px-5 py-2.5 text-sm inline-flex items-center gap-2 disabled:opacity-50"
+                            >
                                 {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                                 Upload {pendingFiles.length} file(s)
                             </button>
                         </div>
                     </div>
                     {pendingFiles.length > 0 && (
-                        <div className="px-5 py-4 border-b border-slate-100 bg-linear-to-r from-slate-50 via-white to-teal-50/40">
+                        <div className="px-5 py-4 border-b border-slate-100 bg-linear-to-r from-slate-50 via-white to-[rgba(56,182,255,0.08)]">
                             <div className={`grid gap-3 ${configuredProviders.length > 0 ? "sm:grid-cols-2" : ""}`}>
                                 {configuredProviders.length > 0 && (
                                     <FilterSelect
@@ -710,7 +726,7 @@ function DocumentsContent() {
                                     label="Extraction agent"
                                     labelHint="optional"
                                     icon={Sparkles}
-                                    iconClassName="border-teal-200/80 bg-linear-to-br from-teal-50 to-cyan-100/70 text-teal-500"
+                                    iconClassName="border-[rgba(56,182,255,0.28)] bg-linear-to-br from-[rgba(56,182,255,0.08)] to-blue-100/70 text-(--vb-blue)"
                                     value={preferredAgent}
                                     onChange={setPreferredAgent}
                                     options={preferredAgentOptions}
@@ -752,8 +768,8 @@ function DocumentsContent() {
                 <div className="surface-card">
                     <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-linear-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-teal-500/20">
-                                <FileText size={16} className="text-white" />
+                            <div className="w-9 h-9 rounded-xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shadow-(--vb-glow)">
+                                <FileText size={16} />
                             </div>
                             <div>
                                 <h2 className="text-sm font-bold text-slate-800">Library</h2>
@@ -767,7 +783,7 @@ function DocumentsContent() {
                                     onClick={() => setViewMode("list")}
                                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                                         viewMode === "list"
-                                            ? "bg-white text-teal-700 shadow-sm border border-slate-200"
+                                            ? "bg-white text-(--vb-blue-dark) shadow-sm border border-slate-200"
                                             : "text-slate-500 hover:text-slate-700"
                                     }`}
                                 >
@@ -778,7 +794,7 @@ function DocumentsContent() {
                                     onClick={() => setViewMode("tree")}
                                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                                         viewMode === "tree"
-                                            ? "bg-white text-teal-700 shadow-sm border border-slate-200"
+                                            ? "bg-white text-(--vb-blue-dark) shadow-sm border border-slate-200"
                                             : "text-slate-500 hover:text-slate-700"
                                     }`}
                                 >
@@ -809,10 +825,10 @@ function DocumentsContent() {
                                 </div>
                                 <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-11 shrink-0 sm:w-auto w-full">Search</button>
                                 <button type="button" onClick={() => setFiltersOpen((v) => !v)}
-                                    className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-teal-50 border-teal-200 text-teal-700" : "btn-secondary"}`}
+                                    className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${filtersOpen || hasActiveFilters ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-(--vb-blue-dark)" : "btn-secondary"}`}
                                     aria-expanded={filtersOpen}>
                                     <Filter size={15} /> Filters
-                                    {hasActiveFilters && <span className="h-5 min-w-5 px-1 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center">{[scoreFilter, agentFilter, scopeFilter, typeFilter, sortPreset !== "newest"].filter(Boolean).length}</span>}
+                                    {hasActiveFilters && <span className="h-5 min-w-5 px-1 rounded-full bg-(--vb-blue) text-white text-[10px] font-bold flex items-center justify-center">{[scoreFilter, agentFilter, scopeFilter, typeFilter, sortPreset !== "newest"].filter(Boolean).length}</span>}
                                 </button>
                             </div>
                             {filtersOpen && (
@@ -827,10 +843,10 @@ function DocumentsContent() {
                         </div>
                         {(scoreFilter || agentFilter || scopeFilter || typeFilter || sortPreset !== "newest" || q) && (
                             <div className="flex flex-wrap items-center gap-2 mt-3">
-                                {q && <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">"{q}"<button type="button" onClick={() => { setSearchInput(""); setQ(""); setPage(1); }} className="hover:text-rose-500" aria-label="Clear search"><X size={11} /></button></span>}
+                                {q && <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">&quot;{q}&quot;<button type="button" onClick={() => { setSearchInput(""); setQ(""); setPage(1); }} className="hover:text-rose-500" aria-label="Clear search"><X size={11} /></button></span>}
                                 {scoreFilter && <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-700">{SCORE_FILTER_OPTIONS.find((o) => o.value === scoreFilter)?.label}<button type="button" onClick={() => { setScoreFilter(""); setPage(1); }} className="hover:text-rose-500" aria-label="Clear score"><X size={11} /></button></span>}
-                                {agentFilter && <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] text-cyan-700">{agentLabel(agentFilter)}<button type="button" onClick={() => { setAgentFilter(""); setPage(1); }} className="hover:text-rose-500" aria-label="Clear agent"><X size={11} /></button></span>}
-                                <button type="button" onClick={() => { setSearchInput(""); setQ(""); setScoreFilter(""); setScopeFilter(""); setTypeFilter(""); setAgentFilter(""); setSortPreset("newest"); setPage(1); }} className="text-[11px] text-slate-400 hover:text-teal-600 underline-offset-2 hover:underline">Clear filters</button>
+                                {agentFilter && <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.28)] bg-[rgba(56,182,255,0.1)] px-2.5 py-1 text-[11px] text-(--vb-blue-dark)">{agentLabel(agentFilter)}<button type="button" onClick={() => { setAgentFilter(""); setPage(1); }} className="hover:text-rose-500" aria-label="Clear agent"><X size={11} /></button></span>}
+                                <button type="button" onClick={() => { setSearchInput(""); setQ(""); setScoreFilter(""); setScopeFilter(""); setTypeFilter(""); setAgentFilter(""); setSortPreset("newest"); setPage(1); }} className="text-[11px] text-slate-400 hover:text-(--vb-blue-dark) underline-offset-2 hover:underline">Clear filters</button>
                             </div>
                         )}
                     </div>
@@ -888,7 +904,7 @@ function DocumentsContent() {
                                                 </span>
                                             )}
                                             {doc.isDuplicate && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-amber-50 text-amber-700 border border-amber-200"><Copy size={10} /> Dup</span>}
-                                            {doc.visibilityScope === "department" && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-teal-50 text-teal-700 border border-teal-200">Dept</span>}
+                                            {doc.visibilityScope === "department" && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]">Dept</span>}
                                             {doc.visibilityScope === "personal" && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-slate-50 text-slate-500 border border-slate-200">Personal</span>}
                                         </div>
                                         <p className="text-xs text-slate-400 mt-1.5 flex items-center gap-2 flex-wrap">
@@ -896,7 +912,7 @@ function DocumentsContent() {
                                             <span>{formatBytes(doc.sizeBytes)}</span>
                                             <span className="text-slate-300">&middot;</span>
                                             <span>{new Date(doc.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-                                            {doc.classification && <><span className="text-slate-300">&middot;</span><span className="text-teal-600">{doc.classification}</span></>}
+                                            {doc.classification && <><span className="text-slate-300">&middot;</span><span className="text-(--vb-blue-dark)">{doc.classification}</span></>}
                                         </p>
                                         {doc.aiErrorMessage && <p className="text-xs text-rose-500 mt-1.5 flex items-center gap-1"><AlertTriangle size={11} /> {doc.aiErrorMessage}</p>}
                                     </div>

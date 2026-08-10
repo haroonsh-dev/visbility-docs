@@ -364,7 +364,7 @@ export function buildDashboardReportHtml(docs: ExportDoc[], options: ExportOptio
     line-height: 1.45;
   }
   .cover {
-    background: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
+    background: linear-gradient(135deg, #2499e0 0%, #0891b2 100%);
     color: #fff;
     padding: 28px 32px;
     border-radius: 16px;
@@ -403,7 +403,7 @@ export function buildDashboardReportHtml(docs: ExportDoc[], options: ExportOptio
     border-radius: 14px;
     padding: 18px 18px 8px;
     margin-bottom: 20px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
   }
   .block-head { margin-bottom: 14px; padding: 0 4px; }
   .block-title {
@@ -422,13 +422,13 @@ export function buildDashboardReportHtml(docs: ExportDoc[], options: ExportOptio
     width: 100%;
   }
   table.grid th {
-    background: #0f766e;
+    background: #2499e0;
     color: #fff;
     font-weight: 700;
     font-size: 13px;
     text-align: left;
     padding: 12px 14px;
-    border: 1px solid #0d9488;
+    border: 1px solid #38b6ff;
     white-space: nowrap;
   }
   table.grid td {
@@ -509,7 +509,7 @@ export function buildDashboardReportHtml(docs: ExportDoc[], options: ExportOptio
     </div>
     <table class="kpis">
       <tr>
-        ${kpiCard("Total Documents", total, "#0f766e")}
+        ${kpiCard("Total Documents", total, "#2499e0")}
         ${kpiCard("Ready", ready, "#059669")}
         ${kpiCard("Processing", processing, "#d97706")}
         ${kpiCard("Failed", failed, "#e11d48")}

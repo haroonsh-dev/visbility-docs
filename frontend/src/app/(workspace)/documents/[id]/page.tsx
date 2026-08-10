@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, Download, Printer } from "lucide-react";
 import { useTheme } from "@/context/ColorContext";
 import { apiFetchBlob, apiRequest } from "@/lib/apiClient";
-import { canPreviewMime, getDocumentDownloadUrl } from "@/lib/documents";
+import { canPreviewMime, getDocumentDownloadUrl, getDocumentPreviewUrl } from "@/lib/documents";
 import { useParams } from "next/navigation";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
@@ -157,10 +157,28 @@ function DocumentPreviewContent() {
 
     const downloadUrl = id ? getDocumentDownloadUrl(id) : "";
     const canPreview = doc && canPreviewMime(doc.mimeType);
+    const isOfferLetter =
+        String(doc?.classification || "").toLowerCase() === "offer_letter" ||
+        /\boffer[\s_-]?letter\b/i.test(String(doc?.originalFilename || ""));
+
+    const printPdf = () => {
+        if (!id) return;
+        const url = getDocumentPreviewUrl(id);
+        const win = window.open(url, "_blank", "noopener,noreferrer");
+        if (!win) return;
+        win.addEventListener("load", () => {
+            try {
+                win.focus();
+                win.print();
+            } catch {
+                /* browser may block auto-print */
+            }
+        });
+    };
 
     return (
         <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-4">
-            <Link href="/documents" className={`inline-flex items-center gap-2 text-sm ${colors.textMuted} hover:text-[var(--accent)]`}>
+            <Link href="/documents" className={`inline-flex items-center gap-2 text-sm ${colors.textMuted} hover:text-accent`}>
                 <ArrowLeft size={14} /> Back to library
             </Link>
 
@@ -172,11 +190,25 @@ function DocumentPreviewContent() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                             <h1 className={`text-lg sm:text-xl font-bold break-all ${colors.textPrimary}`}>{doc.originalFilename}</h1>
-                            <p className={`text-sm ${colors.textMuted}`}>{doc.mimeType} · {doc.status}</p>
+                            <p className={`text-sm ${colors.textMuted}`}>
+                                {isOfferLetter ? "Offer letter · " : ""}
+                                {doc.mimeType} · {doc.status}
+                            </p>
                         </div>
-                        <a href={downloadUrl} className="btn-secondary rounded-xl px-4 py-2.5 text-sm flex items-center gap-2">
-                            <Download size={14} /> Download
-                        </a>
+                        <div className="flex flex-wrap items-center gap-2">
+                            {preview.kind === "pdf" && (
+                                <button
+                                    type="button"
+                                    onClick={printPdf}
+                                    className="btn-gradient rounded-xl px-4 py-2.5 text-sm flex items-center gap-2"
+                                >
+                                    <Printer size={14} /> Print
+                                </button>
+                            )}
+                            <a href={downloadUrl} className="btn-secondary rounded-xl px-4 py-2.5 text-sm flex items-center gap-2">
+                                <Download size={14} /> Download PDF
+                            </a>
+                        </div>
                     </div>
 
                     <div className="surface-card overflow-hidden min-h-[60vh]">

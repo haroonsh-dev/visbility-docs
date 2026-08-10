@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from ..auth_deps import get_current_user
 from ..services.report_service import generate_report
 from ..services.email_service import send_email
@@ -7,6 +8,22 @@ from ..services.email_service import send_email
 logger = logging.getLogger("visibility-docs")
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
+
+
+class GenerateReportRequest(BaseModel):
+    organization_id: str = Field(..., min_length=1)
+    phase3_agent: str = ""
+
+
+@router.post("/generate", summary="Generate extraction report HTML (for gateway / scheduled email)")
+async def generate_report_html(body: GenerateReportRequest):
+    html, subject = generate_report(body.organization_id, body.phase3_agent or "")
+    return {
+        "subject": subject,
+        "html": html,
+        "organization_id": body.organization_id,
+        "phase3_agent": body.phase3_agent or None,
+    }
 
 
 @router.post("/email", summary="Generate and email report of all documents")

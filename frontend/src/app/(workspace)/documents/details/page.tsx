@@ -109,7 +109,7 @@ function DetailsWorkspace() {
                         setAnalyzing(false);
                     }
                 }
-            }, 3000);
+            }, 4000);
         },
         [fetchIntelligence, stopPolling]
     );
@@ -118,6 +118,21 @@ function DetailsWorkspace() {
         async (id: string, ai?: Record<string, unknown> | null, job?: Record<string, unknown> | null, docStatus?: string) => {
             if (hasModelData(ai) || isAnalysisFinished(ai, job, docStatus)) return false;
             if (attemptedRunRef.current.has(id)) return false;
+            // Don't re-trigger if AI already processing
+            const stage = String(job?.stage || job?.status || "").toLowerCase();
+            const aiStatus = String(ai?.status || "").toLowerCase();
+            if (
+                ["queued", "running", "processing", "ocr_processing", "classifying", "extracting", "embedding"].some(
+                    (s) => stage.includes(s) || aiStatus.includes(s)
+                ) ||
+                docStatus === "processing" ||
+                docStatus === "uploaded"
+            ) {
+                attemptedRunRef.current.add(id);
+                setAnalyzing(true);
+                startPolling(id);
+                return false;
+            }
             attemptedRunRef.current.add(id);
             setAnalyzing(true);
             try {
@@ -203,7 +218,7 @@ function DetailsWorkspace() {
                     <p className={`text-sm ${colors.textMuted}`}>
                         You do not have View permission. Ask your admin to enable document access.
                     </p>
-                    <Link href="/documents" className="inline-block mt-2 text-sm text-[var(--accent)] hover:underline">
+                    <Link href="/documents" className="inline-block mt-2 text-sm text-accent hover:underline">
                         Back to documents
                     </Link>
                 </div>
@@ -216,13 +231,13 @@ function DetailsWorkspace() {
             <div className="shrink-0 px-4 sm:px-6 lg:px-8 pt-4 sm:pt-5 pb-2">
                 <Link
                     href="/documents"
-                    className={`inline-flex items-center gap-2 text-sm min-h-11 ${colors.textMuted} hover:text-[var(--accent)] transition-colors`}
+                    className={`inline-flex items-center gap-2 text-sm min-h-11 ${colors.textMuted} hover:text-accent transition-colors`}
                 >
                     <ArrowLeft size={14} /> Back to documents
                 </Link>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto bg-gradient-to-br from-transparent via-teal-500/[0.03] to-cyan-500/[0.05]">
+            <div className="flex-1 min-h-0 overflow-y-auto bg-linear-to-br from-transparent via-[rgba(56,182,255,0.03)] to-blue-600/[0.05]">
                 {error && <div className="px-4 sm:px-6 lg:px-8 text-red-400 text-sm">{error}</div>}
 
                 {!docParam && !loading && (
@@ -230,7 +245,7 @@ function DetailsWorkspace() {
                         <div className="text-center space-y-2 px-4 sm:px-6">
                             <p className={`text-lg font-medium ${colors.textPrimary}`}>No document selected</p>
                             <p className="text-sm">Open a document from the library to view its details.</p>
-                            <Link href="/documents" className="inline-block mt-2 text-sm text-[var(--accent)] hover:underline">
+                            <Link href="/documents" className="inline-block mt-2 text-sm text-accent hover:underline">
                                 Go to documents
                             </Link>
                         </div>
@@ -253,7 +268,7 @@ function DetailsWorkspace() {
                                     </div>
                                 ))}
                             </div>
-                            <p className="text-center text-xs text-[var(--foreground-muted)]">Loading document details…</p>
+                            <p className="text-center text-xs text-foreground-muted">Loading document details…</p>
                         </div>
                     </div>
                 )}

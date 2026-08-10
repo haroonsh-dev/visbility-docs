@@ -70,15 +70,15 @@ function formatBytes(n: number) {
 function statusBadge(status: string) {
     const s = status.toLowerCase();
     if (s === "ready" || s === "processed" || s === "completed" || s === "complete" || s === "done") {
-        return "bg-[var(--success-muted)] text-[var(--success)] border-[rgba(52,211,153,0.25)]";
+        return "bg-(--success-muted) text-(--success) border-[rgba(52,211,153,0.25)]";
     }
     if (s === "processing" || s === "uploaded" || s === "queued" || s === "uploading") {
-        return "bg-[var(--warning-muted)] text-[var(--warning)] border-[rgba(251,191,36,0.25)]";
+        return "bg-(--warning-muted) text-(--warning) border-[rgba(251,191,36,0.25)]";
     }
     if (s === "failed" || s.includes("fail") || s.includes("error")) {
-        return "bg-[var(--error-muted)] text-[var(--error)] border-[rgba(248,113,113,0.25)]";
+        return "bg-error-muted text-error border-[rgba(248,113,113,0.25)]";
     }
-    return "bg-[var(--surface-3)] text-[var(--foreground-muted)] border-[var(--border)]";
+    return "bg-surface-3 text-foreground-muted border-border";
 }
 
 const IN_PROGRESS_AI = ["queued", "running", "processing", "ocr", "classify", "extract", "embed", "uploaded", "pending"];
@@ -205,18 +205,18 @@ function AdminDocumentsContent() {
                                 onChange={(e) => setSearchInput(e.target.value)}
                                 onKeyDown={(e) => e.key === "Enter" && applySearch()}
                                 placeholder="Search by filename…"
-                                className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-[44px]"
+                                className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-11"
                             />
                         </div>
-                        <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-[44px] shrink-0 sm:w-auto w-full">
+                        <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 text-sm font-medium h-11 shrink-0 sm:w-auto w-full">
                             Search
                         </button>
                         <button
                             type="button"
                             onClick={() => setFiltersOpen((v) => !v)}
-                            className={`rounded-xl px-4 text-sm font-medium h-[44px] shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${
+                            className={`rounded-xl px-4 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 border transition-colors ${
                                 filtersOpen || hasActiveFilters
-                                    ? "bg-[var(--accent-muted)] border-[rgba(45,212,191,0.35)] text-[var(--accent)]"
+                                    ? "bg-accent-muted border-[rgba(56,182,255,0.35)] text-accent"
                                     : "btn-secondary"
                             }`}
                             aria-expanded={filtersOpen}
@@ -283,7 +283,7 @@ function AdminDocumentsContent() {
                                 </span>
                             )}
                             {scoreFilter && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-300">
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.2)] bg-blue-500/10 px-2.5 py-1 text-[11px] text-[var(--vb-blue-bright)]">
                                     {SCORE_FILTER_OPTIONS.find((o) => o.value === scoreFilter)?.label}
                                     <button type="button" onClick={() => { setScoreFilter(""); setPagination((prev) => ({ ...prev, page: 1 })); }} className="hover:text-white" aria-label="Clear score">
                                         <X size={11} />
@@ -293,7 +293,7 @@ function AdminDocumentsContent() {
                             <button
                                 type="button"
                                 onClick={clearFilters}
-                                className={`text-[11px] ${colors.textMuted} hover:text-[var(--accent)] underline-offset-2 hover:underline`}
+                                className={`text-[11px] ${colors.textMuted} hover:text-accent underline-offset-2 hover:underline`}
                             >
                                 Clear filters
                             </button>
@@ -313,7 +313,7 @@ function AdminDocumentsContent() {
                             description="Adjust filters or search to locate documents."
                         />
                     ) : (
-                        <ul className="divide-y divide-[var(--border)]">
+                        <ul className="divide-y divide-border">
                             {docs.map((doc) => {
                                 const { label: displayStatus, isProcessing, isComplete } = getDisplayStatus(doc);
                                 const rowWarnClass = !isComplete ? 'border-l-4 border-red-500/20' : '';
@@ -323,7 +323,7 @@ function AdminDocumentsContent() {
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <p className={`font-medium truncate min-w-0 ${colors.textPrimary}`}>{doc.originalFilename}</p>
                                                 {doc.metadata?.cvScore != null ? (
-                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border bg-[var(--accent-muted)] text-[var(--accent)] border-[rgba(45,212,191,0.25)]">
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border bg-accent-muted text-accent border-[rgba(56,182,255,0.25)]">
                                                         Score: {doc.metadata.cvScore}
                                                     </span>
                                                 ) : (
@@ -338,12 +338,12 @@ function AdminDocumentsContent() {
                                                     </span>
                                                 )}
                                                 {doc.visibilityScope === "department" && (
-                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-[var(--accent-muted)] text-[var(--accent)] border border-[rgba(45,212,191,0.25)]">
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-accent-muted text-accent border border-[rgba(56,182,255,0.25)]">
                                                         Department
                                                     </span>
                                                 )}
                                                 {doc.visibilityScope === "personal" && (
-                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-white/5 text-[var(--foreground-muted)] border border-[var(--border)]">
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-white/5 text-foreground-muted border border-border">
                                                         Personal
                                                     </span>
                                                 )}
@@ -354,7 +354,7 @@ function AdminDocumentsContent() {
                                                 )}
                                             </div>
                                             <p className={`text-xs mt-1 ${colors.textMuted}`}>
-                                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase mr-2 bg-[var(--accent-muted)] text-[var(--accent)] border border-[rgba(45,212,191,0.2)]">
+                                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase mr-2 bg-accent-muted text-accent border border-[rgba(56,182,255,0.2)]">
                                                     {getFileTypeLabel(doc.mimeType, doc.originalFilename)}
                                                 </span>
                                                 {formatBytes(doc.sizeBytes)} · {new Date(doc.createdAt).toLocaleString()}

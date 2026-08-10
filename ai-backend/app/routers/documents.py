@@ -386,8 +386,28 @@ async def list_documents(organization_id: str = "", q: str = "", phase3_agent: s
 )
 async def get_job_status(document_id: str, organization_id: str = ""):
     from ..services.orchestrator_service import orchestrator
-    job = orchestrator.get_or_create_job(document_id, organization_id)
-    return job
+    from ..database import SupabaseDB
+
+    # Do NOT create orphan jobs for missing documents (causes endless poll loops)
+    doc = document_service.get_document(document_id, organization_id or "")
+    if not doc and organization_id:
+        doc = document_service.get_document(document_id, "")
+    if not doc:
+        return {
+            "document_id": document_id,
+            "stage": "failed",
+            "status": "failed",
+            "progress": 0,
+            "error_message": "Document not found",
+        }
+
+    existing = SupabaseDB.select("processing_jobs", filters={"document_id": document_id})
+    data = getattr(existing, "data", existing if isinstance(existing, list) else [])
+    if isinstance(data, list) and data:
+        job = data[0] if isinstance(data[0], dict) else {}
+        return job
+
+    return orchestrator.get_or_create_job(document_id, organization_id or doc.get("organization_id") or "")
 
 
 @router.post(

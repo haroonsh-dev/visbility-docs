@@ -101,7 +101,7 @@ export default function DocumentFolderTree({
                 return (
                     <details key={agent} className="rounded-xl border border-slate-200 overflow-hidden bg-white" open>
                         <summary className="px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors flex items-center gap-2 text-sm font-semibold text-slate-800 list-none">
-                            <Folder size={14} className="text-teal-600 shrink-0" />
+                            <Folder size={14} className="text-[var(--vb-blue-dark)] shrink-0" />
                             <span className="flex-1 truncate">{agentLabel(agent)}</span>
                             <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
                                 {total}
@@ -144,14 +144,14 @@ export default function DocumentFolderTree({
                                                             onClick={() => onSelectDoc(d.documentId)}
                                                             className={`flex-1 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
                                                                 selected
-                                                                    ? "border-teal-300 bg-teal-50/80"
+                                                                    ? "border-[rgba(56,182,255,0.4)] bg-[rgba(56,182,255,0.08)]"
                                                                     : "border-transparent hover:bg-white hover:border-slate-200"
                                                             }`}
                                                         >
                                                             <span className="flex items-center gap-1.5 min-w-0">
                                                                 <FileText
                                                                     size={12}
-                                                                    className={`shrink-0 ${selected ? "text-teal-600" : "text-slate-400"}`}
+                                                                    className={`shrink-0 ${selected ? "text-[var(--vb-blue-dark)]" : "text-slate-400"}`}
                                                                 />
                                                                 <span className="text-xs text-slate-700 truncate">
                                                                     {d.originalFilename}

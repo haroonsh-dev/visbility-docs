@@ -81,14 +81,14 @@ const CONNECTIONS_CACHE_MS = 60_000;
 function DirectionBadge({ directions }: { directions: IntegrationCatalogItem["directions"] }) {
     if (directions === "both") {
         return (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--accent)]">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-accent">
                 <ArrowLeftRight size={10} /> In + Out
             </span>
         );
     }
     if (directions === "inbound") {
         return (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-300/90">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)]/90">
                 <Download size={10} /> Inbound
             </span>
         );
@@ -448,7 +448,7 @@ function IntegrationsContent() {
 
         return (
             <label key={field.key} className="block space-y-1.5">
-                <span className="text-xs font-semibold text-[var(--foreground)]">
+                <span className="text-xs font-semibold text-foreground">
                     {field.label}
                     {field.required ? <span className="text-rose-400"> *</span> : null}
                 </span>
@@ -456,7 +456,7 @@ function IntegrationsContent() {
                     <select
                         value={value}
                         onChange={(e) => setField(field.key, e.target.value)}
-                        className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)]"
+                        className="w-full rounded-xl border border-border bg-surface px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-(--accent-ring)"
                     >
                         {(field.options || []).map((o) => (
                             <option key={o.value || "_empty"} value={o.value}>
@@ -475,12 +475,12 @@ function IntegrationsContent() {
                                     ? "Leave blank to keep existing secret"
                                     : field.placeholder
                             }
-                            className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)] pr-10"
+                            className="w-full rounded-xl border border-border bg-surface px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-(--accent-ring) pr-10"
                         />
                         {field.type === "password" && (
                             <button
                                 type="button"
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground"
                                 onClick={() =>
                                     setShowSecrets((s) => ({ ...s, [field.key]: !s[field.key] }))
                                 }
@@ -491,7 +491,7 @@ function IntegrationsContent() {
                     </div>
                 )}
                 {field.help && (
-                    <p className="text-[11px] leading-relaxed text-[var(--foreground-muted)]">{field.help}</p>
+                    <p className="text-[11px] leading-relaxed text-foreground-muted">{field.help}</p>
                 )}
             </label>
         );
@@ -604,7 +604,7 @@ function IntegrationsContent() {
     if (!hasActivePlan) {
         return (
             <div className="p-8 max-w-lg mx-auto text-center space-y-4">
-                <Plug className="mx-auto text-[var(--accent)]" size={28} />
+                <Plug className="mx-auto text-accent" size={28} />
                 <h1 className="text-lg font-semibold">Active plan required</h1>
                 <p className={`text-sm ${colors.textMuted}`}>
                     Connect factory software after your organization plan is activated.
@@ -632,15 +632,15 @@ function IntegrationsContent() {
             {/* Summary strip */}
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 {[
-                    { label: "Available", value: connectionCounts.total, tone: "text-[var(--foreground)]" },
+                    { label: "Available", value: connectionCounts.total, tone: "text-foreground" },
                     { label: "Connected", value: connectionCounts.connected, tone: "text-emerald-600 dark:text-emerald-300" },
-                    { label: "Not connected", value: connectionCounts.disconnected, tone: "text-[var(--foreground-muted)]" },
+                    { label: "Not connected", value: connectionCounts.disconnected, tone: "text-foreground-muted" },
                 ].map((s) => (
                     <div
                         key={s.label}
-                        className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3 sm:px-4"
+                        className="rounded-2xl border border-border bg-surface px-3 py-3 sm:px-4"
                     >
-                        <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                        <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-foreground-muted">
                             {s.label}
                         </p>
                         <p className={`mt-1 text-xl sm:text-2xl font-bold tabular-nums ${s.tone}`}>{s.value}</p>
@@ -664,15 +664,15 @@ function IntegrationsContent() {
             <div className="space-y-3">
                 <div className="flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
                     <div className="relative flex-1 max-w-md">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)]" />
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted" />
                         <input
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             placeholder="Search by name, category…"
-                            className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-ring)]"
+                            className="w-full rounded-xl border border-border bg-surface pl-9 pr-3 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-(--accent-ring)"
                         />
                     </div>
-                    <div className="inline-flex rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 gap-0.5 self-start">
+                    <div className="inline-flex rounded-xl border border-border bg-surface p-1 gap-0.5 self-start">
                         {(
                             [
                                 { id: "all", label: "All" },
@@ -689,9 +689,9 @@ function IntegrationsContent() {
                                         ? f.id === "connected"
                                             ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                                             : f.id === "disconnected"
-                                              ? "bg-[var(--surface-3)] text-[var(--foreground)]"
-                                              : "bg-[var(--accent-muted)] text-[var(--accent)]"
-                                        : "text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+                                              ? "bg-surface-3 text-foreground"
+                                              : "bg-accent-muted text-accent"
+                                        : "text-foreground-muted hover:text-foreground"
                                 }`}
                             >
                                 {f.label}
@@ -715,8 +715,8 @@ function IntegrationsContent() {
                             onClick={() => setCategory(c.id)}
                             className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${
                                 category === c.id
-                                    ? "border-[var(--accent)] bg-[var(--accent-muted)] text-[var(--accent)]"
-                                    : "border-[var(--border)] text-[var(--foreground-muted)] hover:border-[rgba(13,148,136,0.35)] hover:text-[var(--foreground)]"
+                                    ? "border-accent bg-accent-muted text-accent"
+                                    : "border-border text-foreground-muted hover:border-[rgba(56,182,255,0.35)] hover:text-foreground"
                             }`}
                         >
                             {c.label}
@@ -727,13 +727,13 @@ function IntegrationsContent() {
 
             {loading ? (
                 <div className="h-40 flex items-center justify-center">
-                    <Loader2 className="h-7 w-7 animate-spin text-[var(--accent)]" />
+                    <Loader2 className="h-7 w-7 animate-spin text-accent" />
                 </div>
             ) : filtered.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)]/60 px-6 py-14 text-center">
-                    <Plug className="mx-auto text-[var(--foreground-muted)] mb-3" size={28} />
-                    <p className="text-sm font-semibold text-[var(--foreground)]">No integrations match</p>
-                    <p className="mt-1 text-xs text-[var(--foreground-muted)] max-w-sm mx-auto">
+                <div className="rounded-2xl border border-dashed border-border bg-surface/60 px-6 py-14 text-center">
+                    <Plug className="mx-auto text-foreground-muted mb-3" size={28} />
+                    <p className="text-sm font-semibold text-foreground">No integrations match</p>
+                    <p className="mt-1 text-xs text-foreground-muted max-w-sm mx-auto">
                         Try another search, category, or connection status filter.
                     </p>
                     <button
@@ -743,7 +743,7 @@ function IntegrationsContent() {
                             setCategory("all");
                             setConnFilter("all");
                         }}
-                        className="mt-4 text-xs font-semibold text-[var(--accent)] hover:underline"
+                        className="mt-4 text-xs font-semibold text-accent hover:underline"
                     >
                         Clear filters
                     </button>
@@ -758,10 +758,10 @@ function IntegrationsContent() {
                                 key={item.id}
                                 type="button"
                                 onClick={() => openPanel(item)}
-                                className={`group text-left surface-card border p-4 transition-all hover:-translate-y-0.5 hover:border-[rgba(13,148,136,0.45)] ${
+                                className={`group text-left surface-card border p-4 transition-all hover:-translate-y-0.5 hover:border-[rgba(56,182,255,0.45)] ${
                                     connected
-                                        ? "border-emerald-500/35 bg-gradient-to-br from-emerald-500/[0.06] to-transparent"
-                                        : "border-[var(--border)]"
+                                        ? "border-emerald-500/35 bg-linear-to-br from-emerald-500/[0.06] to-transparent"
+                                        : "border-border"
                                 }`}
                             >
                                 <div className="flex items-start justify-between gap-2">
@@ -769,7 +769,7 @@ function IntegrationsContent() {
                                         className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
                                             connected
                                                 ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                                                : "bg-[var(--accent-muted)] text-[var(--accent)]"
+                                                : "bg-accent-muted text-accent"
                                         }`}
                                     >
                                         <Plug size={18} />
@@ -780,28 +780,28 @@ function IntegrationsContent() {
                                             Connected
                                         </span>
                                     ) : (
-                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--surface-2)] text-[var(--foreground-muted)] border border-[var(--border)]">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-surface-2 text-foreground-muted border border-border">
                                             Disconnected
                                         </span>
                                     )}
                                 </div>
-                                <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+                                <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-foreground-muted">
                                     {CATEGORY_LABELS[item.category]}
                                 </p>
-                                <h3 className="mt-0.5 text-sm font-bold text-[var(--foreground)] group-hover:text-[var(--accent)] transition-colors">
+                                <h3 className="mt-0.5 text-sm font-bold text-foreground group-hover:text-accent transition-colors">
                                     {item.name}
                                 </h3>
-                                <p className="mt-1.5 text-xs text-[var(--foreground-muted)] line-clamp-2 leading-relaxed">
+                                <p className="mt-1.5 text-xs text-foreground-muted line-clamp-2 leading-relaxed">
                                     {item.description}
                                 </p>
                                 {connected && conn?.lastStatus && (
-                                    <p className="mt-2 text-[10px] text-[var(--foreground-muted)] truncate" title={conn.lastStatus}>
+                                    <p className="mt-2 text-[10px] text-foreground-muted truncate" title={conn.lastStatus}>
                                         Status: {conn.lastStatus}
                                     </p>
                                 )}
-                                <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-[var(--border)]/70">
+                                <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-border/70">
                                     <DirectionBadge directions={item.directions} />
-                                    <span className="text-[11px] text-[var(--accent)] font-semibold">
+                                    <span className="text-[11px] text-accent font-semibold">
                                         {connected ? "Manage" : "Connect"} →
                                     </span>
                                 </div>
@@ -819,9 +819,9 @@ function IntegrationsContent() {
                         aria-label="Close"
                         onClick={closePanel}
                     />
-                    <aside className="relative z-10 h-full w-full max-w-xl flex flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-2xl">
+                    <aside className="relative z-10 h-full w-full max-w-xl flex flex-col border-l border-border bg-surface shadow-2xl">
                         {/* Header */}
-                        <div className="shrink-0 border-b border-[var(--border)] px-5 pt-4 pb-0 bg-[var(--surface)]">
+                        <div className="shrink-0 border-b border-border px-5 pt-4 pb-0 bg-surface">
                             <div className="flex items-start justify-between gap-3 mb-4">
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
@@ -831,7 +831,7 @@ function IntegrationsContent() {
                                                 <CheckCircle2 size={10} /> Connected
                                             </span>
                                         ) : (
-                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/5 text-[var(--foreground-muted)] border border-[var(--border)]">
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/5 text-foreground-muted border border-border">
                                                 Not connected
                                             </span>
                                         )}
@@ -856,8 +856,8 @@ function IntegrationsContent() {
                                             onClick={() => setPanelTab(t.id)}
                                             className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
                                                 active
-                                                    ? "border-[var(--accent)] text-[var(--accent)]"
-                                                    : "border-transparent text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+                                                    ? "border-accent text-accent"
+                                                    : "border-transparent text-foreground-muted hover:text-foreground"
                                             }`}
                                         >
                                             <Icon size={13} />
@@ -887,19 +887,19 @@ function IntegrationsContent() {
                                 {/* GUIDE TAB */}
                                 {panelTab === "guide" && (
                                     <div className="space-y-4">
-                                        <div className="rounded-2xl border border-sky-500/20 bg-gradient-to-br from-sky-500/10 via-transparent to-transparent p-4">
+                                        <div className="rounded-2xl border border-[rgba(56,182,255,0.2)] bg-linear-to-br from-[rgba(56,182,255,0.1)] via-transparent to-transparent p-4">
                                             <div className="flex items-center gap-2 mb-2">
-                                                <div className="h-8 w-8 rounded-lg bg-sky-500/20 text-sky-300 flex items-center justify-center">
+                                                <div className="h-8 w-8 rounded-lg bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-bright)] flex items-center justify-center">
                                                     <BookOpen size={15} />
                                                 </div>
                                                 <div>
-                                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Setup guide</h3>
-                                                    <p className="text-[11px] text-[var(--foreground-muted)]">
+                                                    <h3 className="text-sm font-bold text-foreground">Setup guide</h3>
+                                                    <p className="text-[11px] text-foreground-muted">
                                                         Follow these steps in order
                                                     </p>
                                                 </div>
                                             </div>
-                                            <p className="text-xs text-[var(--foreground-muted)] leading-relaxed mt-2">
+                                            <p className="text-xs text-foreground-muted leading-relaxed mt-2">
                                                 {activeItem.description}
                                             </p>
                                         </div>
@@ -908,12 +908,12 @@ function IntegrationsContent() {
                                             {activeItem.guideSteps.map((step, i) => (
                                                 <li
                                                     key={i}
-                                                    className="flex gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]/40 p-3.5"
+                                                    className="flex gap-3 rounded-2xl border border-border bg-surface-2/40 p-3.5"
                                                 >
-                                                    <span className="shrink-0 h-7 w-7 rounded-full bg-[var(--accent-muted)] text-[var(--accent)] text-xs font-bold flex items-center justify-center border border-[rgba(45,212,191,0.25)]">
+                                                    <span className="shrink-0 h-7 w-7 rounded-full bg-accent-muted text-accent text-xs font-bold flex items-center justify-center border border-[rgba(56,182,255,0.25)]">
                                                         {i + 1}
                                                     </span>
-                                                    <p className="text-sm leading-relaxed text-[var(--foreground)] pt-0.5">
+                                                    <p className="text-sm leading-relaxed text-foreground pt-0.5">
                                                         {step}
                                                     </p>
                                                 </li>
@@ -924,7 +924,7 @@ function IntegrationsContent() {
                                             <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-300/90 mb-1">
                                                 Bidirectional note
                                             </p>
-                                            <p className="text-xs leading-relaxed text-[var(--foreground-muted)]">
+                                            <p className="text-xs leading-relaxed text-foreground-muted">
                                                 {activeItem.setupNotes}
                                             </p>
                                         </div>
@@ -942,16 +942,16 @@ function IntegrationsContent() {
                                 {/* SETUP / EDIT TAB */}
                                 {panelTab === "setup" && (
                                     <div className="space-y-4">
-                                        <div className="rounded-2xl border border-teal-500/20 bg-gradient-to-br from-teal-500/10 via-transparent to-transparent p-4">
+                                        <div className="rounded-2xl border border-[rgba(56,182,255,0.2)] bg-linear-to-br from-[rgba(56,182,255,0.1)] via-transparent to-transparent p-4">
                                             <div className="flex items-center gap-2">
-                                                <div className="h-8 w-8 rounded-lg bg-teal-500/20 text-teal-300 flex items-center justify-center">
+                                                <div className="h-8 w-8 rounded-lg bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-bright)] flex items-center justify-center">
                                                     <Settings2 size={15} />
                                                 </div>
                                                 <div>
-                                                    <h3 className="text-sm font-bold text-[var(--foreground)]">
+                                                    <h3 className="text-sm font-bold text-foreground">
                                                         {isConnected ? "Update connection" : "Connection form"}
                                                     </h3>
-                                                    <p className="text-[11px] text-[var(--foreground-muted)]">
+                                                    <p className="text-[11px] text-foreground-muted">
                                                         {isConnected
                                                             ? "Change credentials or settings, then save"
                                                             : "Fill required fields, then save to connect"}
@@ -960,7 +960,7 @@ function IntegrationsContent() {
                                             </div>
                                         </div>
 
-                                        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]/30 p-4 space-y-4">
+                                        <div className="rounded-2xl border border-border bg-surface-2/30 p-4 space-y-4">
                                             {activeItem.fields
                                                 .filter((field) => {
                                                     if (field.key === "intervalMinutes") {
@@ -1006,7 +1006,7 @@ function IntegrationsContent() {
                                 {/* STATUS TAB (after connect) */}
                                 {panelTab === "status" && isConnected && activeConn && (
                                     <div className="space-y-4">
-                                        <div className="rounded-2xl border border-emerald-500/25 bg-gradient-to-br from-emerald-500/15 via-emerald-500/5 to-transparent p-4">
+                                        <div className="rounded-2xl border border-emerald-500/25 bg-linear-to-br from-emerald-500/15 via-emerald-500/5 to-transparent p-4">
                                             <div className="flex items-start gap-3">
                                                 <div className="h-10 w-10 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center shrink-0">
                                                     <CheckCircle2 size={20} />
@@ -1015,7 +1015,7 @@ function IntegrationsContent() {
                                                     <h3 className="text-sm font-bold text-emerald-200">
                                                         {activeItem.name} is connected
                                                     </h3>
-                                                    <p className="text-xs text-[var(--foreground-muted)] mt-1 leading-relaxed">
+                                                    <p className="text-xs text-foreground-muted mt-1 leading-relaxed">
                                                         Credentials saved. Run a test anytime, or edit settings from the Edit tab.
                                                     </p>
                                                 </div>
@@ -1026,20 +1026,20 @@ function IntegrationsContent() {
                                         <div
                                             className={`rounded-2xl border p-4 ${
                                                 testing
-                                                    ? "border-[var(--border)] bg-[var(--surface-2)]/40"
+                                                    ? "border-border bg-surface-2/40"
                                                     : testResult?.ok
                                                       ? "border-emerald-500/30 bg-emerald-500/10"
                                                       : testResult && !testResult.ok
                                                         ? "border-red-500/30 bg-red-500/10"
-                                                        : "border-[var(--border)] bg-[var(--surface-2)]/40"
+                                                        : "border-border bg-surface-2/40"
                                             }`}
                                         >
                                             <div className="flex items-center justify-between gap-2 mb-2">
-                                                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground-muted)]">
+                                                <p className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
                                                     Connection test
                                                 </p>
                                                 {testing && (
-                                                    <span className="text-[11px] text-[var(--accent)] inline-flex items-center gap-1">
+                                                    <span className="text-[11px] text-accent inline-flex items-center gap-1">
                                                         <Loader2 size={12} className="animate-spin" /> Running…
                                                     </span>
                                                 )}
@@ -1055,14 +1055,14 @@ function IntegrationsContent() {
                                                         <p className={`text-sm font-semibold ${testResult.ok ? "text-emerald-200" : "text-rose-200"}`}>
                                                             {testResult.ok ? "Test passed" : "Test failed"}
                                                         </p>
-                                                        <p className="text-xs text-[var(--foreground-muted)] mt-1 leading-relaxed">
+                                                        <p className="text-xs text-foreground-muted mt-1 leading-relaxed">
                                                             {testResult.message}
                                                         </p>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <p className="text-xs text-[var(--foreground-muted)] leading-relaxed">
-                                                    No test run yet. Click <strong className="text-[var(--foreground)]">Run test</strong> to validate saved fields.
+                                                <p className="text-xs text-foreground-muted leading-relaxed">
+                                                    No test run yet. Click <strong className="text-foreground">Run test</strong> to validate saved fields.
                                                 </p>
                                             )}
                                             <button
@@ -1077,24 +1077,24 @@ function IntegrationsContent() {
                                         </div>
 
                                         {/* Saved details */}
-                                        <div className="rounded-2xl border border-[var(--border)] overflow-hidden">
-                                            <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-2)]/50">
-                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground-muted)]">
+                                        <div className="rounded-2xl border border-border overflow-hidden">
+                                            <div className="px-4 py-3 border-b border-border bg-surface-2/50">
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
                                                     Saved details
                                                 </h4>
                                             </div>
-                                            <dl className="divide-y divide-[var(--border)]">
+                                            <dl className="divide-y divide-border">
                                                 {configRows.map((row) => (
                                                     <div key={row.label} className="px-4 py-2.5 flex items-start justify-between gap-3">
-                                                        <dt className="text-xs text-[var(--foreground-muted)] shrink-0">{row.label}</dt>
-                                                        <dd className="text-xs font-medium text-[var(--foreground)] text-right break-all">
+                                                        <dt className="text-xs text-foreground-muted shrink-0">{row.label}</dt>
+                                                        <dd className="text-xs font-medium text-foreground text-right break-all">
                                                             {row.value}
                                                         </dd>
                                                     </div>
                                                 ))}
                                                 <div className="px-4 py-2.5 flex items-start justify-between gap-3">
-                                                    <dt className="text-xs text-[var(--foreground-muted)]">Last status</dt>
-                                                    <dd className="text-xs font-medium text-[var(--foreground)] text-right">
+                                                    <dt className="text-xs text-foreground-muted">Last status</dt>
+                                                    <dd className="text-xs font-medium text-foreground text-right">
                                                         {activeConn.lastStatus || "connected"}
                                                         {activeConn.lastSyncAt
                                                             ? ` · ${new Date(activeConn.lastSyncAt).toLocaleString()}`
@@ -1106,13 +1106,13 @@ function IntegrationsContent() {
 
                                         {/* Google Drive file browser */}
                                         {activeConn.providerId === "google_drive" && (
-                                            <div className="rounded-2xl border border-[var(--border)] overflow-hidden">
-                                                <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-2)]/50 flex items-center justify-between gap-2">
+                                            <div className="rounded-2xl border border-border overflow-hidden">
+                                                <div className="px-4 py-3 border-b border-border bg-surface-2/50 flex items-center justify-between gap-2">
                                                     <div>
-                                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground-muted)]">
+                                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
                                                             Drive files
                                                         </h4>
-                                                        <p className="text-[11px] text-[var(--foreground-muted)] mt-0.5">
+                                                        <p className="text-[11px] text-foreground-muted mt-0.5">
                                                             {driveFiles.length
                                                                 ? `${driveFiles.filter((f) => f.existsInLibrary).length} already in library · ${driveFiles.filter((f) => !f.existsInLibrary).length} new`
                                                                 : "Check the folder and upload missing files"}
@@ -1136,10 +1136,10 @@ function IntegrationsContent() {
                                                 <div className="p-3 space-y-2 max-h-72 overflow-y-auto">
                                                     {filesLoading && !driveFiles.length ? (
                                                         <div className="py-8 flex justify-center">
-                                                            <Loader2 className="h-5 w-5 animate-spin text-[var(--accent)]" />
+                                                            <Loader2 className="h-5 w-5 animate-spin text-accent" />
                                                         </div>
                                                     ) : driveFiles.length === 0 ? (
-                                                        <p className="text-xs text-[var(--foreground-muted)] text-center py-6">
+                                                        <p className="text-xs text-foreground-muted text-center py-6">
                                                             No files found in this folder (or not loaded yet). Click Refresh.
                                                         </p>
                                                     ) : (
@@ -1151,7 +1151,7 @@ function IntegrationsContent() {
                                                                     className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer transition-colors ${
                                                                         f.existsInLibrary
                                                                             ? "border-emerald-500/20 bg-emerald-500/5"
-                                                                            : "border-[var(--border)] bg-[var(--surface)] hover:border-[rgba(45,212,191,0.35)]"
+                                                                            : "border-border bg-surface hover:border-[rgba(56,182,255,0.35)]"
                                                                     }`}
                                                                 >
                                                                     <input
@@ -1169,10 +1169,10 @@ function IntegrationsContent() {
                                                                         }}
                                                                     />
                                                                     <div className="min-w-0 flex-1">
-                                                                        <p className="text-xs font-medium text-[var(--foreground)] truncate">
+                                                                        <p className="text-xs font-medium text-foreground truncate">
                                                                             {f.name}
                                                                         </p>
-                                                                        <p className="text-[10px] text-[var(--foreground-muted)] mt-0.5">
+                                                                        <p className="text-[10px] text-foreground-muted mt-0.5">
                                                                             {f.existsInLibrary
                                                                                 ? `Already exists${f.duplicateMatch === "checksum" ? " · exact file match" : ""}${f.documentStatus ? ` · ${f.documentStatus}` : ""}`
                                                                                 : "Not in library — select to upload"}
@@ -1184,7 +1184,7 @@ function IntegrationsContent() {
                                                                     {f.existsInLibrary ? (
                                                                         <CheckCircle2 size={14} className="text-emerald-300 shrink-0 mt-0.5" />
                                                                     ) : (
-                                                                        <Upload size={14} className="text-[var(--accent)] shrink-0 mt-0.5" />
+                                                                        <Upload size={14} className="text-accent shrink-0 mt-0.5" />
                                                                     )}
                                                                 </label>
                                                             );
@@ -1192,7 +1192,7 @@ function IntegrationsContent() {
                                                     )}
                                                 </div>
 
-                                                <div className="px-3 py-3 border-t border-[var(--border)] flex flex-col sm:flex-row gap-2">
+                                                <div className="px-3 py-3 border-t border-border flex flex-col sm:flex-row gap-2">
                                                     <button
                                                         type="button"
                                                         onClick={() => syncDriveFiles("selected")}
@@ -1222,20 +1222,20 @@ function IntegrationsContent() {
                                         )}
 
                                         {/* Ingest endpoint */}
-                                        <div className="rounded-2xl border border-teal-500/25 bg-teal-500/5 p-4 space-y-3">
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">
+                                        <div className="rounded-2xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-4 space-y-3">
+                                            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)]">
                                                 Inbound ingest endpoint
                                             </p>
                                             <div className="space-y-1">
-                                                <p className="text-[11px] text-[var(--foreground-muted)]">URL</p>
+                                                <p className="text-[11px] text-foreground-muted">URL</p>
                                                 <div className="flex gap-2">
-                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-[var(--border)] px-2.5 py-2">
+                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
                                                         {activeConn.ingestUrl || "—"}
                                                     </code>
                                                     {activeConn.ingestUrl && (
                                                         <button
                                                             type="button"
-                                                            className="btn-ghost p-2 rounded-lg border border-[var(--border)]"
+                                                            className="btn-ghost p-2 rounded-lg border border-border"
                                                             onClick={() => copyText(activeConn.ingestUrl!)}
                                                             aria-label="Copy URL"
                                                         >
@@ -1245,15 +1245,15 @@ function IntegrationsContent() {
                                                 </div>
                                             </div>
                                             <div className="space-y-1">
-                                                <p className="text-[11px] text-[var(--foreground-muted)]">X-Integration-Key</p>
+                                                <p className="text-[11px] text-foreground-muted">X-Integration-Key</p>
                                                 <div className="flex gap-2">
-                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-[var(--border)] px-2.5 py-2">
+                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
                                                         {freshIngestKey || activeConn.ingestApiKeyMasked || "••••"}
                                                     </code>
                                                     {freshIngestKey && (
                                                         <button
                                                             type="button"
-                                                            className="btn-ghost p-2 rounded-lg border border-[var(--border)]"
+                                                            className="btn-ghost p-2 rounded-lg border border-border"
                                                             onClick={() => copyText(freshIngestKey)}
                                                             aria-label="Copy key"
                                                         >
@@ -1269,7 +1269,7 @@ function IntegrationsContent() {
                                                     <button
                                                         type="button"
                                                         onClick={rotateKey}
-                                                        className="text-[11px] text-[var(--accent)] inline-flex items-center gap-1 mt-1 hover:underline"
+                                                        className="text-[11px] text-accent inline-flex items-center gap-1 mt-1 hover:underline"
                                                     >
                                                         <RefreshCw size={11} /> Rotate key
                                                     </button>

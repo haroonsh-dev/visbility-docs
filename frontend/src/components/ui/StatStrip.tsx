@@ -85,20 +85,20 @@ export function StatStrip({
                     <div key={s.label} className="min-w-[72px]">
                         <div className="flex items-center gap-1.5 mb-0.5">
                             <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />
-                            <span className="text-[11px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                            <span className="text-[11px] font-medium text-foreground-muted uppercase tracking-wide">
                                 {s.label}
                             </span>
                         </div>
-                        <p className="text-xl font-bold tracking-tight text-[var(--foreground)] tabular-nums font-mono">
+                        <p className="text-xl font-bold tracking-tight text-foreground tabular-nums font-mono">
                             {s.value}
                         </p>
                     </div>
                 ))}
                 <div className="min-w-[72px] ml-auto text-right">
-                    <p className="text-[11px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide mb-0.5">
+                    <p className="text-[11px] font-medium text-foreground-muted uppercase tracking-wide mb-0.5">
                         Total
                     </p>
-                    <p className="text-xl font-bold tracking-tight text-[var(--accent)] tabular-nums font-mono">
+                    <p className="text-xl font-bold tracking-tight text-accent tabular-nums font-mono">
                         {total}
                     </p>
                 </div>

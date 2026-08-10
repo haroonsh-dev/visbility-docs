@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from .orchestration_logger import get_logger, C
+from .resume_transcript_disambiguation import reconcile_resume_transcript_classification
 
 logger = logging.getLogger("visibility-docs")
 
@@ -103,6 +104,7 @@ DOCUMENT_TO_PHASE3_AGENT = {
     "employee_record": "hr_agent",
     "hr_document": "hr_agent",
     "offer_letter": "hr_agent",
+    "experience_letter": "hr_agent",
     "employment_contract": "hr_agent",
     "leave_application": "hr_agent",
     "payroll": "hr_agent",
@@ -285,11 +287,24 @@ HEURISTIC_RULES = [
         "hr_agent",
         "transcript",
         [
-            "transcript", "grade", "gpa", "semester", "course",
-            "credit hours", "cgpa", "academic record", "marksheet",
-            "marks sheet", "result card", "examination", "credits earned",
-            "grade point", "student name", "roll number", "registration no",
-            "نمبر", "درجہ", "گریڈ", "امتحان", "مضمون",
+            "official transcript",
+            "academic transcript",
+            "transcript of records",
+            "grade point average",
+            "cgpa",
+            "sgpa",
+            "marksheet",
+            "marks sheet",
+            "result card",
+            "controller of examinations",
+            "registrar",
+            "roll number",
+            "roll no",
+            "course code",
+            "credit hours",
+            "credits earned",
+            "semester result",
+            "grade report",
         ],
     ),
 ]
@@ -319,14 +334,18 @@ class ClassificationAgent:
 
         agent_type, doc_type = best
         confidence = min(0.95, 0.35 + (best_score * 0.12))
-        return {
+        return reconcile_resume_transcript_classification(
+            {
             "document_type": doc_type,
             "agent_type": agent_type,
             "confidence": confidence,
             "reasoning": f"Heuristic fallback matched {best_score} keyword groups for {agent_type}",
             "language": "en",
             "estimated_quality": "medium",
-        }
+        },
+            text,
+            filename,
+        )
 
     def classify(self, text: str, filename: str = "") -> dict:
         from .groq_service import groq_service
@@ -338,23 +357,23 @@ class ClassificationAgent:
             log.warn("No prompt template found, using heuristic fallback")
             return self._heuristic_classify(text, filename)
 
-        prompt = prompt_template.replace("{text}", text[:64000]).replace("{filename}", filename)
+        prompt = prompt_template.replace("{text}", text[:6000]).replace("{filename}", filename)
         log.info(f"Prompt preview: {C.DIM}{prompt[:200].replace(chr(10), ' ')}...{C.RESET}")
         log.info(f"Input text: {C.DIM}{len(text)} chars, filename='{filename}'{C.RESET}")
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.3-70b-versatile)...")
+            log.info("Calling Groq API (llama-3.1-8b-instant) for classification...")
             raw_response = ""
             try:
                 raw_response = groq_service.chat(
-                    [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=2048, model="llama-3.3-70b-versatile"
+                    [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=1024, model="llama-3.1-8b-instant"
                 )
             except Exception as first_err:
-                log.warn(f"Groq 70b first try error ({first_err}), retrying on 70b with truncated text...")
+                log.warn(f"Groq 8b classify error ({first_err}), retrying on 70b with truncated text...")
                 short_text = text[:4000]
                 short_prompt = prompt_template.replace("{text}", short_text[:4000]).replace("{filename}", filename)
                 raw_response = groq_service.chat(
-                    [{"role": "user", "content": short_prompt}], temperature=0.05, max_tokens=1500, model="llama-3.3-70b-versatile"
+                    [{"role": "user", "content": short_prompt}], temperature=0.05, max_tokens=1024, model="llama-3.3-70b-versatile"
                 )
             
             import re
@@ -389,13 +408,13 @@ class ClassificationAgent:
                 "estimated_quality": result.get("estimated_quality", "medium"),
             }
             log.result("Result", f"type={doc_type}, agent={agent_type}, conf={result_data['confidence']:.2f}, time={duration:.1f}s", C.GREEN)
-            return result_data
+            return reconcile_resume_transcript_classification(result_data, text, filename)
         except Exception as e:
             log.warn(f"LLM error: {e}, falling back to heuristic")
             logger.warning(f"Classification agent fallback used: {e}")
             fallback = self._heuristic_classify(text, filename)
             fallback["reasoning"] = f"{fallback['reasoning']}; LLM fallback reason: {e}"
-            return fallback
+            return reconcile_resume_transcript_classification(fallback, text, filename)
 
 
 def _clean_repetitive_ocr(text: str) -> str:
@@ -494,14 +513,15 @@ class CategoryExtractionAgent:
 
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.3-70b-versatile) for extraction...")
+            # Fast model first; escalate to 70b only if the fast pass returns empty/weak JSON
+            log.info("Calling Groq API (llama-3.1-8b-instant) for extraction...")
             raw_response = ""
             try:
                 raw_response = groq_service.chat(
-                    [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000, model="llama-3.3-70b-versatile"
+                    [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=2500, model="llama-3.1-8b-instant"
                 )
             except Exception as rate_err:
-                log.warn(f"Groq API error on 70b-versatile ({rate_err}), retrying on 70b-versatile with truncated text...")
+                log.warn(f"Groq 8b extraction error ({rate_err}), retrying on 70b with truncated text...")
                 short_doc_slice = clean_text[:4000]
                 short_prompt = prompt_base + f"\n\n<document>\n{short_doc_slice}\n</document>"
                 raw_response = groq_service.chat(
@@ -513,6 +533,19 @@ class CategoryExtractionAgent:
             scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else ""
 
             result = groq_service._parse_json(raw_response, {})
+            # Escalate once if fast model produced nothing useful
+            if (not isinstance(result, dict) or len(result) < 2) and clean_text:
+                try:
+                    log.warn("Fast extraction returned weak JSON — escalating to llama-3.3-70b-versatile")
+                    raw_response = groq_service.chat(
+                        [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000, model="llama-3.3-70b-versatile"
+                    )
+                    scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
+                    scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else scratchpad_text
+                    result = groq_service._parse_json(raw_response, {})
+                except Exception as escalate_err:
+                    log.warn(f"70b escalation failed: {escalate_err}")
+
             duration = __import__("time").time() - t0
             field_confidence = result.pop("_field_confidence", {}) if isinstance(result, dict) else {}
             avg_confidence = 0.7

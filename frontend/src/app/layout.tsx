@@ -1,10 +1,17 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { IBM_Plex_Sans, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const plusJakarta = Plus_Jakarta_Sans({
+const ibmPlexSans = IBM_Plex_Sans({
     subsets: ["latin"],
-    variable: "--font-plus-jakarta",
+    weight: ["400", "500", "600", "700"],
+    variable: "--font-ibm-plex",
+    display: "swap",
+});
+
+const spaceGrotesk = Space_Grotesk({
+    subsets: ["latin"],
+    variable: "--font-space-grotesk",
     display: "swap",
 });
 
@@ -29,7 +36,7 @@ export default function RootLayout({
         <html
             lang="en"
             data-theme="light"
-            className={`${plusJakarta.variable} ${jetbrainsMono.variable}`}
+            className={`${ibmPlexSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
             suppressHydrationWarning
         >
             <body className="antialiased font-sans" suppressHydrationWarning>

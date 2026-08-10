@@ -6,7 +6,7 @@ import openRemoteService from '../services/openRemoteService';
 import { generateRefreshToken, generateToken, verifyRefreshToken } from '../utils/jwt';
 import logger from '../utils/logger';
 import { normalizeTeamPermissions } from '../utils/permissionsUtil';
-import { recordActivityAnon } from '../services/activityLog';
+import { recordActivityAnon, recordActivityFromReq } from '../services/activityLog';
 
 function userPermissionsForResponse(user: { role: string; permissions?: unknown }) {
     if (user.role === 'team') {
@@ -460,4 +460,106 @@ export const me = async (req: Request, res: Response) => {
             },
         },
     });
+};
+
+/** PATCH /auth/profile — update display name / contact info for the signed-in user. */
+export const updateProfile = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const user = await User.findOne({ userId: req.user.userId });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const { fullName, contactNumber } = req.body || {};
+        const trimmedName = typeof fullName === 'string' ? fullName.trim() : undefined;
+        if (trimmedName !== undefined && !trimmedName) {
+            return res.status(400).json({ success: false, message: 'Full name cannot be empty' });
+        }
+        if (trimmedName !== undefined) user.fullName = trimmedName;
+        if (typeof contactNumber === 'string') user.contactNumber = contactNumber.trim();
+
+        await user.save();
+
+        recordActivityFromReq(req, {
+            action: 'auth.profile_update',
+            category: 'auth',
+            outcome: 'success',
+            message: `${user.fullName || user.email} updated their profile`,
+        });
+
+        res.json({
+            success: true,
+            message: 'Profile updated successfully',
+            data: {
+                user: {
+                    userId: user.userId,
+                    username: user.username,
+                    email: user.email,
+                    fullName: user.fullName,
+                    contactNumber: user.contactNumber,
+                    role: user.role,
+                    accountType: user.accountType,
+                    organizationId: user.organizationId,
+                    openRemoteRealm: user.openRemoteRealm,
+                    openRemoteUserId: user.openRemoteUserId,
+                    permissions: userPermissionsForResponse(user),
+                },
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/** POST /auth/change-password — verify current password, set a new hash. */
+export const changePassword = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { currentPassword, newPassword } = req.body || {};
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'currentPassword and newPassword are required',
+            });
+        }
+        if (String(newPassword).length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'New password must be at least 6 characters',
+            });
+        }
+
+        const user = await User.findOne({ userId: req.user.userId });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const match = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!match) {
+            recordActivityFromReq(req, {
+                action: 'auth.password_change',
+                category: 'auth',
+                outcome: 'failure',
+                message: `Failed password change attempt for ${user.email}`,
+            });
+            return res.status(400).json({
+                success: false,
+                message: 'Current password is incorrect',
+            });
+        }
+
+        const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '12');
+        user.passwordHash = await bcrypt.hash(String(newPassword), saltRounds);
+        await user.save();
+
+        recordActivityFromReq(req, {
+            action: 'auth.password_change',
+            category: 'auth',
+            outcome: 'success',
+            message: `${user.fullName || user.email} changed their password`,
+        });
+
+        res.json({ success: true, message: 'Password changed successfully' });
+    } catch (error) {
+        next(error);
+    }
 };

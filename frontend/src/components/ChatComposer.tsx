@@ -39,8 +39,8 @@ export default function ChatComposer({
         if (!shell) return;
         shell.style.borderColor = on ? "#94a3b8" : "#e2e8f0";
         shell.style.boxShadow = on
-            ? "0 6px 22px rgba(15, 23, 42, 0.09)"
-            : "0 4px 18px rgba(15, 23, 42, 0.05)";
+            ? "0 6px 22px rgba(15,23,42,0.09)"
+            : "0 4px 18px rgba(15,23,42,0.05)";
     };
 
     const btnBase: React.CSSProperties = {
@@ -69,7 +69,7 @@ export default function ChatComposer({
                 border: "1px solid #e2e8f0",
                 background: "#ffffff",
                 padding: "10px 10px 10px 16px",
-                boxShadow: "0 4px 18px rgba(15, 23, 42, 0.05)",
+                boxShadow: "0 4px 18px rgba(15,23,42,0.05)",
                 transition: "border-color 0.2s ease, box-shadow 0.2s ease",
             }}
         >
@@ -113,14 +113,14 @@ export default function ChatComposer({
                         const b = e.currentTarget;
                         b.style.background = "#f8fafc";
                         b.style.borderColor = "#94a3b8";
-                        b.style.boxShadow = "0 4px 12px rgba(15, 23, 42, 0.12)";
+                        b.style.boxShadow = "0 4px 12px rgba(15,23,42,0.12)";
                         b.style.transform = "scale(1.06)";
                     }}
                     onMouseLeave={(e) => {
                         const b = e.currentTarget;
                         b.style.background = "#ffffff";
                         b.style.borderColor = "#cbd5e1";
-                        b.style.boxShadow = "0 1px 3px rgba(15, 23, 42, 0.08)";
+                        b.style.boxShadow = "0 1px 3px rgba(15,23,42,0.08)";
                         b.style.transform = "scale(1)";
                     }}
                     onMouseDown={(e) => {
@@ -134,7 +134,7 @@ export default function ChatComposer({
                         border: "1px solid #cbd5e1",
                         cursor: "pointer",
                         background: "#ffffff",
-                        boxShadow: "0 1px 3px rgba(15, 23, 42, 0.08)",
+                        boxShadow: "0 1px 3px rgba(15,23,42,0.08)",
                     }}
                 >
                     <span
@@ -162,7 +162,7 @@ export default function ChatComposer({
                         b.style.background = "#f8fafc";
                         b.style.borderColor = "#64748b";
                         b.style.color = "#020617";
-                        b.style.boxShadow = "0 4px 12px rgba(15, 23, 42, 0.12)";
+                        b.style.boxShadow = "0 4px 12px rgba(15,23,42,0.12)";
                         b.style.transform = "scale(1.06)";
                     }}
                     onMouseLeave={(e) => {
@@ -170,7 +170,7 @@ export default function ChatComposer({
                         b.style.background = canSend ? "#ffffff" : "#f8fafc";
                         b.style.borderColor = canSend ? "#cbd5e1" : "#e2e8f0";
                         b.style.color = canSend ? "#0f172a" : "#cbd5e1";
-                        b.style.boxShadow = canSend ? "0 1px 3px rgba(15, 23, 42, 0.08)" : "none";
+                        b.style.boxShadow = canSend ? "0 1px 3px rgba(15,23,42,0.08)" : "none";
                         b.style.transform = "scale(1)";
                     }}
                     onMouseDown={(e) => {
@@ -187,7 +187,7 @@ export default function ChatComposer({
                         cursor: canSend ? "pointer" : "not-allowed",
                         background: canSend ? "#ffffff" : "#f8fafc",
                         color: canSend ? "#0f172a" : "#cbd5e1",
-                        boxShadow: canSend ? "0 1px 3px rgba(15, 23, 42, 0.08)" : "none",
+                        boxShadow: canSend ? "0 1px 3px rgba(15,23,42,0.08)" : "none",
                         transform: canSend ? "scale(1)" : "scale(0.98)",
                         opacity: canSend ? 1 : 0.85,
                     }}

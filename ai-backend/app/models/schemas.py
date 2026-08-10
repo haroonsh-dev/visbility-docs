@@ -207,6 +207,7 @@ class ChatResponse(BaseModel):
     session_id: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
+    chart_data: Optional[dict] = None
 
 
 class ProcessRequest(BaseModel):

@@ -5,6 +5,7 @@ from datetime import datetime
 from ..database import SupabaseDB
 from .ocr_service import ocr_service
 from .agent_orchestrator import classification_agent, category_agents, DOCUMENT_TO_PHASE3_AGENT
+from .resume_transcript_disambiguation import reconcile_resume_transcript_classification
 from .classification_service import classification_service
 from .rag_service import rag_service
 from .orchestration_logger import (OrchestrationLogger, get_logger, reset_logger, C)
@@ -398,35 +399,51 @@ class OrchestratorService:
             if agent_clamped:
                 log.warn(f"Skills clamped: natural={natural_agent} → effective={agent_type}")
 
-            # ── Step 4: Table Extraction (PDF only) ──
+            # ── Step 4: Table Extraction (PDF only, time-boxed) ──
             log.step("TABLE EXTRACTION")
             log.agent_call("table_service", "", "Camelot / pdfplumber")
             ext = os.path.splitext(file_path)[1].lower()
             if ext == ".pdf":
                 try:
                     from .table_service import extract_tables, tables_to_text
-                    detected_tables = extract_tables(file_path)
-                    if detected_tables:
-                        table_text = tables_to_text(detected_tables)
-                        raw_text = table_text + "\n\n" + raw_text
+                    table_holder = {"tables": None, "err": None}
+
+                    def _do_tables():
                         try:
-                            SupabaseDB.insert("document_extractions", {
-                                "organization_id": organization_id,
-                                "document_id": document_id,
-                                "extraction_type": "table_extraction",
-                                "extracted_data": {
-                                    "table_count": len(detected_tables),
-                                    "table_text": table_text,
-                                    "tables": detected_tables,
-                                },
-                                "confidence": 1.0,
-                            })
-                            SupabaseDB.update("documents", {"raw_text": raw_text}, "id", document_id)
+                            table_holder["tables"] = extract_tables(file_path)
                         except Exception as e:
-                            log.warn(f"Table extraction persist failed: {e}")
-                        log.ok(f"Found {len(detected_tables)} tables ({len(table_text)} chars) prepended to text")
+                            table_holder["err"] = e
+
+                    t_thread = threading.Thread(target=_do_tables, daemon=True)
+                    t_thread.start()
+                    t_thread.join(timeout=20)
+                    if t_thread.is_alive():
+                        log.warn("Table extraction timed out after 20s — continuing without tables")
+                    elif table_holder["err"]:
+                        log.info(f"Table extraction skipped: {table_holder['err']}")
                     else:
-                        log.ok("No tables detected")
+                        detected_tables = table_holder["tables"] or []
+                        if detected_tables:
+                            table_text = tables_to_text(detected_tables)
+                            raw_text = table_text + "\n\n" + raw_text
+                            try:
+                                SupabaseDB.insert("document_extractions", {
+                                    "organization_id": organization_id,
+                                    "document_id": document_id,
+                                    "extraction_type": "table_extraction",
+                                    "extracted_data": {
+                                        "table_count": len(detected_tables),
+                                        "table_text": table_text,
+                                        "tables": detected_tables,
+                                    },
+                                    "confidence": 1.0,
+                                })
+                                SupabaseDB.update("documents", {"raw_text": raw_text}, "id", document_id)
+                            except Exception as e:
+                                log.warn(f"Table extraction persist failed: {e}")
+                            log.ok(f"Found {len(detected_tables)} tables ({len(table_text)} chars) prepended to text")
+                        else:
+                            log.ok("No tables detected")
                 except Exception as e:
                     log.info(f"Table extraction skipped: {e}")
             else:
@@ -446,10 +463,23 @@ class OrchestratorService:
                 ext_future = pool.submit(category_agents.extract, raw_text, doc_type, effective_agent)
                 _filename = os.path.basename(file_path) if file_path else ""
                 emb_future = pool.submit(rag_service.index_document, document_id, organization_id, raw_text, file_path,
-                                         document_type=doc_type, filename=_filename)
+                                         document_type=doc_type, filename=_filename, phase3_agent=effective_agent)
 
                 t0 = time.time()
                 extraction = ext_future.result(timeout=120)  # 2 min timeout
+                # Repair invoice Qty/Rate/Amount confusion before persist
+                try:
+                    ed = extraction.get("extracted_data") or {}
+                    if isinstance(ed, dict) and (
+                        doc_type in ("invoice", "payment_receipt", "expense_report")
+                        or isinstance(ed.get("line_items"), list)
+                    ):
+                        from .invoice_line_item_repair import repair_invoice_extraction
+
+                        extraction["extracted_data"] = repair_invoice_extraction(ed)
+                        log.info("Applied invoice line_item repair / total preference")
+                except Exception as repair_err:
+                    log.warn(f"Invoice line_item repair skipped: {repair_err}")
                 ext_duration = int((time.time() - t0) * 1000)
                 fields = list(extraction.get("extracted_data", {}).keys())
                 log.ok(f"Extracted {len(fields)} fields: {', '.join(fields[:8])}")
@@ -499,20 +529,28 @@ class OrchestratorService:
             self.update_stage(document_id, organization_id, "extracted", 80)
             self.update_stage(document_id, organization_id, "embedded", 95)
 
-            # ── Stage 7: Image Extraction & Indexing (separate from text pipeline) ──
+            # Mark ready BEFORE image enrichment so the UI unblocks quickly.
+            # Image Vision can take minutes and must not gate "processed".
+            SupabaseDB.update("documents", {"status": "processed"}, "id", document_id)
+            self.update_stage(document_id, organization_id, "completed", 100, "completed")
+            status = "processed"
+            log.ok("Document marked processed (image enrichment optional)")
+
+            # ── Stage 7: Image Extraction (background, non-blocking) ──
             log.step("IMAGE EXTRACTION")
-            log.agent_call("image_extraction_service", "", "Groq Vision")
-            image_results = []
+            log.agent_call("image_extraction_service", "", "Groq Vision (async)")
             if ext == ".pdf":
-                try:
-                    from .image_extraction_service import image_extraction_service
-                    doc_rec = SupabaseDB.select_one("documents", "id", document_id)
-                    active_path = doc_rec.get("file_path", file_path) if doc_rec else file_path
-                    if not os.path.exists(active_path) and os.path.exists(file_path):
-                        active_path = file_path
-                    images = image_extraction_service.process_pdf_images(active_path, document_id, organization_id)
-                    if images:
-                        log.ok(f"Extracted {len(images)} images")
+                def _enrich_images():
+                    try:
+                        from .image_extraction_service import image_extraction_service
+                        doc_rec = SupabaseDB.select_one("documents", "id", document_id)
+                        active_path = doc_rec.get("file_path", file_path) if doc_rec else file_path
+                        if not os.path.exists(active_path) and os.path.exists(file_path):
+                            active_path = file_path
+                        images = image_extraction_service.process_pdf_images(active_path, document_id, organization_id)
+                        if not images:
+                            return
+                        image_results = []
                         for img in images:
                             rag_service.index_image_content(
                                 img["markdown"],
@@ -525,7 +563,6 @@ class OrchestratorService:
                                 "image_path": img["metadata"].get("image_path", ""),
                                 "description": img["markdown"],
                             })
-                        log.ok(f"Indexed {len(images)} image descriptions")
                         SupabaseDB.insert("document_extractions", {
                             "organization_id": organization_id,
                             "document_id": document_id,
@@ -533,27 +570,23 @@ class OrchestratorService:
                             "extracted_data": {"images": image_results},
                             "confidence": 1.0,
                         })
-
-                        # Append image descriptions to raw_text so OCR preview shows them
                         image_text = "\n\n" + "=" * 50 + "\nIMAGE DESCRIPTIONS\n" + "=" * 50 + "\n\n"
                         for ir in image_results:
                             image_text += f"--- Image (Page {ir['page']}) ---\n"
                             image_text += ir["description"]
                             image_text += "\n\n"
-                        SupabaseDB.update("documents", {"raw_text": (raw_text or "") + image_text}, "id", document_id)
-                        log.ok(f"Appended {len(image_results)} image descriptions to raw_text")
-                    else:
-                        log.ok("No images found in PDF")
-                except Exception as e:
-                    log.warn(f"Image extraction failed (non-fatal): {e}")
-                    logger.warning(f"Image extraction error for {document_id}: {e}")
+                        current = SupabaseDB.select_one("documents", "id", document_id) or {}
+                        base_text = current.get("raw_text") or raw_text or ""
+                        if "IMAGE DESCRIPTIONS" not in base_text:
+                            SupabaseDB.update("documents", {"raw_text": base_text + image_text}, "id", document_id)
+                        logger.info(f"Async image enrichment done for {document_id}: {len(images)} images")
+                    except Exception as e:
+                        logger.warning(f"Async image extraction failed for {document_id}: {e}")
+
+                threading.Thread(target=_enrich_images, daemon=True).start()
+                log.ok("Image enrichment started in background")
             else:
                 log.ok("Skipped (not a PDF)")
-
-            # ── Mark complete ──
-            SupabaseDB.update("documents", {"status": "processed"}, "id", document_id)
-            self.update_stage(document_id, organization_id, "completed", 100, "completed")
-            status = "processed"
 
             log.end(status)
 

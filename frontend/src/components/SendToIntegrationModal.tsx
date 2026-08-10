@@ -253,23 +253,23 @@ export default function SendToIntegrationModal({
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="send-integration-title"
-                className="w-full max-w-[580px] max-h-[calc(100vh-1.5rem)] sm:max-h-[88vh] overflow-hidden rounded-2xl border border-[var(--border-strong)] text-[var(--foreground)] shadow-[0_28px_90px_rgba(2,6,23,0.45)] flex flex-col"
+                className="w-full max-w-[580px] max-h-[calc(100vh-1.5rem)] sm:max-h-[88vh] overflow-hidden rounded-2xl border border-border-strong text-foreground shadow-[0_28px_90px_rgba(2,6,23,0.45)] flex flex-col"
                 style={{ backgroundColor: "var(--surface)" }}
                 onMouseDown={(event) => event.stopPropagation()}
             >
-                <header className="relative px-5 sm:px-6 py-5 border-b border-[var(--border)] bg-gradient-to-r from-[var(--accent-muted)] via-[var(--surface)] to-[var(--surface)]">
+                <header className="relative px-5 sm:px-6 py-5 border-b border-border bg-linear-to-r from-accent-muted via-surface to-surface">
                     <div className="flex items-start gap-3.5 pr-10">
-                        <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
+                        <div className="h-11 w-11 rounded-2xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shrink-0 shadow-[var(--vb-glow)]">
                             <Send size={18} />
                         </div>
                         <div className="min-w-0 pt-0.5">
                             <h2
                                 id="send-integration-title"
-                                className="text-base font-bold text-[var(--foreground)]"
+                                className="text-base font-bold text-foreground"
                             >
                                 Send to integration
                             </h2>
-                            <p className="text-xs text-[var(--foreground-secondary)] truncate mt-1">
+                            <p className="text-xs text-foreground-secondary truncate mt-1">
                                 {fileSummary}
                             </p>
                         </div>
@@ -278,7 +278,7 @@ export default function SendToIntegrationModal({
                         type="button"
                         onClick={() => !sending && onClose()}
                         disabled={sending}
-                        className="absolute right-4 top-4 h-9 w-9 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:bg-[var(--surface-2)] flex items-center justify-center transition-colors disabled:opacity-50"
+                        className="absolute right-4 top-4 h-9 w-9 rounded-xl border border-border bg-surface text-foreground-secondary hover:text-foreground hover:bg-surface-2 flex items-center justify-center transition-colors disabled:opacity-50"
                         aria-label="Close"
                     >
                         <X size={16} />
@@ -288,8 +288,8 @@ export default function SendToIntegrationModal({
                 <div className="px-5 sm:px-6 py-5 space-y-5 overflow-y-auto flex-1">
                     {loading ? (
                         <div className="py-16 flex flex-col items-center gap-3">
-                            <Loader2 className="animate-spin text-[var(--accent)]" size={26} />
-                            <p className="text-sm text-[var(--foreground-secondary)]">
+                            <Loader2 className="animate-spin text-accent" size={26} />
+                            <p className="text-sm text-foreground-secondary">
                                 Loading connections…
                             </p>
                         </div>
@@ -303,7 +303,7 @@ export default function SendToIntegrationModal({
                             <section className="space-y-2">
                                 <label
                                     htmlFor="send-integration-connection"
-                                    className="block text-xs font-bold uppercase tracking-[0.08em] text-[var(--foreground-secondary)]"
+                                    className="block text-xs font-bold uppercase tracking-[0.08em] text-foreground-secondary"
                                 >
                                     Connection
                                 </label>
@@ -331,11 +331,11 @@ export default function SendToIntegrationModal({
                                     <div className="flex items-center justify-between gap-3">
                                         <label
                                             htmlFor="send-integration-search"
-                                            className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--foreground-secondary)]"
+                                            className="text-xs font-bold uppercase tracking-[0.08em] text-foreground-secondary"
                                         >
                                             Documents
                                         </label>
-                                        <span className="text-xs font-semibold text-[var(--accent)]">
+                                        <span className="text-xs font-semibold text-accent">
                                             {selectedDocs.length} selected
                                         </span>
                                     </div>
@@ -346,9 +346,9 @@ export default function SendToIntegrationModal({
                                         placeholder="Search your document library…"
                                         className="premium-input w-full h-11 px-4 text-sm"
                                     />
-                                    <ul className="max-h-48 overflow-y-auto rounded-xl border border-[var(--border-strong)] divide-y divide-[var(--border)] bg-[var(--surface)]">
+                                    <ul className="max-h-48 overflow-y-auto rounded-xl border border-border-strong divide-y divide-border bg-surface">
                                         {filteredLibrary.length === 0 ? (
-                                            <li className="px-4 py-6 text-center text-sm text-[var(--foreground-muted)]">
+                                            <li className="px-4 py-6 text-center text-sm text-foreground-muted">
                                                 No documents found
                                             </li>
                                         ) : (
@@ -361,22 +361,22 @@ export default function SendToIntegrationModal({
                                                             onClick={() => toggleDoc(doc.documentId)}
                                                             className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
                                                                 selected
-                                                                    ? "bg-[var(--accent-muted)]"
-                                                                    : "hover:bg-[var(--surface-2)]"
+                                                                    ? "bg-accent-muted"
+                                                                    : "hover:bg-surface-2"
                                                             }`}
                                                         >
                                                             <span
                                                                 className={`h-5 w-5 rounded-md border flex items-center justify-center shrink-0 ${
                                                                     selected
-                                                                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                                                                        : "border-[var(--border-strong)]"
+                                                                        ? "border-accent bg-accent text-white"
+                                                                        : "border-border-strong"
                                                                 }`}
                                                             >
                                                                 {selected && <CheckCircle2 size={14} />}
                                                             </span>
                                                             <FileUp
                                                                 size={16}
-                                                                className="text-[var(--foreground-muted)] shrink-0"
+                                                                className="text-foreground-muted shrink-0"
                                                             />
                                                             <span className="truncate flex-1 text-sm font-medium">
                                                                 {doc.originalFilename}
@@ -389,12 +389,12 @@ export default function SendToIntegrationModal({
                                     </ul>
                                 </section>
                             ) : (
-                                <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3.5 flex items-center gap-3">
-                                    <div className="h-9 w-9 rounded-xl bg-[var(--accent-muted)] text-[var(--accent)] flex items-center justify-center shrink-0">
+                                <section className="rounded-xl border border-border bg-surface-2 p-3.5 flex items-center gap-3">
+                                    <div className="h-9 w-9 rounded-xl bg-accent-muted text-accent flex items-center justify-center shrink-0">
                                         <FileUp size={16} />
                                     </div>
                                     <div className="min-w-0">
-                                        <p className="text-xs font-semibold text-[var(--foreground-secondary)]">
+                                        <p className="text-xs font-semibold text-foreground-secondary">
                                             Original file
                                         </p>
                                         <p className="text-sm font-medium truncate mt-0.5">
@@ -406,10 +406,10 @@ export default function SendToIntegrationModal({
 
                             <section className="space-y-2.5">
                                 <div>
-                                    <p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--foreground-secondary)]">
+                                    <p className="text-xs font-bold uppercase tracking-[0.08em] text-foreground-secondary">
                                         Destination
                                     </p>
-                                    <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                                    <p className="text-xs text-foreground-muted mt-1">
                                         Select where the original file should be delivered.
                                     </p>
                                 </div>
@@ -423,25 +423,25 @@ export default function SendToIntegrationModal({
                                         }
                                         className={`relative min-h-[112px] rounded-2xl border p-4 text-left transition-all disabled:cursor-not-allowed ${
                                             destFolder && activeConn?.supportsFolderSend
-                                                ? "border-[var(--accent)] bg-[var(--accent-muted)] shadow-[0_0_0_3px_var(--accent-ring)]"
+                                                ? "border-accent bg-accent-muted shadow-[0_0_0_3px_var(--accent-ring)]"
                                                 : activeConn?.supportsFolderSend
-                                                  ? "border-[var(--border-strong)] hover:border-[var(--accent)] bg-[var(--surface)]"
-                                                  : "border-[var(--border)] bg-[var(--surface-2)] opacity-55"
+                                                  ? "border-border-strong hover:border-accent bg-surface"
+                                                  : "border-border bg-surface-2 opacity-55"
                                         }`}
                                     >
                                         <div className="flex items-start justify-between gap-3">
-                                            <div className="h-9 w-9 rounded-xl bg-[var(--surface)] border border-[var(--border)] text-[var(--accent)] flex items-center justify-center">
+                                            <div className="h-9 w-9 rounded-xl bg-surface border border-border text-accent flex items-center justify-center">
                                                 <HardDrive size={17} />
                                             </div>
                                             {destFolder && activeConn?.supportsFolderSend && (
                                                 <CheckCircle2
                                                     size={18}
-                                                    className="text-[var(--accent)]"
+                                                    className="text-accent"
                                                 />
                                             )}
                                         </div>
                                         <p className="text-sm font-bold mt-3">Connected Drive folder</p>
-                                        <p className="text-[11px] leading-4 text-[var(--foreground-secondary)] mt-1">
+                                        <p className="text-[11px] leading-4 text-foreground-secondary mt-1">
                                             {activeConn?.supportsFolderSend
                                                 ? "Upload to the folder linked with this connection."
                                                 : "Available with Google Drive."}
@@ -457,25 +457,25 @@ export default function SendToIntegrationModal({
                                         }
                                         className={`relative min-h-[112px] rounded-2xl border p-4 text-left transition-all disabled:cursor-not-allowed ${
                                             destWebhook && activeConn?.hasOutboundWebhook
-                                                ? "border-[var(--accent)] bg-[var(--accent-muted)] shadow-[0_0_0_3px_var(--accent-ring)]"
+                                                ? "border-accent bg-accent-muted shadow-[0_0_0_3px_var(--accent-ring)]"
                                                 : activeConn?.hasOutboundWebhook
-                                                  ? "border-[var(--border-strong)] hover:border-[var(--accent)] bg-[var(--surface)]"
-                                                  : "border-[var(--border)] bg-[var(--surface-2)] opacity-55"
+                                                  ? "border-border-strong hover:border-accent bg-surface"
+                                                  : "border-border bg-surface-2 opacity-55"
                                         }`}
                                     >
                                         <div className="flex items-start justify-between gap-3">
-                                            <div className="h-9 w-9 rounded-xl bg-[var(--surface)] border border-[var(--border)] text-[var(--accent)] flex items-center justify-center">
+                                            <div className="h-9 w-9 rounded-xl bg-surface border border-border text-accent flex items-center justify-center">
                                                 <Link2 size={17} />
                                             </div>
                                             {destWebhook && activeConn?.hasOutboundWebhook && (
                                                 <CheckCircle2
                                                     size={18}
-                                                    className="text-[var(--accent)]"
+                                                    className="text-accent"
                                                 />
                                             )}
                                         </div>
                                         <p className="text-sm font-bold mt-3">Outbound webhook</p>
-                                        <p className="text-[11px] leading-4 text-[var(--foreground-secondary)] mt-1">
+                                        <p className="text-[11px] leading-4 text-foreground-secondary mt-1">
                                             {activeConn?.hasOutboundWebhook
                                                 ? "POST the file and metadata to your URL."
                                                 : "Configure a URL in Integrations → Edit."}
@@ -500,14 +500,14 @@ export default function SendToIntegrationModal({
                 </div>
 
                 <footer
-                    className="px-5 sm:px-6 py-4 border-t border-[var(--border)] flex flex-col-reverse sm:flex-row gap-2.5"
+                    className="px-5 sm:px-6 py-4 border-t border-border flex flex-col-reverse sm:flex-row gap-2.5"
                     style={{ backgroundColor: "var(--surface-2)" }}
                 >
                     <button
                         type="button"
                         onClick={onClose}
                         disabled={sending}
-                        className="sm:w-36 h-11 rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:bg-[var(--surface-3)] text-sm font-semibold transition-colors disabled:opacity-50"
+                        className="sm:w-36 h-11 rounded-xl border border-border-strong bg-surface text-foreground-secondary hover:text-foreground hover:bg-surface-3 text-sm font-semibold transition-colors disabled:opacity-50"
                     >
                         Cancel
                     </button>

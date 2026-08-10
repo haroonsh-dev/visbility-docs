@@ -4,6 +4,7 @@ import ApiKey, { AIProvider } from '../models/ApiKey';
 import Organization from '../models/Organization';
 import { buildDocumentFilter, hasPermission } from '../services/accessScope';
 import {
+    appendChatExchange,
     chatWithAi,
     deleteChatSession,
     ensureDocumentsInAi,
@@ -22,6 +23,13 @@ import logger from '../utils/logger';
 import { recordActivityFromReq } from '../services/activityLog';
 import { DOC_TYPE_TO_AGENT } from '../services/documentStorage';
 import { requireAllowedAgent } from '../services/planService';
+import { tryHrChatCommand } from '../services/hrChatActionService';
+import { getAgentAnalyticsDashboard, tryAgentChatVisual } from '../services/agentChatVisualService';
+import { resolveVectorOrganizationId } from '../services/vectorOrgId';
+import {
+    getSessionFocusDocumentIds,
+    setSessionFocusDocumentIds,
+} from '../services/chatFocusStore';
 
 async function resolveChatProviderConfig(
     organizationId: string,
@@ -190,6 +198,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
 
         try {
             const orgId = resolveAiOrganizationId(req.user);
+            let vectorOrgId = orgId;
             let scopedPythonIds: string[] | undefined;
 
             const phase3AgentRaw = (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
@@ -210,6 +219,125 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     });
                 }
                 allowedAgents = check.entitlement.agentIds;
+            }
+
+            const orgIdEarly = resolveAiOrganizationId(req.user);
+            if (!isChitchat && isAiServiceEnabled()) {
+                const scopedAnalyticsDocIds =
+                    chatScope === 'selected' && documentIds.length
+                        ? documentIds
+                        : Array.isArray(req.body.analyticsDocumentIds)
+                          ? (req.body.analyticsDocumentIds as string[]).filter(Boolean)
+                          : undefined;
+
+                const focusFromClient = Array.isArray(req.body.focusDocumentIds)
+                    ? (req.body.focusDocumentIds as string[]).filter(Boolean)
+                    : Array.isArray(req.body.focus_document_ids)
+                      ? (req.body.focus_document_ids as string[]).filter(Boolean)
+                      : [];
+                // Explicit chip/client focus wins; else last session focus for "chart of that"
+                const focusDocumentIds = [
+                    ...new Set([
+                        ...focusFromClient,
+                        ...getSessionFocusDocumentIds(sessionId),
+                    ]),
+                ].slice(0, 5);
+
+                const hrAction = await tryHrChatCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (hrAction.handled && hrAction.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: hrAction.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (hrAction.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `HR chat reply ok but append-exchange failed (restart ai-backend?): ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const hrFocus = (hrAction.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (hrFocus.length) setSessionFocusDocumentIds(persistedSessionId, hrFocus);
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: hrAction.answer,
+                            citations: hrAction.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'hr-agent-actions',
+                            agentId: phase3Agent || 'hr_agent',
+                        },
+                    });
+                }
+
+                const visualAction = await tryAgentChatVisual({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                    focusDocumentIds: focusDocumentIds.length ? focusDocumentIds : undefined,
+                    sessionId,
+                });
+                if (visualAction.handled && visualAction.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: visualAction.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (visualAction.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(`Agent visual chat append failed: ${appendErr?.message || appendErr}`);
+                    }
+                    const vizFocus = [
+                        ...new Set([
+                            ...(visualAction.citations || []).map((c) => c.documentId).filter(Boolean),
+                            ...(visualAction.visuals || []).flatMap((v) => v.sourceDocumentIds || []),
+                        ]),
+                    ] as string[];
+                    if (vizFocus.length) setSessionFocusDocumentIds(persistedSessionId, vizFocus);
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: visualAction.answer,
+                            citations: visualAction.citations || [],
+                            visuals: visualAction.visuals || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'agent-analytics',
+                            agentId: visualAction.agentId || phase3Agent,
+                        },
+                    });
+                }
             }
 
             const agentAllowed = (d: any) => {
@@ -240,7 +368,8 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                         data: { allowedAgents },
                     });
                 }
-                const healed = await ensureDocumentsInAi(planSelected as any[], orgId, req.user.userId);
+                vectorOrgId = resolveVectorOrganizationId(req.user, planSelected as any[]);
+                const healed = await ensureDocumentsInAi(planSelected as any[], vectorOrgId, req.user.userId);
                 scopedPythonIds = planSelected
                     .map((d) => healed.get(d.documentId) || d.pythonDocumentId)
                     .filter(Boolean) as string[];
@@ -258,8 +387,30 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     .sort({ createdAt: -1 })
                     .limit(80)
                     .lean();
-                const planLibrary = library.filter(agentAllowed);
-                await ensureDocumentsInAi(planLibrary as any[], orgId, req.user.userId);
+                let planLibrary = library.filter(agentAllowed);
+                if (phase3Agent) {
+                    planLibrary = planLibrary.filter((d) => {
+                        const agent =
+                            (d.metadata as { phase3Agent?: string } | undefined)?.phase3Agent ||
+                            DOC_TYPE_TO_AGENT[String(d.classification || '')] ||
+                            'other_agent';
+                        return agent === phase3Agent;
+                    });
+                }
+                if (!planLibrary.length) {
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: phase3Agent
+                                ? 'No documents for this agent are ready for chat yet. Upload files for this agent or wait for processing.'
+                                : 'No documents on your plan agents are ready for chat yet. Upload files for agents included in your plan, wait for processing, then ask again.',
+                            citations: [],
+                            model: 'docs-ai',
+                        },
+                    });
+                }
+                vectorOrgId = resolveVectorOrganizationId(req.user, planLibrary as any[]);
+                await ensureDocumentsInAi(planLibrary as any[], vectorOrgId, req.user.userId);
                 scopedPythonIds = planLibrary
                     .map((d) => d.pythonDocumentId)
                     .filter(Boolean) as string[];
@@ -291,7 +442,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             }
 
             const result = await chatWithAi({
-                organizationId: orgId,
+                organizationId: vectorOrgId,
                 question: message,
                 documentIds: scopedPythonIds,
                 sessionId,
@@ -396,6 +547,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     aiProvider: (result as any).provider || providerConfig?.provider || provider,
                     aiModel: (result as any).model || providerConfig?.model || model,
                     agentId: phase3Agent || undefined,
+                    chartData: result.chart_data || (result as any).chartData || undefined,
                 },
             });
             recordActivityFromReq(req, {
@@ -588,6 +740,51 @@ export const renameChatSessionHandler = async (req: Request, res: Response, next
             metadata: { title },
         });
         res.json({ success: true, message: 'Session renamed', data: { session } });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const getChatAnalyticsHandler = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.CHAT_USE)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        const agentId = String(req.query.agent || '').trim();
+        if (!agentId) {
+            return res.status(400).json({ success: false, message: 'agent query parameter is required' });
+        }
+        const view = req.query.view != null ? String(req.query.view) : undefined;
+        const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+        const documentIdsRaw = req.query.documentIds;
+        let documentIds: string[] | undefined;
+        if (typeof documentIdsRaw === 'string' && documentIdsRaw.trim()) {
+            documentIds = documentIdsRaw
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+        }
+
+        const dashboard = await getAgentAnalyticsDashboard({
+            user: req.user,
+            agentId,
+            view,
+            limit: Number.isFinite(limit) ? limit : undefined,
+            documentIds,
+        });
+
+        res.json({
+            success: true,
+            data: {
+                agentId: dashboard.agentId,
+                visuals: dashboard.visuals,
+                citations: dashboard.citations || [],
+                summary: dashboard.summary,
+                documentCount: dashboard.documentCount,
+                coverage: dashboard.coverage,
+                scopeMode: dashboard.scopeMode,
+            },
+        });
     } catch (error) {
         next(error);
     }

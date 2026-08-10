@@ -46,8 +46,12 @@ def _get_cross_encoder():
     return _cross_encoder_instance
 
 
+def _embedding_model_name() -> str:
+    return getattr(settings, "EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5") or "BAAI/bge-large-en-v1.5"
+
+
 def _get_patterns():
-    global _NUMBERED_RE, _CHAPTER_RE
+    global _NUMERED_RE, _CHAPTER_RE
     if _NUMERED_RE is None:
         import re
         _NUMBERED_RE = re.compile(r'^\d+(?:\.\d+)*(?:\s+|\.\s+)(.+)')
@@ -889,7 +893,7 @@ class RAGService:
                 "organization_id": organization_id,
                 "document_id": document_id,
                 "embedding": embedding,
-                "model_name": "all-MiniLM-L6-v2",
+                "model_name": _embedding_model_name(),
             }
             SupabaseDB.insert("document_chunks", chunk_rec)
             SupabaseDB.insert("document_embeddings", emb_rec)
@@ -1138,7 +1142,8 @@ class RAGService:
         return chunks
 
     def index_document(self, document_id: str, organization_id: str, text: str, file_path: str = None,
-                       page_number: int = None, document_type: str = None, machine_id: str = None, filename: str = None):
+                       page_number: int = None, document_type: str = None, machine_id: str = None, filename: str = None,
+                       phase3_agent: str = None):
         print(f"\n[INDEX] Indexing document {document_id[:12] if document_id else '?'}... ({len(text)} chars)")
 
         headings = []
@@ -1193,6 +1198,7 @@ class RAGService:
                 "heading": heading,
                 "page_number": chunk_page,
                 "document_type": document_type,
+                "phase3_agent": phase3_agent,
                 "section": c.get("chunk_type", ""),
                 "section_number": sec_num,
                 "machine_id": machine_id,
@@ -1237,7 +1243,7 @@ class RAGService:
                     "organization_id": organization_id,
                     "document_id": document_id,
                     "embedding": embedding,
-                    "model_name": "all-MiniLM-L6-v2",
+                    "model_name": _embedding_model_name(),
                 })
             # Insert chunks first to get their IDs for chunk_id in embeddings
             inserted = SupabaseDB.batch_insert("document_chunks", chunk_records)
@@ -1292,7 +1298,7 @@ class RAGService:
                 "organization_id": organization_id,
                 "document_id": document_id,
                 "embedding": embedding,
-                "model_name": "all-MiniLM-L6-v2",
+                "model_name": _embedding_model_name(),
             }
             SupabaseDB.insert("document_chunks", chunk_rec)
             SupabaseDB.insert("document_embeddings", emb_rec)
@@ -1461,7 +1467,10 @@ class RAGService:
                       document_ids: list = None, limit: int = 20, offset: int = 0,
                       aggregate: bool = False, light: bool = False) -> list[dict]:
         from .orchestration_logger import get_chat_logger
+        from .vector_org import resolve_vector_namespace
+
         chat_log = get_chat_logger()
+        organization_id = resolve_vector_namespace(organization_id, document_ids)
 
         # When no explicit status filter is given, do NOT restrict to "processed" only.
         # This lets the search span ALL documents in the org (e.g. when no doc is selected).
@@ -1845,6 +1854,9 @@ class RAGService:
         return None
 
     def find_similar(self, document_id: str, organization_id: str, limit: int = 5) -> list[dict]:
+        from .vector_org import resolve_vector_namespace
+
+        organization_id = resolve_vector_namespace(organization_id, [document_id])
         try:
             emb = self._get_first_embedding(document_id, organization_id)
             if emb is None:

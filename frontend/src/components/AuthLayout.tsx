@@ -20,12 +20,12 @@ export default function AuthLayout({ children, onBack, showBack = false, wide = 
                 <motion.div
                     animate={{ opacity: [0.12, 0.22, 0.12], scale: [1, 1.08, 1] }}
                     transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[70%] h-[45%] rounded-full blur-[100px] bg-teal-400/20"
+                    className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[70%] h-[45%] rounded-full blur-[100px] bg-[rgba(56,182,255,0.2)]"
                 />
                 <motion.div
                     animate={{ opacity: [0.06, 0.14, 0.06] }}
                     transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute bottom-[-8%] right-[-3%] w-[40%] h-[40%] rounded-full blur-[80px] bg-cyan-500/15"
+                    className="absolute bottom-[-8%] right-[-3%] w-[40%] h-[40%] rounded-full blur-[80px] bg-blue-500/15"
                 />
                 <div className="absolute inset-0 opacity-[0.03]"
                     style={{ backgroundImage: "linear-gradient(rgba(15,23,42,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.3) 1px, transparent 1px)", backgroundSize: "48px 48px" }}

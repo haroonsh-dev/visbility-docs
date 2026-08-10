@@ -97,14 +97,14 @@ function SearchContent() {
                                 onChange={(e) => setQuery(e.target.value)}
                                 onKeyDown={(e) => e.key === "Enter" && doSearch()}
                                 placeholder="Search documents…"
-                                className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-[44px]"
+                                className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-11"
                             />
                         </div>
                         <button
                             type="button"
                             onClick={doSearch}
                             disabled={loading || !query.trim()}
-                            className="btn-gradient rounded-xl px-5 text-sm font-medium h-[44px] shrink-0 inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                            className="btn-gradient rounded-xl px-5 text-sm font-medium h-11 shrink-0 inline-flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                             {loading ? <Loader2 size={14} className="animate-spin" /> : <SearchIcon size={14} />}
                             Search
@@ -160,7 +160,7 @@ function SearchContent() {
                                                         {title}
                                                     </p>
                                                     {pct && (
-                                                        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-teal-50 text-teal-700 border-teal-200">
+                                                        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] border-[rgba(56,182,255,0.28)]">
                                                             {pct}
                                                         </span>
                                                     )}
@@ -189,7 +189,7 @@ function SearchContent() {
                                             {docId ? (
                                                 <Link
                                                     href={`/documents/details?doc=${docId}`}
-                                                    className="block rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-teal-300 hover:bg-teal-50/30 transition-colors"
+                                                    className="block rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-[rgba(56,182,255,0.4)] hover:bg-[rgba(56,182,255,0.03)] transition-colors"
                                                 >
                                                     {content}
                                                 </Link>

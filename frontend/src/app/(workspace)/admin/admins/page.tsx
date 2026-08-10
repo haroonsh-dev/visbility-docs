@@ -92,15 +92,15 @@ const AVATAR_COLORS = [
     "bg-emerald-500/20 text-emerald-400",
     "bg-amber-500/20 text-amber-400",
     "bg-violet-500/20 text-violet-400",
-    "bg-cyan-500/20 text-cyan-400",
+    "bg-blue-500/20 text-[var(--vb-blue-bright)]",
     "bg-pink-500/20 text-pink-400",
     "bg-lime-500/20 text-lime-400",
 ];
 
 const fieldClass =
-    "w-full h-11 px-3.5 rounded-xl text-sm bg-[var(--surface-2)] border border-[var(--border)] text-[var(--foreground)] placeholder:text-[var(--foreground-muted)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[rgba(45,212,191,0.18)] transition-all";
+    "w-full h-11 px-3.5 rounded-xl text-sm bg-surface-2 border border-border text-foreground placeholder:text-foreground-muted outline-none focus:border-accent focus:ring-2 focus:ring-[rgba(56,182,255,0.18)] transition-all";
 
-const labelClass = "text-[11px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]";
+const labelClass = "text-[11px] font-semibold uppercase tracking-wide text-foreground-muted";
 
 function getAvatarColor(name: string) {
     let hash = 0;
@@ -450,7 +450,7 @@ function AdminsContent() {
             />
 
             {error && (
-                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-[var(--error-muted)] border border-[rgba(248,113,113,0.25)] text-sm text-[var(--error)]">
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error-muted border border-[rgba(248,113,113,0.25)] text-sm text-error">
                     <X size={14} />
                     {error}
                 </div>
@@ -464,8 +464,8 @@ function AdminsContent() {
                             label: "Total Admins",
                             value: stats.totalAdmins,
                             icon: Shield,
-                            color: "text-[var(--accent)]",
-                            bg: "bg-[var(--accent-muted)]",
+                            color: "text-accent",
+                            bg: "bg-accent-muted",
                         },
                         {
                             label: "Active",
@@ -494,10 +494,10 @@ function AdminsContent() {
                                 <s.icon className="h-5 w-5" />
                             </span>
                             <div>
-                                <p className="text-2xl font-bold tracking-tight text-[var(--foreground)] tabular-nums font-mono">
+                                <p className="text-2xl font-bold tracking-tight text-foreground tabular-nums font-mono">
                                     {s.value}
                                 </p>
-                                <p className="text-[11px] text-[var(--foreground-muted)] uppercase tracking-wide font-medium">
+                                <p className="text-[11px] text-foreground-muted uppercase tracking-wide font-medium">
                                     {s.label}
                                 </p>
                             </div>
@@ -509,19 +509,19 @@ function AdminsContent() {
             {/* Search Bar */}
             {!loading && admins.length > 0 && (
                 <div className="relative">
-                    <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)]" />
+                    <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-muted" />
                     <input
                         type="text"
                         placeholder="Search admins by name, email, or organization..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full h-11 pl-10 pr-10 rounded-xl text-sm bg-[var(--surface)] border border-[var(--border)] text-[var(--foreground)] placeholder:text-[var(--foreground-muted)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[rgba(45,212,191,0.15)] transition-shadow"
+                        className="w-full h-11 pl-10 pr-10 rounded-xl text-sm bg-surface border border-border text-foreground placeholder:text-foreground-muted outline-none focus:border-accent focus:ring-2 focus:ring-[rgba(56,182,255,0.15)] transition-shadow"
                     />
                     {searchQuery && (
                         <button
                             type="button"
                             onClick={() => setSearchQuery("")}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground"
                         >
                             <X size={14} />
                         </button>
@@ -536,7 +536,7 @@ function AdminsContent() {
                 ) : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState
-                            icon={<Shield size={28} className="text-[var(--accent)]" />}
+                            icon={<Shield size={28} className="text-accent" />}
                             title={searchQuery ? "No matching admins" : "No admins yet"}
                             description={
                                 searchQuery
@@ -557,7 +557,7 @@ function AdminsContent() {
                         )}
                     </div>
                 ) : (
-                    <ul className="divide-y divide-[var(--border)]">
+                    <ul className="divide-y divide-border">
                         {filtered.map((a) => {
                             const open = !!expanded[a.userId];
                             const members = a.teamMembers || [];
@@ -627,16 +627,16 @@ function AdminsContent() {
 
                                             {/* Right: Actions */}
                                             <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                                                <span className="text-[var(--foreground-muted)]">
+                                                <span className="text-foreground-muted">
                                                     {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                                                 </span>
                                                 {a.organization && (
                                                     <button
                                                         type="button"
                                                         onClick={() => openGroqModal(a.organization!.organizationId, a.organization!.organizationName, a.organization!.groqApiKeyMasked)}
-                                                        className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 hover:border-teal-500/50 hover:text-teal-400"
+                                                        className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 hover:border-[rgba(56,182,255,0.5)] hover:text-[var(--vb-blue-bright)]"
                                                     >
-                                                        <KeyRound size={14} className="text-teal-400" /> Groq Key
+                                                        <KeyRound size={14} className="text-[var(--vb-blue-bright)]" /> Groq Key
                                                     </button>
                                                 )}
                                                 <button
@@ -665,7 +665,7 @@ function AdminsContent() {
                                                     type="button"
                                                     onClick={() => removeAdmin(a)}
                                                     disabled={deleteBusy}
-                                                    className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 text-[var(--error)] hover:bg-[var(--error-muted)] disabled:opacity-50"
+                                                    className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 text-error hover:bg-error-muted disabled:opacity-50"
                                                 >
                                                     {deleteBusy ? (
                                                         <Loader2 size={14} className="animate-spin" />
@@ -694,9 +694,9 @@ function AdminsContent() {
                                                     ].map((d) => (
                                                         <div
                                                             key={d.label}
-                                                            className="rounded-xl border border-[var(--border)] px-3 py-2.5 bg-[var(--surface-2)]/60"
+                                                            className="rounded-xl border border-border px-3 py-2.5 bg-surface-2/60"
                                                         >
-                                                            <p className="text-[10px] uppercase tracking-wider font-semibold text-[var(--foreground-muted)]">
+                                                            <p className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted">
                                                                 {d.label}
                                                             </p>
                                                             <p
@@ -708,26 +708,26 @@ function AdminsContent() {
                                                     ))}
                                                 </div>
 
-                                                <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-                                                    <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-2)]/30 flex items-center gap-2">
-                                                        <Users size={14} className="text-[var(--accent)]" />
+                                                <div className="rounded-xl border border-border overflow-hidden">
+                                                    <div className="px-4 py-3 border-b border-border bg-surface-2/30 flex items-center gap-2">
+                                                        <Users size={14} className="text-accent" />
                                                         <p className={`text-sm font-semibold ${colors.textPrimary}`}>
                                                             Team Members ({members.length})
                                                         </p>
                                                     </div>
                                                     {members.length === 0 ? (
                                                         <div className="px-4 py-8 text-center">
-                                                            <Users size={24} className="mx-auto mb-2 text-[var(--foreground-muted)] opacity-40" />
+                                                            <Users size={24} className="mx-auto mb-2 text-foreground-muted opacity-40" />
                                                             <p className={`text-sm ${colors.textMuted}`}>
                                                                 No team members in this organization yet.
                                                             </p>
                                                         </div>
                                                     ) : (
-                                                        <ul className="divide-y divide-[var(--border)]">
+                                                        <ul className="divide-y divide-border">
                                                             {members.map((m) => (
                                                                 <li
                                                                     key={m.userId}
-                                                                    className="px-4 py-3 flex items-start gap-3 hover:bg-[var(--surface-2)]/30 transition-colors"
+                                                                    className="px-4 py-3 flex items-start gap-3 hover:bg-surface-2/30 transition-colors"
                                                                 >
                                                                     <div
                                                                         className={`h-9 w-9 rounded-lg ${getAvatarColor(m.fullName)} flex items-center justify-center shrink-0 font-medium text-xs`}
@@ -795,20 +795,20 @@ function AdminsContent() {
                             onClick={closeCreate}
                         />
                         <div
-                            className="relative z-[1] w-full max-w-2xl rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
+                            className="relative z-[1] w-full max-w-2xl rounded-2xl border border-border bg-surface shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div className="relative px-6 pt-5 pb-4 border-b border-[var(--border)] bg-gradient-to-r from-teal-500/[0.08] via-cyan-500/[0.04] to-transparent">
+                            <div className="relative px-6 pt-5 pb-4 border-b border-border bg-linear-to-r from-[rgba(56,182,255,0.08)] via-[rgba(56,182,255,0.04)] to-transparent">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/10 text-teal-600 border border-teal-500/20 flex items-center justify-center shrink-0">
+                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
                                             <Shield size={18} />
                                         </div>
                                         <div className="min-w-0">
-                                            <h2 id="create-admin-title" className="text-base font-bold text-[var(--foreground)] tracking-tight">
+                                            <h2 id="create-admin-title" className="text-base font-bold text-foreground tracking-tight">
                                                 Create Admin
                                             </h2>
-                                            <p className="text-xs text-[var(--foreground-muted)] mt-0.5">
+                                            <p className="text-xs text-foreground-muted mt-0.5">
                                                 New company admin account with organization
                                             </p>
                                         </div>
@@ -817,17 +817,17 @@ function AdminsContent() {
                                         type="button"
                                         onClick={closeCreate}
                                         disabled={creating}
-                                        className="p-2 rounded-xl hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+                                        className="p-2 rounded-xl hover:bg-surface-3 transition-colors disabled:opacity-50"
                                         aria-label="Close"
                                     >
-                                        <X size={16} className="text-[var(--foreground-muted)]" />
+                                        <X size={16} className="text-foreground-muted" />
                                     </button>
                                 </div>
                             </div>
 
                             <form onSubmit={createAdmin} className="px-6 py-5 space-y-4">
                                 {createError && (
-                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[var(--error-muted)] border border-[rgba(248,113,113,0.25)] text-sm text-[var(--error)]">
+                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-error-muted border border-[rgba(248,113,113,0.25)] text-sm text-error">
                                         <X size={14} className="shrink-0" />
                                         {createError}
                                     </div>
@@ -923,7 +923,7 @@ function AdminsContent() {
                                     </div>
                                 </div>
 
-                                <div className="flex justify-end gap-2 pt-4 border-t border-[var(--border)]">
+                                <div className="flex justify-end gap-2 pt-4 border-t border-border">
                                     <button
                                         type="button"
                                         onClick={closeCreate}
@@ -964,20 +964,20 @@ function AdminsContent() {
                             onClick={closeEdit}
                         />
                         <div
-                            className="relative z-[1] w-full max-w-2xl rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
+                            className="relative z-[1] w-full max-w-2xl rounded-2xl border border-border bg-surface shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div className="relative px-6 pt-5 pb-4 border-b border-[var(--border)] bg-gradient-to-r from-teal-500/[0.08] via-cyan-500/[0.04] to-transparent">
+                            <div className="relative px-6 pt-5 pb-4 border-b border-border bg-linear-to-r from-[rgba(56,182,255,0.08)] via-[rgba(56,182,255,0.04)] to-transparent">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/10 text-teal-600 border border-teal-500/20 flex items-center justify-center shrink-0">
+                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
                                             <Pencil size={18} />
                                         </div>
                                         <div className="min-w-0">
-                                            <h2 id="edit-admin-title" className="text-base font-bold text-[var(--foreground)] tracking-tight">
+                                            <h2 id="edit-admin-title" className="text-base font-bold text-foreground tracking-tight">
                                                 Edit Admin
                                             </h2>
-                                            <p className="text-xs text-[var(--foreground-muted)] mt-0.5 truncate">
+                                            <p className="text-xs text-foreground-muted mt-0.5 truncate">
                                                 {editingAdmin.email}
                                             </p>
                                         </div>
@@ -986,17 +986,17 @@ function AdminsContent() {
                                         type="button"
                                         onClick={closeEdit}
                                         disabled={saving}
-                                        className="p-2 rounded-xl hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+                                        className="p-2 rounded-xl hover:bg-surface-3 transition-colors disabled:opacity-50"
                                         aria-label="Close"
                                     >
-                                        <X size={16} className="text-[var(--foreground-muted)]" />
+                                        <X size={16} className="text-foreground-muted" />
                                     </button>
                                 </div>
                             </div>
 
                             <form onSubmit={saveAdmin} className="px-6 py-5 space-y-4">
                                 {editError && (
-                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[var(--error-muted)] border border-[rgba(248,113,113,0.25)] text-sm text-[var(--error)]">
+                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-error-muted border border-[rgba(248,113,113,0.25)] text-sm text-error">
                                         <X size={14} className="shrink-0" />
                                         {editError}
                                     </div>
@@ -1091,7 +1091,7 @@ function AdminsContent() {
                                     </div>
                                 </div>
 
-                                <div className="flex justify-end gap-2 pt-4 border-t border-[var(--border)]">
+                                <div className="flex justify-end gap-2 pt-4 border-t border-border">
                                     <button
                                         type="button"
                                         onClick={closeEdit}
@@ -1132,20 +1132,20 @@ function AdminsContent() {
                             onClick={closeGroqModal}
                         />
                         <div
-                            className="relative z-[1] w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
+                            className="relative z-[1] w-full max-w-lg rounded-2xl border border-border bg-surface shadow-[0_24px_80px_rgba(15,23,42,0.35)] overflow-hidden animate-scale-in"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div className="relative px-6 pt-5 pb-4 border-b border-[var(--border)] bg-gradient-to-r from-teal-500/[0.1] via-cyan-500/[0.05] to-transparent">
+                            <div className="relative px-6 pt-5 pb-4 border-b border-border bg-linear-to-r from-[rgba(56,182,255,0.1)] via-[rgba(56,182,255,0.05)] to-transparent">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/10 text-teal-500 border border-teal-500/20 flex items-center justify-center shrink-0">
+                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-[var(--vb-blue)] border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
                                             <KeyRound size={20} />
                                         </div>
                                         <div className="min-w-0">
-                                            <h2 id="groq-modal-title" className="text-base font-bold text-[var(--foreground)] tracking-tight">
+                                            <h2 id="groq-modal-title" className="text-base font-bold text-foreground tracking-tight">
                                                 Company Groq API Key
                                             </h2>
-                                            <p className="text-xs text-[var(--foreground-muted)] mt-0.5 truncate">
+                                            <p className="text-xs text-foreground-muted mt-0.5 truncate">
                                                 {groqModalOrg.orgName}
                                             </p>
                                         </div>
@@ -1154,17 +1154,17 @@ function AdminsContent() {
                                         type="button"
                                         onClick={closeGroqModal}
                                         disabled={groqKeySaving || groqKeyDeleting}
-                                        className="p-2 rounded-xl hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+                                        className="p-2 rounded-xl hover:bg-surface-3 transition-colors disabled:opacity-50"
                                         aria-label="Close"
                                     >
-                                        <X size={16} className="text-[var(--foreground-muted)]" />
+                                        <X size={16} className="text-foreground-muted" />
                                     </button>
                                 </div>
                             </div>
 
                             <form onSubmit={saveGroqKey} className="px-6 py-5 space-y-4">
                                 {groqKeyError && (
-                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[var(--error-muted)] border border-[rgba(248,113,113,0.25)] text-sm text-[var(--error)]">
+                                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-error-muted border border-[rgba(248,113,113,0.25)] text-sm text-error">
                                         <X size={14} className="shrink-0" />
                                         {groqKeyError}
                                     </div>
@@ -1178,7 +1178,7 @@ function AdminsContent() {
 
                                 <div className="space-y-2">
                                     <label className={labelClass}>Current Key</label>
-                                    <div className="h-11 px-3.5 rounded-xl text-sm bg-[var(--surface-2)] border border-[var(--border)] text-[var(--foreground-muted)] flex items-center font-mono">
+                                    <div className="h-11 px-3.5 rounded-xl text-sm bg-surface-2 border border-border text-foreground-muted flex items-center font-mono">
                                         {groqModalOrg.currentKeyMasked || "No Groq API Key configured"}
                                     </div>
                                 </div>
@@ -1194,18 +1194,18 @@ function AdminsContent() {
                                         placeholder="gsk_..."
                                         autoComplete="off"
                                     />
-                                    <p className="text-[11px] text-[var(--foreground-muted)]">
-                                        Enter a valid Groq API key (starts with <code className="font-mono text-teal-400">gsk_</code>).
+                                    <p className="text-[11px] text-foreground-muted">
+                                        Enter a valid Groq API key (starts with <code className="font-mono text-[var(--vb-blue-bright)]">gsk_</code>).
                                     </p>
                                 </div>
 
-                                <div className="flex items-center justify-between gap-3 pt-4 border-t border-[var(--border)]">
+                                <div className="flex items-center justify-between gap-3 pt-4 border-t border-border">
                                     {groqModalOrg.currentKeyMasked ? (
                                         <button
                                             type="button"
                                             onClick={deleteGroqKey}
                                             disabled={groqKeySaving || groqKeyDeleting}
-                                            className="btn-secondary rounded-xl px-4 py-2.5 text-sm min-h-10 text-[var(--error)] hover:bg-[var(--error-muted)] disabled:opacity-50 inline-flex items-center gap-1.5"
+                                            className="btn-secondary rounded-xl px-4 py-2.5 text-sm min-h-10 text-error hover:bg-error-muted disabled:opacity-50 inline-flex items-center gap-1.5"
                                         >
                                             {groqKeyDeleting ? (
                                                 <Loader2 size={14} className="animate-spin" />

@@ -12,6 +12,8 @@
     "test:supervision": "tsx --tsconfig tsconfig.json src/scripts/testSupervision.ts",
     "test:integration-duplicates": "tsx --tsconfig tsconfig.json src/scripts/testIntegrationDuplicates.ts",
     "test:agent-entitlements": "tsx --tsconfig tsconfig.json src/scripts/testAgentEntitlements.ts",
+    "test:document-name-match": "tsx --tsconfig tsconfig.json src/scripts/testDocumentNameMatch.ts",
+    "test:analytics-intent": "tsx --tsconfig tsconfig.json src/scripts/testAnalyticsIntent.ts",
     "seed:admin": "tsx src/scripts/seedAdmin.ts",
     "seed:plans": "tsx src/scripts/seedPlans.ts",
     "seed": "tsx src/scripts/seedAdmin.ts"

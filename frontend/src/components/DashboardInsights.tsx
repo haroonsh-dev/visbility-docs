@@ -102,7 +102,7 @@ export default function DashboardInsights({
             >
                 <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="icon-box teal">
+                        <div className="icon-box blue">
                             <Gauge size={17} />
                         </div>
                         <div>
@@ -122,7 +122,7 @@ export default function DashboardInsights({
                         <div
                             className="relative h-28 w-28 rounded-full flex items-center justify-center shrink-0"
                             style={{
-                                background: `conic-gradient(#0d9488 ${completionRate * 3.6}deg, #e2e8f0 0deg)`,
+                                background: `conic-gradient(#38b6ff ${completionRate * 3.6}deg, #e2e8f0 0deg)`,
                             }}
                         >
                             <div className="h-20 w-20 rounded-full bg-white flex flex-col items-center justify-center shadow-inner">
@@ -206,8 +206,8 @@ export default function DashboardInsights({
                                         transition={{ delay: 0.35 + index * 0.06, duration: 0.55 }}
                                         className={`h-full rounded-full ${
                                             [
-                                                "bg-teal-500",
-                                                "bg-cyan-500",
+                                                "bg-[rgba(56,182,255,0.1)]",
+                                                "bg-blue-500",
                                                 "bg-violet-500",
                                                 "bg-amber-500",
                                                 "bg-rose-500",
@@ -241,7 +241,7 @@ export default function DashboardInsights({
                     </div>
                     <Link
                         href="/documents"
-                        className="text-xs font-semibold text-teal-600 hover:text-teal-700 inline-flex items-center gap-1"
+                        className="text-xs font-semibold text-[var(--vb-blue-dark)] hover:text-[var(--vb-blue-dark)] inline-flex items-center gap-1"
                     >
                         View all <ArrowRight size={12} />
                     </Link>
@@ -265,7 +265,7 @@ export default function DashboardInsights({
                                     href={`/documents/details?doc=${doc.documentId}`}
                                     className="flex items-center gap-3 min-w-0 flex-1"
                                 >
-                                    <div className="h-9 w-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                                    <div className="h-9 w-9 rounded-xl bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] flex items-center justify-center shrink-0">
                                         <FileText size={15} />
                                     </div>
                                     <div className="min-w-0 flex-1">

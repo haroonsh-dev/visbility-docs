@@ -65,36 +65,36 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         ? {
             success: "text-emerald-700",
             error: "text-rose-700",
-            info: "text-teal-700",
+            info: "text-[var(--vb-blue-dark)]",
         }
         : {
             success: "text-emerald-300",
             error: "text-rose-300",
-            info: "text-teal-300",
+            info: "text-[var(--vb-blue-bright)]",
         };
 
     const bgColors: Record<ToastType, string> = isLightTheme
         ? {
             success: "bg-emerald-50 border-emerald-200 border-l-[4px] border-l-emerald-600",
             error: "bg-rose-50 border-rose-200 border-l-[4px] border-l-rose-600",
-            info: "bg-teal-50 border-teal-200 border-l-[4px] border-l-teal-600",
+            info: "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] border-l-[4px] border-l-[var(--vb-blue)]",
         }
         : {
             success: "bg-emerald-500/10 border-emerald-500/25 border-l-[3px] border-l-emerald-400",
             error: "bg-rose-500/10 border-rose-500/25 border-l-[3px] border-l-rose-400",
-            info: "bg-teal-500/10 border-teal-500/25 border-l-[3px] border-l-teal-400",
+            info: "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.25)] border-l-[3px] border-l-[var(--vb-blue-bright)]",
         };
 
     const textColors: Record<ToastType, string> = isLightTheme
         ? {
             success: "text-emerald-900",
             error: "text-rose-900",
-            info: "text-teal-900",
+            info: "text-[var(--vb-ink)]",
         }
         : {
             success: "text-emerald-100",
             error: "text-rose-100",
-            info: "text-teal-100",
+            info: "text-[var(--vb-blue-bright)]",
     };
 
     return (

@@ -17,7 +17,8 @@ export const searchDocuments = async (req: Request, res: Response, next: NextFun
             return res.status(403).json({ success: false, message: 'Forbidden' });
         }
 
-        const query = (req.body.query || req.query.q || '').toString().trim();
+        const body = req.body || {};
+        const query = (body.query || req.query.q || '').toString().trim();
         if (!query) {
             return res.status(400).json({ success: false, message: 'query is required' });
         }
@@ -30,8 +31,8 @@ export const searchDocuments = async (req: Request, res: Response, next: NextFun
         }
 
         const organizationId = resolveAiOrganizationId(req.user);
-        const documentType = (req.body.documentType || req.query.documentType || '').toString() || undefined;
-        const phase3Agent = (req.body.phase3Agent || req.query.phase3Agent || req.body.phase3_agent || req.query.phase3_agent || '').toString() || undefined;
+        const documentType = (body.documentType || req.query.documentType || '').toString() || undefined;
+        const phase3Agent = (body.phase3Agent || req.query.phase3Agent || body.phase3_agent || req.query.phase3_agent || '').toString() || undefined;
         if (phase3Agent && req.user.role !== 'superAdmin') {
             const { requireAllowedAgent } = await import('../services/planService');
             const check = await requireAllowedAgent(req.user, phase3Agent);
@@ -44,9 +45,9 @@ export const searchDocuments = async (req: Request, res: Response, next: NextFun
                 });
             }
         }
-        const statusFilter = (req.body.status || req.query.status || '').toString() || undefined;
-        const limit = Math.min(100, parseInt((req.body.limit || req.query.limit || '20') as string, 10));
-        const offset = Math.max(0, parseInt((req.body.offset || req.query.offset || '0') as string, 10));
+        const statusFilter = (body.status || req.query.status || '').toString() || undefined;
+        const limit = Math.min(100, parseInt((body.limit || req.query.limit || '20') as string, 10));
+        const offset = Math.max(0, parseInt((body.offset || req.query.offset || '0') as string, 10));
 
         try {
             const result = await searchWithAi({

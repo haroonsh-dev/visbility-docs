@@ -11,6 +11,8 @@ import {
     getDocumentIntelligence,
     getDocumentProcessing,
     getDocumentSimilar,
+    getDocumentStats,
+    getHrAnalytics,
     listAllDocumentIntelligence,
     listDocuments,
     streamDocument,
@@ -25,6 +27,14 @@ import {
     shareDocument,
     unshareDocument,
 } from '../controllers/departmentController';
+import {
+    generateOfferLetterFromResume,
+    getOfferLetterPrefillForDocument,
+} from '../controllers/offerLetterController';
+import {
+    generateExperienceLetterFromResume,
+    getExperienceLetterPrefillForDocument,
+} from '../controllers/experienceLetterController';
 
 const tmpDir = path.join(process.cwd(), 'uploads', '_tmp');
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
@@ -38,6 +48,8 @@ const router = Router();
 
 router.use(authenticate);
 router.get('/', listDocuments);
+router.get('/stats', getDocumentStats);
+router.get('/hr-analytics', getHrAnalytics);
 router.get('/intelligence/all', listAllDocumentIntelligence);
 router.post('/bulk', upload.array('files', 20), uploadDocumentsBulk);
 router.post('/bulk-delete', bulkDeleteDocuments);
@@ -46,6 +58,10 @@ router.post('/:id/process', reprocessDocument);
 router.post('/:id/share', shareDocument);
 router.delete('/:id/share', unshareDocument);
 router.get('/:id/shares', listDocumentShares);
+router.get('/:id/offer-letter/prefill', getOfferLetterPrefillForDocument);
+router.post('/:id/offer-letter/generate', generateOfferLetterFromResume);
+router.get('/:id/experience-letter/prefill', getExperienceLetterPrefillForDocument);
+router.post('/:id/experience-letter/generate', generateExperienceLetterFromResume);
 router.get('/:id/preview', streamDocument('inline'));
 router.get('/:id/download', streamDocument('attachment'));
 router.get('/:id/images', getDocumentImages);

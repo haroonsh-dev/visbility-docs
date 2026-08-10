@@ -185,6 +185,15 @@ function DashboardContent() {
         setLoading(true);
         setError(null);
         try {
+            const statsParams = new URLSearchParams();
+            if (!isAdminView && userId) {
+                statsParams.set("uploadedBy", userId);
+            }
+            if (selectedCompany) {
+                const orgId = selectedCompany.organizationId || selectedCompany.organization?.organizationId;
+                if (orgId) statsParams.set("organizationId", orgId);
+            }
+
             const params = new URLSearchParams({
                 page: "1",
                 limit: "100",
@@ -202,12 +211,14 @@ function DashboardContent() {
 
             const isSuperAdmin = role === "superAdmin";
 
-            const [docsRes, deptRes, activityRes, superAdminRes] = await Promise.all([
-                apiRequest(`/docs/documents?${params}`),
+            const [statsRes, docsRes, deptRes, activityRes, superAdminRes] = await Promise.all([
+                apiRequest(`/docs/stats?${statsParams}`).catch(() => null),
+                apiRequest(`/docs/documents?${params}`).catch(() => null),
                 isAdminView ? apiRequest(`/docs/departments`).catch(() => null) : Promise.resolve(null),
                 apiRequest(`/docs/activity?${activityParams}`).catch(() => null),
                 isSuperAdmin ? apiRequest("/docs/super-admin/admins").catch(() => null) : Promise.resolve(null),
             ]);
+
             const docs = docsRes?.data?.documents || [];
             const departments = deptRes?.data?.departments || deptRes?.data || [];
             const recentActivity = activityRes?.data?.logs || [];
@@ -229,27 +240,42 @@ function DashboardContent() {
             setRawActivity(recentActivity);
             setDepartmentNamesState(departmentNames);
 
-            buildData(docs, departmentNames, recentActivity);
+            if (statsRes?.data?.stats) {
+                const backendStats = statsRes.data.stats;
+                const backendTrend = (statsRes.data.trendData || []).map((t: any) => ({
+                    date: t.date || t.rawDate,
+                    uploads: t.uploads
+                }));
+                const backendDept = (statsRes.data.departmentData || []).map((d: any) => {
+                    const label = d.name === "Unassigned" ? "Unassigned" : departmentNames[d.departmentId || d.name] || d.name || d.departmentId;
+                    return {
+                        name: label.length > 18 ? `${label.slice(0, 16)}…` : label,
+                        count: d.count
+                    };
+                });
+                const backendStatus = (statsRes.data.statusData || []).map((s: any) => ({
+                    name: s.name,
+                    count: s.count
+                }));
+
+                setData({
+                    stats: backendStats,
+                    trendData: backendTrend,
+                    departmentData: backendDept,
+                    statusData: backendStatus,
+                    allDocs: docs,
+                    recentActivity,
+                    departmentNames,
+                });
+            } else {
+                buildData(docs, departmentNames, recentActivity);
+            }
         } catch (e: any) {
             setError(e.message || "Failed to load dashboard");
         } finally {
             setLoading(false);
         }
-    }, [ready, isAdminView, role, userId, buildData]);
-
-    useEffect(() => {
-        if (!ready || loading) return;
-        if (selectedCompany) {
-            const orgId = selectedCompany.organizationId || selectedCompany.organization?.organizationId;
-            const filteredDocs = rawAllDocs.filter((d: any) => d.organizationId === orgId);
-            const filteredActivity = rawActivity.filter(
-                (a: any) => a.metadata?.organizationId === orgId || a.organizationId === orgId
-            );
-            buildData(filteredDocs, departmentNamesState, filteredActivity);
-        } else {
-            buildData(rawAllDocs, departmentNamesState, rawActivity);
-        }
-    }, [selectedCompany, rawAllDocs, rawActivity, departmentNamesState, ready, buildData]);
+    }, [ready, isAdminView, role, userId, selectedCompany, buildData]);
 
     useEffect(() => {
         loadDashboard();
@@ -301,7 +327,7 @@ function DashboardContent() {
                     }
                 />
                 {!isAdminView && teamIdentity?.organization?.organizationName && (
-                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50/80 px-3 py-1 text-xs font-medium text-teal-800">
+                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.28)] bg-[rgba(56,182,255,0.08)] px-3 py-1 text-xs font-medium text-[var(--vb-blue-dark)]">
                         <Building2 size={13} />
                         {teamIdentity.organization.organizationName}
                     </div>
@@ -326,11 +352,11 @@ function DashboardContent() {
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.05, duration: 0.4 }}
-                    className="surface-card overflow-hidden border border-teal-500/20 shadow-xl"
+                    className="surface-card overflow-hidden border border-[rgba(56,182,255,0.2)] shadow-xl"
                 >
-                    <div className="p-5 sm:p-6 border-b border-white/8 bg-linear-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex flex-wrap items-center justify-between gap-4">
+                    <div className="p-5 sm:p-6 border-b border-white/8 bg-linear-to-r from-[rgba(56,182,255,0.1)] via-[rgba(56,182,255,0.05)] to-transparent flex flex-wrap items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <div className="h-11 w-11 rounded-xl bg-linear-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-md">
+                            <div className="h-11 w-11 rounded-xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-md">
                                 <Building2 size={22} />
                             </div>
                             <div>
@@ -338,7 +364,7 @@ function DashboardContent() {
                                     <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                                         Tenant & Company Directory
                                     </h2>
-                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-500/15 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[rgba(56,182,255,0.15)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] border border-[rgba(56,182,255,0.2)]">
                                         {adminsData.length} {adminsData.length === 1 ? "Company" : "Companies"}
                                     </span>
                                 </div>
@@ -390,18 +416,18 @@ function DashboardContent() {
                                                 onClick={() => setSelectedCompany(admin)}
                                                 className={`cursor-pointer transition-all ${
                                                     isSelected
-                                                        ? "bg-teal-500/15 dark:bg-teal-500/20 font-semibold"
-                                                        : "hover:bg-teal-500/6"
+                                                        ? "bg-[rgba(56,182,255,0.15)] dark:bg-[rgba(56,182,255,0.2)] font-semibold"
+                                                        : "hover:bg-[rgba(56,182,255,0.06)]"
                                                 }`}
                                                 title="Click to view company details"
                                             >
                                                 <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white">
                                                     <div className="flex items-center gap-2.5">
-                                                        <div className="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/20">
+                                                        <div className="w-8 h-8 rounded-lg bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] flex items-center justify-center shrink-0 border border-[rgba(56,182,255,0.2)]">
                                                             <Building2 size={15} />
                                                         </div>
                                                         <div>
-                                                            <p className="truncate text-xs font-bold text-teal-700 dark:text-teal-300 hover:underline">
+                                                            <p className="truncate text-xs font-bold text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] hover:underline">
                                                                 {orgName}
                                                             </p>
                                                             <p className="text-[10px] text-slate-400 font-normal">ID: {admin.organizationId || "N/A"}</p>
@@ -418,14 +444,14 @@ function DashboardContent() {
                                                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border ${
                                                         plan.includes("PRO") || plan.includes("ENTERPRISE")
                                                             ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
-                                                            : "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20"
+                                                            : "bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] border-[rgba(56,182,255,0.2)]"
                                                     }`}>
                                                         <CreditCard size={12} />
                                                         {plan}
                                                     </span>
                                                 </td>
                                                 <td className="py-3.5 px-4">
-                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-500/10 text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] border border-[rgba(56,182,255,0.2)]">
                                                         <FileText size={12} />
                                                         {docCount} {docCount === 1 ? "doc" : "docs"}
                                                     </span>
@@ -459,12 +485,12 @@ function DashboardContent() {
                             initial={{ opacity: 0, scale: 0.95, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            className="bg-slate-900 border border-teal-500/30 text-slate-100 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden relative"
+                            className="bg-slate-900 border border-[rgba(56,182,255,0.3)] text-slate-100 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden relative"
                         >
                             {/* Modal Header */}
-                            <div className="p-5 border-b border-white/10 bg-linear-to-r from-teal-500/10 via-cyan-500/5 to-transparent flex items-center justify-between">
+                            <div className="p-5 border-b border-white/10 bg-linear-to-r from-[rgba(56,182,255,0.1)] via-[rgba(56,182,255,0.05)] to-transparent flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-xl bg-linear-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-lg font-bold">
+                                    <div className="w-12 h-12 rounded-xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-lg font-bold">
                                         <Building2 size={24} />
                                     </div>
                                     <div>
@@ -496,17 +522,17 @@ function DashboardContent() {
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
                                         <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
-                                            <CreditCard size={12} className="text-teal-400" /> Subscription Plan
+                                            <CreditCard size={12} className="text-[var(--vb-blue-bright)]" /> Subscription Plan
                                         </p>
-                                        <p className="text-sm font-extrabold text-teal-300 mt-1 uppercase">
+                                        <p className="text-sm font-extrabold text-[var(--vb-blue-bright)] mt-1 uppercase">
                                             {selectedCompany.organization?.subscriptionPlan || "FREE"}
                                         </p>
                                     </div>
                                     <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
                                         <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
-                                            <FileText size={12} className="text-cyan-400" /> Uploaded Documents
+                                            <FileText size={12} className="text-[var(--vb-blue-bright)]" /> Uploaded Documents
                                         </p>
-                                        <p className="text-sm font-extrabold text-cyan-300 mt-1">
+                                        <p className="text-sm font-extrabold text-[var(--vb-blue-bright)] mt-1">
                                             {selectedCompany.documentCount || 0} Files
                                         </p>
                                     </div>
@@ -522,7 +548,7 @@ function DashboardContent() {
 
                                 {/* Admin Details */}
                                 <div className="p-4 rounded-xl bg-slate-800/60 border border-white/5 space-y-3">
-                                    <h4 className="text-xs font-bold uppercase tracking-wider text-teal-400 flex items-center gap-1.5">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--vb-blue-bright)] flex items-center gap-1.5">
                                         <User size={14} /> Organization Admin Contact
                                     </h4>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -622,14 +648,14 @@ function DashboardContent() {
                 >
                     {teamIdentity?.department ? (
                         <div className="relative p-5 sm:p-6">
-                            <div className="absolute inset-y-0 left-0 w-1.5 bg-linear-to-b from-teal-500 to-cyan-500" />
+                            <div className="absolute inset-y-0 left-0 w-1.5 bg-[var(--vb-blue)]" />
                             <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-5">
-                                <div className="h-14 w-14 rounded-2xl bg-linear-to-br from-teal-500 to-cyan-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
+                                <div className="h-14 w-14 rounded-2xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shrink-0 shadow-[var(--vb-glow)]">
                                     <Building2 size={24} />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2 mb-1">
-                                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-teal-600">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--vb-blue-dark)]">
                                             Your department
                                         </p>
                                         {teamIdentity.orgRole?.isLeader && (
@@ -699,19 +725,19 @@ function DashboardContent() {
                 <motion.div
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="p-4 rounded-2xl bg-linear-to-r from-teal-500/15 via-cyan-500/10 to-teal-500/5 border border-teal-500/30 flex flex-wrap items-center justify-between gap-3 shadow-md"
+                    className="p-4 rounded-2xl bg-linear-to-r from-[rgba(56,182,255,0.15)] via-[rgba(56,182,255,0.1)] to-[rgba(56,182,255,0.05)] border border-[rgba(56,182,255,0.3)] flex flex-wrap items-center justify-between gap-3 shadow-md"
                 >
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/30">
+                        <div className="w-10 h-10 rounded-xl bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] flex items-center justify-center shrink-0 border border-[rgba(56,182,255,0.3)]">
                             <Building2 size={20} />
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] uppercase font-bold text-teal-600 dark:text-teal-400 tracking-wider">Filtered View Active</span>
+                                <span className="text-[10px] uppercase font-bold text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] tracking-wider">Filtered View Active</span>
                                 <span className="text-xs text-slate-400 font-mono">({selectedCompany.organizationId || selectedCompany.organization?.organizationId || "N/A"})</span>
                             </div>
                             <p className="text-sm font-extrabold text-slate-900 dark:text-white">
-                                Showing cards & graphs for <span className="text-teal-600 dark:text-teal-400 underline">{selectedCompany.organization?.organizationName || selectedCompany.fullName}</span>
+                                Showing cards & graphs for <span className="text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] underline">{selectedCompany.organization?.organizationName || selectedCompany.fullName}</span>
                             </p>
                         </div>
                     </div>
@@ -762,8 +788,8 @@ function DashboardContent() {
                             icon: FileText,
                             title: "Documents",
                             desc: "Upload, manage, and search files",
-                            gradient: "from-teal-500 to-cyan-500",
-                            shadow: "shadow-teal-500/20",
+                            gradient: "from-[rgba(56,182,255,0.08)] to-blue-600",
+                            shadow: "shadow-[var(--vb-glow)]",
                             allow: true,
                         },
                         {
@@ -771,8 +797,8 @@ function DashboardContent() {
                             icon: MessageSquare,
                             title: "AI Chat",
                             desc: "Chat with your documents using AI",
-                            gradient: "from-cyan-500 to-blue-500",
-                            shadow: "shadow-cyan-500/20",
+                            gradient: "from-blue-500 to-[rgba(63,116,255,0.06)]",
+                            shadow: "shadow-[var(--vb-glow)]",
                             allow: canAccessPage("chat"),
                         },
                         {
@@ -793,14 +819,14 @@ function DashboardContent() {
                                     <item.icon size={22} className="text-white" />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-bold text-slate-800 group-hover:text-teal-600 transition-colors">
+                                    <p className="text-sm font-bold text-slate-800 group-hover:text-[var(--vb-blue-dark)] transition-colors">
                                         {item.title}
                                     </p>
                                     <p className="text-xs text-slate-500 mt-0.5">{item.desc}</p>
                                 </div>
                                 <ArrowRight
                                     size={16}
-                                    className="text-slate-300 group-hover:text-teal-500 group-hover:translate-x-1 transition-all shrink-0"
+                                    className="text-slate-300 group-hover:text-[var(--vb-blue)] group-hover:translate-x-1 transition-all shrink-0"
                                 />
                             </Link>
                         </motion.div>

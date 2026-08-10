@@ -1,3 +1,5 @@
+import json
+import re
 import time
 from .conversation_service import conversation_service
 from .rag_service import rag_service
@@ -66,7 +68,6 @@ class ChatService:
     @staticmethod
     def _is_chitchat(question: str) -> bool:
         """True for greetings / small-talk that do not need document retrieval."""
-        import re
         q = (question or "").strip().lower()
         if not q or len(q) > 80:
             return False
@@ -83,7 +84,6 @@ class ChatService:
     def _chitchat_reply(self, question: str, session_id: str, is_first: bool,
                         provider: str = None, model: str = None,
                         provider_config: dict | None = None):
-        import re
         q = (question or "").strip().lower()
         # Instant templates for common greetings — skip LLM latency.
         if re.match(r"^(hi|hii+|hello|hey|hy|helo|hola|salam|assalam.?o.?alaikum|aoa|slm)[\s!.]*$", q):
@@ -241,6 +241,128 @@ class ChatService:
         if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
             return None
         return ranked[0][0]
+
+    @staticmethod
+    def _doc_type_matches(stored: str, target: str) -> bool:
+        stored = (stored or "").lower().strip()
+        target = (target or "").lower().strip()
+        if not stored or not target:
+            return False
+        if stored == target:
+            return True
+        if target == "resume" and stored in ("resume", "cv", "curriculum_vitae", "curriculum"):
+            return True
+        return False
+
+    def _fetch_scoped_doc_meta(self, document_ids: list[str], organization_id: str) -> dict[str, dict]:
+        """Map python document id → {document_type, phase3_agent}."""
+        if not document_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(document_ids))
+        out: dict[str, dict] = {}
+        try:
+            from ..database import _get_supabase, _use_supabase, _local_select_in
+
+            if _use_supabase():
+                client = _get_supabase()
+                if client:
+                    r = (
+                        client.table("documents")
+                        .select("id, document_type, phase3_agent")
+                        .in_("id", unique_ids)
+                        .eq("organization_id", organization_id)
+                        .execute()
+                    )
+                    for row in r.data or []:
+                        if not row.get("id"):
+                            continue
+                        out[row["id"]] = {
+                            "document_type": (row.get("document_type") or "").lower(),
+                            "phase3_agent": (row.get("phase3_agent") or "").lower(),
+                        }
+            else:
+                rows = _local_select_in(
+                    "documents",
+                    columns="id, document_type, phase3_agent",
+                    in_column="id",
+                    in_values=unique_ids,
+                )
+                for row in rows or []:
+                    if row.get("id"):
+                        out[row["id"]] = {
+                            "document_type": (row.get("document_type") or "").lower(),
+                            "phase3_agent": (row.get("phase3_agent") or "").lower(),
+                        }
+        except Exception as e:
+            get_chat_logger().warn(f"Scoped doc meta fetch failed: {e}")
+        return out
+
+    def _resolve_doc_agent(self, meta: dict) -> str:
+        p3 = (meta.get("phase3_agent") or "").strip()
+        if p3:
+            return p3
+        dtype = (meta.get("document_type") or "").strip()
+        return DOCUMENT_TO_PHASE3_AGENT.get(dtype, "other_agent")
+
+    def _narrow_resolved_ids(
+        self,
+        question: str,
+        resolved_ids: list[str],
+        organization_id: str,
+        phase3_agent: str | None,
+        document_type: str | None,
+    ) -> tuple[list[str], str | None, str | None]:
+        """Shrink scoped doc list by agent (UI) or inferred document type (question)."""
+        if not resolved_ids or len(resolved_ids) <= 1:
+            return resolved_ids, document_type, phase3_agent
+
+        chat_log = get_chat_logger()
+        meta_map = self._fetch_scoped_doc_meta(resolved_ids, organization_id)
+        if not meta_map:
+            return resolved_ids, document_type, phase3_agent
+
+        if phase3_agent:
+            agent = phase3_agent.lower().strip()
+            filtered = [
+                did
+                for did in resolved_ids
+                if self._resolve_doc_agent(meta_map.get(did, {})) == agent
+            ]
+            if filtered and len(filtered) < len(resolved_ids):
+                chat_log.info(
+                    f"Agent partition: {len(resolved_ids)} → {len(filtered)} doc(s) ({agent})"
+                )
+                return filtered, document_type, phase3_agent
+            if filtered:
+                return filtered, document_type, phase3_agent
+
+        target_type = (document_type or "").lower().strip() or None
+        if not target_type:
+            target_type = self.detect_doc_type_keyword(question)
+
+        q_lower = (question or "").lower()
+        if not target_type:
+            import re as _re
+
+            for kw in _RESUME_KEYWORDS:
+                if _re.search(kw, q_lower):
+                    target_type = "resume"
+                    break
+
+        if target_type:
+            filtered = [
+                did
+                for did in resolved_ids
+                if self._doc_type_matches(meta_map.get(did, {}).get("document_type", ""), target_type)
+            ]
+            if filtered and len(filtered) < len(resolved_ids):
+                chat_log.info(
+                    f"Query-type partition: {len(resolved_ids)} → {len(filtered)} doc(s) (type={target_type})"
+                )
+                agent_hint = DOCUMENT_TO_PHASE3_AGENT.get(target_type)
+                return filtered, target_type, phase3_agent or agent_hint
+
+        return resolved_ids, document_type, phase3_agent
 
     def _detect_cross_doc_intent(self, query: str):
         """Detect 'list a field from EVERY document' intent (when no doc is selected).
@@ -634,6 +756,25 @@ class ChatService:
             chat_log.warn(f"Extraction summary error: {e}")
             return ""
 
+    def append_exchange(
+        self,
+        organization_id: str,
+        question: str,
+        answer: str,
+        session_id: str = None,
+        user_id: str = None,
+        sources: list = None,
+    ) -> dict:
+        sid, _, is_first = self._get_or_create_session(session_id, organization_id, None, user_id=user_id)
+        self._save_exchange(sid, question, answer, sources or [], is_first)
+        return {
+            "answer": answer,
+            "sources": sources or [],
+            "document_id": "",
+            "history": conversation_service.get_history(sid),
+            "session_id": sid,
+        }
+
     def chat_with_document(self, question: str, document_ids: list, organization_id: str,
                            document_type: str = None, phase3_agent: str = None,
                            allowed_agents: list = None,
@@ -652,6 +793,15 @@ class ChatService:
         sid, resolved_ids, is_first = self._get_or_create_session(
             session_id, organization_id, document_ids, user_id=user_id
         )
+
+        if resolved_ids:
+            resolved_ids, document_type, phase3_agent = self._narrow_resolved_ids(
+                question,
+                list(resolved_ids),
+                organization_id,
+                phase3_agent,
+                document_type,
+            )
 
         preloaded_scoped_context = ""
         if resolved_ids:
@@ -738,8 +888,14 @@ class ChatService:
             ])
         )
 
-        # Scoped docs: use preloaded text immediately (skips slow vector search)
-        if resolved_ids and preloaded_scoped_context and not cross_doc:
+        # Scoped docs: preload only for a few files; larger/mixed scopes use vector search (faster, type-filtered).
+        _PRELOAD_MAX_DOCS = 4
+        if (
+            resolved_ids
+            and preloaded_scoped_context
+            and not cross_doc
+            and len(resolved_ids) <= _PRELOAD_MAX_DOCS
+        ):
             chat_log.info(
                 f"Using preloaded scoped context ({len(preloaded_scoped_context)} chars) for {len(resolved_ids)} doc(s)"
             )
@@ -825,6 +981,10 @@ class ChatService:
                         "model": res_model,
                     }
 
+        search_limit = 120 if cross_doc else 60
+        if resolved_ids and len(resolved_ids) > 8 and not cross_doc:
+            search_limit = 40
+
         hybrid_kwargs = dict(
             query=search_query,
             organization_id=organization_id,
@@ -834,7 +994,7 @@ class ChatService:
             date_from=date_from,
             date_to=date_to,
             document_ids=resolved_ids,  # None = all; list = selected only
-            limit=120 if cross_doc else 60,
+            limit=search_limit,
             aggregate=cross_doc,
         )
         if cross_doc:
@@ -1287,7 +1447,6 @@ class ChatService:
                         target_doc_type or dominant_doc_type, dominant_agent
                     )
                     if raw_prompt:
-                        import re
                         chat_log.info(
                             f"Loaded prompt file: {prompt_path} "
                             f"(folder_selection={is_folder_selection}, "
@@ -1401,6 +1560,15 @@ class ChatService:
         history = conversation_service.get_history(sid)
         self._save_exchange(sid, question, answer, sources, is_first)
 
+        chart_data = None
+        chart_match = re.search(r"```json:chart\s*({[\s\S]*?})\s*```", answer)
+        if chart_match:
+            try:
+                chart_data = json.loads(chart_match.group(1))
+                answer = re.sub(r"```json:chart\s*{[\s\S]*?}\s*```", "", answer).strip()
+            except Exception:
+                chart_data = None
+
         total = time.time() - t_start
         chat_log.chat_end(total, len(sources))
         chat_log.info(f"Answer length: {len(answer)} chars")
@@ -1413,6 +1581,7 @@ class ChatService:
             "session_id": sid,
             "provider": res_provider,
             "model": res_model,
+            "chart_data": chart_data,
         }
 
     def _answer_on_excerpt(self, question: str, selected_text: str, organization_id: str,

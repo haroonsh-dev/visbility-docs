@@ -121,7 +121,7 @@ function permsFromRole(r: OrgRole): Record<string, boolean> {
 }
 
 function fieldClass() {
-    return "w-full h-11 px-3.5 rounded-md text-sm bg-surface-2 border border-border text-foreground placeholder:text-foreground-muted outline-none focus:border-accent focus:ring-2 focus:ring-[rgba(45,212,191,0.2)] transition-shadow";
+    return "w-full h-11 px-3.5 rounded-md text-sm bg-surface-2 border border-border text-foreground placeholder:text-foreground-muted outline-none focus:border-accent focus:ring-2 focus:ring-[rgba(56,182,255,0.2)] transition-shadow";
 }
 
 function DocTypePicker({
@@ -145,14 +145,14 @@ function DocTypePicker({
                         className={cn(
                             "flex items-center gap-2 text-left px-3 py-2.5 rounded-md border text-xs font-medium transition-colors",
                             on
-                                ? "border-[rgba(45,212,191,0.4)] bg-accent-muted text-accent"
+                                ? "border-[rgba(56,182,255,0.4)] bg-accent-muted text-accent"
                                 : "border-border bg-surface-2 text-foreground-secondary hover:border-border-strong"
                         )}
                     >
                         <span
                             className={cn(
                                 "h-4 w-4 rounded shrink-0 flex items-center justify-center border",
-                                on ? "bg-accent border-accent text-[#042f2e]" : "border-border-strong"
+                                on ? "bg-accent border-accent text-[#03111d]" : "border-border-strong"
                             )}
                         >
                             {on && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -199,7 +199,7 @@ function AgentPicker({
                         className={cn(
                             "w-full text-left px-3 py-2.5 rounded-md border transition-colors",
                             on
-                                ? "border-[rgba(45,212,191,0.4)] bg-accent-muted"
+                                ? "border-[rgba(56,182,255,0.4)] bg-accent-muted"
                                 : "border-border bg-surface-2 hover:border-border-strong"
                         )}
                     >
@@ -207,7 +207,7 @@ function AgentPicker({
                             <span
                                 className={cn(
                                     "h-4 w-4 rounded shrink-0 flex items-center justify-center border",
-                                    on ? "bg-accent border-accent text-[#042f2e]" : "border-border-strong"
+                                    on ? "bg-accent border-accent text-[#03111d]" : "border-border-strong"
                                 )}
                             >
                                 {on && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -307,7 +307,7 @@ function PermPicker({
                     className={cn(
                         "flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors",
                         permissions[p.key]
-                            ? "border-[rgba(45,212,191,0.35)] bg-accent-muted"
+                            ? "border-[rgba(56,182,255,0.35)] bg-accent-muted"
                             : "border-border bg-surface-2 hover:border-border-strong"
                     )}
                 >
@@ -717,7 +717,7 @@ function DepartmentsAdminContent() {
                             className={cn(
                                 "text-left rounded-xl border p-4 transition-all duration-200",
                                 active
-                                    ? "border-[rgba(45,212,191,0.45)] bg-accent-muted shadow-[0_0_0_1px_rgba(45,212,191,0.15)]"
+                                    ? "border-[rgba(56,182,255,0.45)] bg-accent-muted shadow-[0_0_0_1px_rgba(56,182,255,0.15)]"
                                     : "border-border bg-surface hover:border-border-strong"
                             )}
                         >
@@ -726,7 +726,7 @@ function DepartmentsAdminContent() {
                                     className={cn(
                                         "h-10 w-10 rounded-md flex items-center justify-center",
                                         active
-                                            ? "bg-accent text-[#042f2e]"
+                                            ? "bg-accent text-[#03111d]"
                                             : "bg-surface-3 text-foreground-muted"
                                     )}
                                 >
@@ -1242,7 +1242,7 @@ function DepartmentsAdminContent() {
                                             "bg-emerald-500/20 text-emerald-400",
                                             "bg-amber-500/20 text-amber-400",
                                             "bg-violet-500/20 text-violet-400",
-                                            "bg-cyan-500/20 text-cyan-400",
+                                            "bg-blue-500/20 text-[var(--vb-blue-bright)]",
                                         ];
                                         let hash = 0;
                                         for (let i = 0; i < m.fullName.length; i++) hash = m.fullName.charCodeAt(i) + ((hash << 5) - hash);

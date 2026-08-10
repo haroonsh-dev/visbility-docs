@@ -512,7 +512,7 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             "Rotate the key anytime from Status / rotate key.",
         ],
         setupNotes:
-            "This connector is live today for inbound file ingest. Use it as a bridge while SAP/MES-specific pollers are rolled out. Outbound webhook receives JSON after AI processing when enabled in a later worker.",
+            "Live today: inbound file ingest via the API key and URL below. Outbound: set Outbound results webhook URL, then use Send from library (Status tab or document details) to POST summaries and extracted JSON to your endpoint.",
     },
     {
         id: "sql_csv_drop",

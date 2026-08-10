@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
-from .routers import documents, search, chat, auth, reports, groq_config, settings as settings_router
+from .routers import documents, search, chat, auth, reports, groq_config, settings as settings_router, hr
 from .auth_deps import get_current_user, get_optional_user
 from fastapi import Depends
 from .config import settings
@@ -139,7 +139,8 @@ app.include_router(auth.router)
 app.include_router(documents.router, dependencies=[Depends(get_optional_user)])
 app.include_router(search.router, dependencies=[Depends(get_optional_user)])
 app.include_router(chat.router, dependencies=[Depends(get_optional_user)])
-app.include_router(reports.router, dependencies=[Depends(get_current_user)])
+app.include_router(hr.router, dependencies=[Depends(get_optional_user)])
+app.include_router(reports.router, dependencies=[Depends(get_optional_user)])
 app.include_router(groq_config.router)
 app.include_router(settings_router.router)
 

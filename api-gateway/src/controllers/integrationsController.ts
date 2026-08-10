@@ -203,7 +203,10 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
         config.autoSyncEnabled = autoSyncEnabled;
         config.intervalAutoUpload = intervalAutoUpload;
         if (fields.phase3Agent != null) config.phase3Agent = String(fields.phase3Agent);
-        if (fields.outboundWebhookUrl) config.outboundWebhookUrl = String(fields.outboundWebhookUrl);
+        if (Object.prototype.hasOwnProperty.call(fields, 'outboundWebhookUrl')) {
+            const outbound = String(fields.outboundWebhookUrl ?? '').trim();
+            if (outbound) config.outboundWebhookUrl = outbound;
+        }
         if (fields.serviceAccountEmail) config.serviceAccountEmail = String(fields.serviceAccountEmail);
         if (fields.folderId) config.folderId = normalizeFolderId(String(fields.folderId));
 
@@ -270,6 +273,12 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
             }
             doc.nextSyncAt = nextSyncAt;
             doc.config = { ...(doc.config || {}), ...config };
+            if (
+                Object.prototype.hasOwnProperty.call(fields, 'outboundWebhookUrl') &&
+                !String(fields.outboundWebhookUrl ?? '').trim()
+            ) {
+                delete doc.config.outboundWebhookUrl;
+            }
             const mergedSecrets = { ...(doc.secrets || {}) };
             for (const [k, v] of Object.entries(secrets)) {
                 if (v && !String(v).includes('****')) mergedSecrets[k] = v;

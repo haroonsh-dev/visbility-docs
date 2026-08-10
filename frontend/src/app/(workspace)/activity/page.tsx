@@ -19,7 +19,7 @@ type ActivityItem = {
 type ActorOption = { userId: string; fullName?: string; email?: string; role?: string };
 
 const CATEGORIES = [
-    { value: "auth", label: "Auth", accent: "teal", icon: LogIn },
+    { value: "auth", label: "Auth", accent: "blue", icon: LogIn },
     { value: "document", label: "Documents", accent: "cyan", icon: FileText },
     { value: "chat", label: "Chat", accent: "violet", icon: MessageSquare },
     { value: "team", label: "Team", accent: "amber", icon: Users },
@@ -127,7 +127,7 @@ function ActivityContent() {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.1 + i * 0.04 }}
                             type="button" onClick={() => { setCategory(category === cat.value ? "" : cat.value); setPage(1); }}
-                            className={`stat-card ${cat.accent} p-4 text-left ${active ? "ring-2 ring-teal-400 ring-offset-2" : ""}`}
+                            className={`stat-card ${cat.accent} p-4 text-left ${active ? "ring-2 ring-(--vb-blue) ring-offset-2" : ""}`}
                         >
                             <div className="flex items-center gap-3 mb-2.5">
                                 <div className={`icon-box ${cat.accent}`} style={{ width: '2.25rem', height: '2.25rem' }}>
@@ -144,7 +144,7 @@ function ActivityContent() {
             {/* Search & Filters */}
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
                 className="surface-card overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-transparent">
+                <div className="px-5 py-4 border-b border-slate-100 bg-linear-to-r from-slate-50/50 to-transparent">
                     <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
                         <div className="relative flex-1 min-w-0">
                             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -153,31 +153,31 @@ function ActivityContent() {
                                 onChange={(e) => setSearchInput(e.target.value)}
                                 onKeyDown={(e) => e.key === "Enter" && applySearch()}
                                 placeholder="Search by message, email, action..."
-                                className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-[44px]"
+                                className="w-full premium-input rounded-xl py-2.5 pl-10 pr-4 text-sm h-11"
                             />
                         </div>
                         {canFilterActors && (
                             <select value={actorUserId} onChange={(e) => { setActorUserId(e.target.value); setPage(1); }}
-                                className="premium-input rounded-xl py-2.5 px-3 text-sm h-[44px] w-full sm:w-auto sm:min-w-[180px]">
+                                className="premium-input rounded-xl py-2.5 px-3 text-sm h-11 w-full sm:w-auto sm:min-w-45">
                                 <option value="">Everyone</option>
                                 {actors.map((a) => <option key={a.userId} value={a.userId}>{a.fullName || a.email} ({a.role})</option>)}
                             </select>
                         )}
-                        <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 py-2.5 text-sm h-[44px] shrink-0 sm:w-auto w-full">
+                        <button type="button" onClick={applySearch} className="btn-gradient rounded-xl px-5 py-2.5 text-sm h-11 shrink-0 sm:w-auto w-full">
                             Search
                         </button>
                     </div>
                     {hasFilter && (
                         <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100">
                             {category && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-[11px] font-medium text-teal-700">
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.28)] bg-[rgba(56,182,255,0.1)] px-3 py-1 text-[11px] font-medium text-(--vb-blue-dark)">
                                     {CATEGORIES.find((c) => c.value === category)?.label}
-                                    <button type="button" onClick={() => { setCategory(""); setPage(1); }} className="hover:text-teal-900"><X size={11} /></button>
+                                    <button type="button" onClick={() => { setCategory(""); setPage(1); }} className="hover:text-(--vb-blue-dark)"><X size={11} /></button>
                                 </span>
                             )}
                             {q && (
                                 <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">
-                                    "{q}"
+                                    &quot;{q}&quot;
                                     <button type="button" onClick={() => { setSearchInput(""); setQ(""); setPage(1); }} className="hover:text-slate-900"><X size={11} /></button>
                                 </span>
                             )}
@@ -188,7 +188,7 @@ function ActivityContent() {
                                 </span>
                             )}
                             <button type="button" onClick={() => { setCategory(""); setActorUserId(""); setSearchInput(""); setQ(""); setPage(1); }}
-                                className="text-[11px] text-slate-400 hover:text-teal-600 underline-offset-2 hover:underline ml-1">
+                                className="text-[11px] text-slate-400 hover:text-(--vb-blue-dark) underline-offset-2 hover:underline ml-1">
                                 Clear all
                             </button>
                         </div>
@@ -203,7 +203,7 @@ function ActivityContent() {
                         <p className="text-sm text-slate-400">Loading activity...</p>
                     </div>
                 ) : logs.length === 0 ? (
-                    <div className="p-8"><EmptyState icon={<Activity size={28} className="text-teal-600" />} title="No activity yet" description="Actions like login, uploads, chat, and team changes will appear here." /></div>
+                    <div className="p-8"><EmptyState icon={<Activity size={28} className="text-(--vb-blue-dark)" />} title="No activity yet" description="Actions like login, uploads, chat, and team changes will appear here." /></div>
                 ) : (
                     <ul className="divide-y divide-slate-100">
                         {logs.map((log) => {
@@ -213,8 +213,8 @@ function ActivityContent() {
                                 <li key={log.logId} className="px-5 py-4 flex items-start gap-3.5 hover:bg-slate-50/50 transition-colors">
                                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                                         failed
-                                            ? "bg-gradient-to-br from-rose-50 to-red-50 text-rose-500"
-                                            : `bg-gradient-to-br from-${cat.accent}-50 to-${cat.accent}-50/50 text-${cat.accent}-600`
+                                            ? "bg-linear-to-br from-rose-50 to-red-50 text-rose-500"
+                                            : `bg-linear-to-br from-${cat.accent}-50 to-${cat.accent}-50/50 text-${cat.accent}-600`
                                     }`}
                                     style={!failed ? {
                                         background: `linear-gradient(135deg, var(--tw-gradient-from, #f0fdfa), var(--tw-gradient-to, #ecfeff))`,
@@ -226,12 +226,12 @@ function ActivityContent() {
                                         <div className="flex flex-wrap items-center gap-2">
                                             <p className="text-sm font-semibold text-slate-800">{log.message || log.action}</p>
                                             {failed && (
-                                                <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-gradient-to-r from-rose-500 to-red-500 text-white">
+                                                <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-linear-to-r from-rose-500 to-red-500 text-white">
                                                     Failed
                                                 </span>
                                             )}
                                         </div>
-                                        <p className="text-xs text-slate-500 break-words">
+                                        <p className="text-xs text-slate-500 wrap-break-word">
                                             <span className="font-semibold text-slate-700">{log.actorName || log.actorEmail || log.actorUserId}</span>
                                             <span className="mx-1.5 text-slate-300">&middot;</span>
                                             <span className="uppercase tracking-wide font-medium text-slate-400">{log.actorRole}</span>

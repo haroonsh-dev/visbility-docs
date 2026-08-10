@@ -1,7 +1,21 @@
 from ..config import settings
+import json
 import logging
 
 logger = logging.getLogger("visibility-docs")
+
+
+def _normalize_metadata(meta):
+    """Legacy Pinecone records can store metadata as a JSON string. Normalize to dict."""
+    if isinstance(meta, dict):
+        return meta
+    if isinstance(meta, str):
+        try:
+            parsed = json.loads(meta)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 
 class PineconeService:
@@ -73,7 +87,7 @@ class PineconeService:
                 {
                     "id": m.id,
                     "score": m.score,
-                    "metadata": m.metadata if include_metadata else {},
+                    "metadata": _normalize_metadata(m.metadata) if include_metadata else {},
                 }
                 for m in matches
             ]

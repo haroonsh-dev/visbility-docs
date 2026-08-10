@@ -156,6 +156,8 @@ class EmbeddingService:
                             meta["page_number"] = cm["page_number"]
                         if cm.get("document_type"):
                             meta["document_type"] = cm["document_type"]
+                        if cm.get("phase3_agent"):
+                            meta["phase3_agent"] = cm["phase3_agent"]
                         if cm.get("section"):
                             meta["section"] = cm["section"]
                         if cm.get("section_number"):

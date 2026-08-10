@@ -876,7 +876,9 @@ def _local_search_vector(query_vector: list, match_threshold: float = 0.7, match
                 stored = list(raw)
             except TypeError:
                 stored = ast.literal_eval(raw)
-            dot = sum(a * b for a, b in zip(query_vector, stored[:len(query_vector)]))
+            dot = sum(a * b for a, b in zip(query_vector, stored))
+            if len(stored) != len(query_vector):
+                continue
             norm = (sum(a * a for a in stored) ** 0.5) * (sum(b * b for b in query_vector) ** 0.5)
             score = dot / norm if norm > 0 else 0
             if score >= match_threshold:
