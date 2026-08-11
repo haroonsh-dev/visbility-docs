@@ -1,0 +1,27 @@
+name: API Gateway tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Typecheck and unit scripts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api-gateway/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run test:analytics-intent
+      - run: npm run test:document-name-match
+      - run: npm run test:finance-golden

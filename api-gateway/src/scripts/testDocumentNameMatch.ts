@@ -91,6 +91,10 @@ check('deictic "chart of that" detected', () => {
     assert(questionRefersToSpecificDocument('give me chart of that'), 'should detect');
 });
 
+check('casual "give me that data" is portfolio not single-file', () => {
+    assert(!questionRefersToSpecificDocument('give me that data'), 'not deictic file');
+});
+
 check('portfolio question does not falsely name-match all', () => {
     const hit = matchDocumentIdsByNameTokens(docs, 'show me vendor spend chart');
     assert(hit.length === 0, `expected no name hits, got ${hit.join(',')}`);

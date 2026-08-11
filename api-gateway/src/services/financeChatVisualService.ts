@@ -1,6 +1,6 @@
 import { AuthUser } from './accessScope';
 import { requireAllowedAgent } from './planService';
-import type { AgentChatVisualResult, FinanceAnalyticsCoverage } from '../types/chatVisuals';
+import type { AgentChatVisualResult, FinanceAnalyticsCoverage, ChatVisualSpec } from '../types/chatVisuals';
 import {
     buildAgingVisual,
     buildClientSpendVisual,
@@ -17,13 +17,24 @@ import {
     resolveFinanceDocumentIdsFromQuestion,
     loadFinanceDocsForAnalytics,
     formatVendorSpendTable,
+    formatClientSpendTable,
+    createFinanceExtractionCache,
     type LoadFinanceOptions,
     narrowFinanceDocumentIds,
     questionRefersToSpecificDocument,
     extractDocumentNameTokens,
+    findDuplicateInvoiceWarnings,
+    dedupeFinanceRecords,
+    pairPurchaseOrdersWithInvoices,
+    formatPoPairingTable,
+    convertRecordsToBase,
+    type FinanceRecord,
+    resolveFinancePortfolioDocumentIds,
 } from './financeAnalyticsService';
 import Document from '../models/Document';
 import { buildDocumentFilter } from './accessScope';
+import { mapFinanceIntentToPanelView, wantsMonthlyTrendQuestion, formatFinanceCoverageNotes, wantsPortfolioFinanceScope } from './financeIntent';
+import { getOrgFinanceSettings } from './orgFinanceSettingsService';
 
 export type FinanceVisualIntent =
     | 'vendor_spend'
@@ -33,6 +44,23 @@ export type FinanceVisualIntent =
     | 'doc_mix'
     | 'line_items'
     | 'overview';
+
+function attachChartExplainActions(visuals: ChatVisualSpec[]): ChatVisualSpec[] {
+    return visuals.map((v) => {
+        if (v.actions?.some((a) => a.kind === 'ask')) return v;
+        return {
+            ...v,
+            actions: [
+                ...(v.actions || []),
+                {
+                    label: 'Explain this chart',
+                    kind: 'ask' as const,
+                    prompt: `Explain how "${v.title}" was calculated from my scoped invoices. Use extraction fields and filenames only — no guesses.`,
+                },
+            ],
+        };
+    });
+}
 
 function hasFinanceContext(question: string, phase3Agent?: string): boolean {
     if (phase3Agent === FINANCE_AGENT) return true;
@@ -108,7 +136,9 @@ export function detectFinanceVisualIntent(
         if (wantsVendorRollup(question)) return 'vendor_spend';
         if (phase3Agent === FINANCE_AGENT && /\b(graph|chart|visual|plot)\b/.test(q)) {
             if (/\b(vendor|supplier|spend)\b/.test(q)) return 'vendor_spend';
-            if (/\b(trend|monthly)\b/.test(q)) return 'monthly_trend';
+            if (wantsMonthlyTrendQuestion(question)) return 'monthly_trend';
+            if (/\b(client|customer)\b/.test(q)) return 'client_spend';
+            if (/\b(aging|overdue)\b/.test(q)) return 'aging';
             if (scopedCount > 0 && scopedCount <= 12) return 'line_items';
             return 'overview';
         }
@@ -123,7 +153,7 @@ export function detectFinanceVisualIntent(
             return 'vendor_spend';
         }
         if (/\b(aging|overdue|outstanding|past due)\b/.test(q)) return 'aging';
-        if (/\b(trend|over time|monthly|per month)\b/.test(q)) return 'monthly_trend';
+        if (wantsMonthlyTrendQuestion(question)) return 'monthly_trend';
         return null;
     }
 
@@ -137,7 +167,7 @@ export function detectFinanceVisualIntent(
         return 'vendor_spend';
     }
     if (/\b(vendor|supplier)\b/.test(q) || /\bspend by\b/.test(q)) return 'vendor_spend';
-    if (/\b(trend|over time|monthly|timeline|history)\b/.test(q)) return 'monthly_trend';
+    if (wantsMonthlyTrendQuestion(question)) return 'monthly_trend';
     if (/\b(mix|types|breakdown)\b/.test(q) && /\b(document|doc)\b/.test(q)) return 'doc_mix';
     if (financeContext) return 'overview';
     return null;
@@ -149,6 +179,7 @@ export async function tryFinanceChatVisual(params: {
     phase3Agent?: string;
     documentIds?: string[];
     focusDocumentIds?: string[];
+    sessionId?: string;
 }): Promise<AgentChatVisualResult> {
     if (params.user.role !== 'superAdmin') {
         const check = await requireAllowedAgent(params.user, FINANCE_AGENT);
@@ -160,11 +191,40 @@ export async function tryFinanceChatVisual(params: {
         }
     }
 
+    if (params.documentIds?.length || params.focusDocumentIds?.length) {
+        const portfolioScope = wantsPortfolioFinanceScope(params.question);
+        const documentIds = portfolioScope
+            ? await resolveFinancePortfolioDocumentIds(params.user, params.documentIds)
+            : params.documentIds;
+        const { runDynamicAnalytics } = await import('./dynamicAnalyticsEngine');
+        const dyn = await runDynamicAnalytics({
+            user: params.user,
+            question: params.question,
+            phase3Agent: params.phase3Agent || FINANCE_AGENT,
+            documentIds,
+            focusDocumentIds: portfolioScope ? undefined : params.focusDocumentIds,
+            sessionId: params.sessionId,
+            force: true,
+        });
+        if (dyn.handled) {
+            return {
+                handled: true,
+                agentId: dyn.agentId || FINANCE_AGENT,
+                answer: dyn.answer,
+                visuals: dyn.visuals,
+                citations: dyn.citations,
+                coverage: dyn.coverage,
+                analyticsView: dyn.analyticsView,
+            };
+        }
+    }
+
     let resolvedIds = await narrowFinanceDocumentIds({
         user: params.user,
         question: params.question,
         scopedIds: params.documentIds,
         focusIds: params.focusDocumentIds,
+        portfolioScope: wantsPortfolioFinanceScope(params.question),
     });
 
     if (
@@ -217,6 +277,7 @@ export async function tryFinanceChatVisual(params: {
         intent &&
         intent !== 'line_items' &&
         resolvedIds?.length === 1 &&
+        !wantsPortfolioFinanceScope(params.question) &&
         /\b(chart|graph|visual|plot)\b/i.test(params.question) &&
         (questionRefersToSpecificDocument(params.question) ||
             extractDocumentNameTokens(params.question).length > 0)
@@ -227,6 +288,7 @@ export async function tryFinanceChatVisual(params: {
 
     const loadOpts: LoadFinanceOptions = {
         documentIds: resolvedIds?.length ? resolvedIds : undefined,
+        extractionCache: createFinanceExtractionCache(),
     };
     const result = await executeFinanceAnalytics(params.user, intent, loadOpts);
     return {
@@ -235,28 +297,89 @@ export async function tryFinanceChatVisual(params: {
         visuals: result.visuals,
         citations: result.citations,
         answer: result.answer,
+        coverage: result.coverage,
+        analyticsView: mapFinanceIntentToPanelView(intent),
     };
+}
+
+// P2.15 — short-TTL memoization: identical portfolio calls within ~30s return the
+// same computed answer instead of re-hitting Mongo + AI for every keystroke.
+type FinanceAnalyticsResult = {
+    visuals: import('../types/chatVisuals').ChatVisualSpec[];
+    citations: AgentChatVisualResult['citations'];
+    answer: string;
+    documentCount: number;
+    coverage?: FinanceAnalyticsCoverage;
+};
+const executionCache = new Map<string, { at: number; result: FinanceAnalyticsResult }>();
+const EXECUTION_CACHE_MS = 30_000;
+const EXECUTION_CACHE_MAX = 200;
+
+function pruneExecutionCache() {
+    if (executionCache.size <= EXECUTION_CACHE_MAX) return;
+    const cutoff = Date.now() - EXECUTION_CACHE_MS;
+    for (const [k, v] of executionCache) {
+        if (v.at < cutoff) executionCache.delete(k);
+    }
+    if (executionCache.size > EXECUTION_CACHE_MAX) {
+        const oldestKey = executionCache.keys().next().value;
+        if (oldestKey) executionCache.delete(oldestKey);
+    }
+}
+
+function financeCacheKey(
+    user: AuthUser,
+    intent: string,
+    loadOpts: LoadFinanceOptions,
+): string {
+    const ids = [...(loadOpts.documentIds || [])].sort().join(',');
+    return `${user.organizationId || 'noorg'}|${user.userId || 'nouser'}|${intent}|${ids}`;
 }
 
 export async function executeFinanceAnalytics(
     user: AuthUser,
     intent: FinanceVisualIntent,
     loadOpts: LoadFinanceOptions = {}
-): Promise<{
-    visuals: import('../types/chatVisuals').ChatVisualSpec[];
-    citations: AgentChatVisualResult['citations'];
-    answer: string;
-    documentCount: number;
-    coverage?: FinanceAnalyticsCoverage;
-}> {
+): Promise<FinanceAnalyticsResult> {
     if (intent === 'line_items') {
         return executeLineItemAnalytics(user, loadOpts);
     }
 
-    const records = await loadFinanceRecords(user, loadOpts);
-    const docsInScope = await countFinanceDocumentsInScope(user, loadOpts.documentIds);
-    const scopedNote = loadOpts.documentIds?.length
-        ? ` (scoped to **${loadOpts.documentIds.length}** selected file(s))`
+    const cacheKey = financeCacheKey(user, intent, loadOpts);
+    const cached = executionCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < EXECUTION_CACHE_MS) {
+        return cached.result;
+    }
+
+    const orgFin = await getOrgFinanceSettings(user.organizationId);
+    const finOpts: LoadFinanceOptions = {
+        ...loadOpts,
+        vendorAliases: loadOpts.vendorAliases ?? orgFin.vendorAliases,
+        baseCurrency: loadOpts.baseCurrency ?? orgFin.baseCurrency,
+    };
+
+    const loadedRecords = await loadFinanceRecords(user, finOpts);
+    // Apply org client aliases before dedupe/pairing so grouping keys stay stable.
+    const clientAliases = orgFin.clientAliases;
+    const aliasedRecords: FinanceRecord[] = clientAliases
+        ? loadedRecords.map((r) => {
+              const key = r.client.trim().toLowerCase();
+              const mapped = key && clientAliases[key];
+              return mapped ? { ...r, client: mapped } : r;
+          })
+        : loadedRecords;
+    // FX conversion: move rows into the org's base currency where a rate exists.
+    const fxResult = convertRecordsToBase(aliasedRecords, {
+        baseCurrency: orgFin.baseCurrency,
+        fxRates: orgFin.fxRates,
+    });
+    const rawRecords = fxResult.records;
+    // Dedupe BEFORE aggregation so totals reflect one real invoice per group.
+    const dedupe = dedupeFinanceRecords(rawRecords);
+    const records = dedupe.records;
+    const docsInScope = await countFinanceDocumentsInScope(user, finOpts.documentIds);
+    const scopedNote = finOpts.documentIds?.length
+        ? ` (scoped to **${finOpts.documentIds.length}** selected file(s))`
         : '';
 
     if (!records.length) {
@@ -266,7 +389,20 @@ export async function executeFinanceAnalytics(
             status: 'ready',
             classification: { $in: ['invoice', 'expense_report', 'payment_receipt', 'financial_statement'] },
         });
-        const fileReport = await buildFinanceFileCoverage(user, [], loadOpts);
+        const fileReport = await buildFinanceFileCoverage(user, [], finOpts);
+        const skipped = (fileReport || []).filter((f) => f.status !== 'in_charts');
+        const skippedBlock = skipped.length
+            ? [
+                  '',
+                  '**Files in scope (no amounts for charts yet):**',
+                  ...skipped.slice(0, 8).map(
+                      (f) =>
+                          `- **${f.filename}** — ${f.detail || f.status.replace(/_/g, ' ')}`
+                  ),
+                  '',
+                  '_Open each file → **Reprocess** as invoice so `total_amount` and `invoice_date` are captured, then ask again._',
+              ].join('\n')
+            : '';
         return {
             visuals: [],
             citations: [],
@@ -275,9 +411,11 @@ export async function executeFinanceAnalytics(
             answer: [
                 '**Finance analytics**',
                 '',
-                count > 0
-                    ? `You have **${count}** ready finance-classified document(s), but extracted amounts are not available yet. Open each document and wait for extraction to finish, then refresh analytics.`
-                    : 'No ready finance documents found. Upload invoices or expense reports and wait until status is **ready** with extraction complete.',
+                docsInScope > 0
+                    ? `I checked **${docsInScope}** document(s) in scope but found **no invoice amounts** to chart yet.${skippedBlock}`
+                    : count > 0
+                      ? `You have **${count}** ready finance document(s) in your library, but none are in this chat scope. Widen **Document scope** (select more files) or ask a portfolio question (e.g. “all vendor spend”).`
+                      : 'No ready finance documents found. Upload invoices or expense reports and wait until status is **ready** with extraction complete.',
             ].join('\n'),
         };
     }
@@ -290,15 +428,21 @@ export async function executeFinanceAnalytics(
         phase3Agent: FINANCE_AGENT,
     }));
 
+    const chartOpts = {
+        vendorAliases: finOpts.vendorAliases,
+        baseCurrency: finOpts.baseCurrency,
+    };
+
     if (intent === 'vendor_spend' || intent === 'overview') {
-        visuals.push(buildVendorSpendVisual(records));
+        visuals.push(buildVendorSpendVisual(records, chartOpts));
     }
     if (intent === 'client_spend' || intent === 'overview') {
         visuals.push(buildClientSpendVisual(records));
     }
     if (intent === 'monthly_trend' || intent === 'overview') {
         const trend = buildMonthlyTrendVisual(records);
-        if (trend.data.length) visuals.push(trend);
+        // Always emit for explicit trend asks so the user sees why it's empty.
+        if (intent === 'monthly_trend' || trend.data.length) visuals.push(trend);
     }
     if (intent === 'aging' || intent === 'overview') {
         visuals.push(buildAgingVisual(records));
@@ -335,37 +479,102 @@ export async function executeFinanceAnalytics(
         );
     }
 
-    const uniqueVisuals = visuals.filter((v, i, arr) => arr.findIndex((x) => x.title === v.title) === i);
     const totalsByCurrency = sumTotalsByCurrency(records);
     const totalLines = [...totalsByCurrency.entries()]
         .sort((a, b) => b[1] - a[1])
         .map(([cur, amt]) => `**${cur}** ${Math.round(amt * 100) / 100}`)
         .join(' · ');
     const docIds = new Set(records.map((r) => r.documentId));
-    const fileReport = await buildFinanceFileCoverage(user, records, loadOpts);
-    const coverage = computeFinanceCoverage(records, docsInScope, fileReport);
+    const fileReport = await buildFinanceFileCoverage(user, records, finOpts);
+    const dupWarnings = findDuplicateInvoiceWarnings(rawRecords);
+    const coverage = computeFinanceCoverage(records, docsInScope, fileReport, dupWarnings);
 
     const vendorTable =
         intent === 'vendor_spend' || intent === 'overview'
             ? formatVendorSpendTable(records)
             : '';
+    const clientTable =
+        intent === 'client_spend' || intent === 'overview'
+            ? formatClientSpendTable(records)
+            : '';
+    const coverageNotes = formatFinanceCoverageNotes(coverage);
 
-    return {
+    // PO ↔ invoice pairing (only when at least one PO doc + one invoice share a PO number)
+    const poPairs = pairPurchaseOrdersWithInvoices(records).filter(
+        (p) => p.status !== 'invoice_only' || p.invoiceDocumentIds.length > 1,
+    );
+    const hasRealPoPairing = poPairs.some(
+        (p) => p.status === 'matched' || p.status === 'over_invoiced' || p.status === 'under_invoiced',
+    );
+    const poBlock = hasRealPoPairing
+        ? `\n### PO vs Invoice\n\n${formatPoPairingTable(poPairs)}\n\n_Pairing joins invoices to purchase orders by \`po_number\` + vendor + currency._`
+        : '';
+
+    const skipped = (fileReport || []).filter(
+        (f) => f.status === 'missing_amount' || f.status === 'no_extraction' || f.status === 'not_linked',
+    );
+
+    // P0.1 — attach Reprocess actions for skipped files onto every chart so users
+    // can fix extraction from where the confusion happens, not by hunting the panel.
+    const reprocessActions = skipped.slice(0, 5).map((f) => ({
+        label: `Reprocess ${f.filename}`,
+        kind: 'reprocess' as const,
+        documentId: f.documentId,
+    }));
+    const uniqueVisuals = attachChartExplainActions(
+        visuals
+            .filter((v, i, arr) => arr.findIndex((x) => x.title === v.title) === i)
+            .map((v) => ({
+                ...v,
+                actions: [...(v.actions || []), ...reprocessActions],
+            })),
+    );
+
+    const skippedBlock = skipped.length
+        ? [
+              '',
+              `> ⚠️ **${skipped.length} of ${docsInScope} scoped file(s) not in charts** — extraction is missing an amount. Use the **Reprocess** buttons on the chart cards below, then ask again.`,
+              ...skipped.slice(0, 5).map((f) => `> • **${f.filename}** — ${f.detail || 'no amount fields'}`),
+          ].join('\n')
+        : '';
+
+    const dropped = dedupe.droppedFilenames.length
+        ? `\n**${dedupe.droppedFilenames.length} duplicate invoice(s) excluded from totals:** ${dedupe.droppedFilenames.slice(0, 5).map((n) => `\`${n}\``).join(', ')}${dedupe.droppedFilenames.length > 5 ? '…' : ''}`
+        : '';
+
+    const fxNote =
+        fxResult.converted > 0
+            ? `\n> 💱 Converted **${fxResult.converted}** amount(s) into **${orgFin.baseCurrency}** using org FX rates.${fxResult.unconvertedCurrencies.length ? ` Unconverted: ${fxResult.unconvertedCurrencies.join(', ')} (add rates in Settings).` : ''}`
+            : fxResult.unconvertedCurrencies.length
+              ? `\n> ⚠️ Multiple currencies detected (${fxResult.unconvertedCurrencies.join(', ')}); totals shown per-currency. Add FX rates in **Settings** to see a unified total.`
+              : '';
+
+    const result: FinanceAnalyticsResult = {
         visuals: uniqueVisuals,
         citations,
         documentCount: docIds.size,
         coverage,
         answer: [
-            `I used **${docIds.size}** document(s) with extracted amounts${scopedNote}.`,
+            `I used **${docIds.size}** of **${docsInScope}** scoped document(s) with extracted amounts${scopedNote}.`,
+            skippedBlock,
+            fxNote,
             '',
             `- Totals: ${totalLines || '—'}`,
             `- Charts: ${uniqueVisuals.map((v) => v.title).join(' · ') || 'none'}`,
+            dropped,
             '',
             vendorTable ? `### Vendor totals\n\n${vendorTable}` : '',
+            clientTable ? `### Client totals\n\n${clientTable}` : '',
+            poBlock,
+            coverageNotes,
+            dupWarnings.length ? `\n**Duplicate check:**\n${dupWarnings.map((w) => `- ${w}`).join('\n')}` : '',
             '',
-            'Numbers are summed from invoice extractions (one total per invoice).',
+            'Numbers are summed from invoice extractions (one total per invoice). Duplicates are removed from totals; PO amounts are shown separately.',
         ]
             .filter(Boolean)
             .join('\n'),
     };
+    executionCache.set(cacheKey, { at: Date.now(), result });
+    pruneExecutionCache();
+    return result;
 }

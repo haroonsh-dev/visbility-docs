@@ -154,6 +154,15 @@ function SingleVisual({
                     </p>
                 ) : null}
             </div>
+            {spec.data.length === 0 && spec.emptyState ? (
+                <div
+                    className={`px-4 py-8 text-center text-sm leading-relaxed ${
+                        isDark ? "text-slate-400" : "text-slate-600"
+                    }`}
+                >
+                    {spec.emptyState}
+                </div>
+            ) : (
             <div className="px-3 py-4" style={{ width: "100%", height: chartHeight }}>
                 <ResponsiveContainer width="100%" height="100%">
                     {spec.kind === "pie" ? (
@@ -286,6 +295,7 @@ function SingleVisual({
                     )}
                 </ResponsiveContainer>
             </div>
+            )}
             {spec.footer ? (
                 <p className={`px-4 pb-2 text-[10px] leading-relaxed ${isDark ? "text-slate-500" : "text-slate-500"}`}>
                     {spec.footer}

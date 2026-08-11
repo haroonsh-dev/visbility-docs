@@ -8,6 +8,15 @@ export interface IOrganization extends Document {
     subscriptionPlan?: string;
     openRemoteRealm?: string | null;
     groqApiKey?: string | null;
+    financeSettings?: {
+        baseCurrency?: string;
+        vendorAliases?: Record<string, string>;
+        clientAliases?: Record<string, string>;
+        /** 1–12; 1 = calendar year. Used for FY summaries. */
+        fyStartMonth?: number;
+        /** Fixed FX rates keyed by ISO currency code → units per 1 baseCurrency. */
+        fxRates?: Record<string, number>;
+    };
     createdAt: Date;
     updatedAt: Date;
 }
@@ -21,6 +30,13 @@ const OrganizationSchema = new Schema<IOrganization>(
         subscriptionPlan: { type: String, default: 'free' },
         openRemoteRealm: { type: String, default: null },
         groqApiKey: { type: String, default: null },
+        financeSettings: {
+            baseCurrency: { type: String, default: null },
+            vendorAliases: { type: Schema.Types.Mixed, default: undefined },
+            clientAliases: { type: Schema.Types.Mixed, default: undefined },
+            fyStartMonth: { type: Number, default: null },
+            fxRates: { type: Schema.Types.Mixed, default: undefined },
+        },
     },
     { timestamps: true }
 );

@@ -25,9 +25,14 @@ import { DOC_TYPE_TO_AGENT } from '../services/documentStorage';
 import { requireAllowedAgent } from '../services/planService';
 import { tryHrChatCommand } from '../services/hrChatActionService';
 import { getAgentAnalyticsDashboard, tryAgentChatVisual } from '../services/agentChatVisualService';
+import { wantsPortfolioFinanceScope } from '../services/financeIntent';
+import { wantsFinanceListAllScope } from '../services/financeQuestionNormalize';
+import { FINANCE_AGENT, resolveFinancePortfolioDocumentIds } from '../services/financeAnalyticsService';
 import { resolveVectorOrganizationId } from '../services/vectorOrgId';
 import {
+    clearSessionFocusDocumentIds,
     getSessionFocusDocumentIds,
+    hydrateSessionFocus,
     setSessionFocusDocumentIds,
 } from '../services/chatFocusStore';
 
@@ -223,25 +228,38 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
 
             const orgIdEarly = resolveAiOrganizationId(req.user);
             if (!isChitchat && isAiServiceEnabled()) {
-                const scopedAnalyticsDocIds =
+                const scopedAnalyticsDocIdsRaw =
                     chatScope === 'selected' && documentIds.length
                         ? documentIds
                         : Array.isArray(req.body.analyticsDocumentIds)
                           ? (req.body.analyticsDocumentIds as string[]).filter(Boolean)
                           : undefined;
 
+                const portfolioAsk =
+                    wantsPortfolioFinanceScope(message) || wantsFinanceListAllScope(message);
+                const scopedAnalyticsDocIds =
+                    portfolioAsk && (phase3Agent === FINANCE_AGENT || !phase3Agent)
+                        ? await resolveFinancePortfolioDocumentIds(req.user, scopedAnalyticsDocIdsRaw)
+                        : scopedAnalyticsDocIdsRaw;
+
                 const focusFromClient = Array.isArray(req.body.focusDocumentIds)
                     ? (req.body.focusDocumentIds as string[]).filter(Boolean)
                     : Array.isArray(req.body.focus_document_ids)
                       ? (req.body.focus_document_ids as string[]).filter(Boolean)
                       : [];
-                // Explicit chip/client focus wins; else last session focus for "chart of that"
-                const focusDocumentIds = [
-                    ...new Set([
-                        ...focusFromClient,
-                        ...getSessionFocusDocumentIds(sessionId),
-                    ]),
-                ].slice(0, 5);
+                if (portfolioAsk) {
+                    await clearSessionFocusDocumentIds(sessionId);
+                } else {
+                    await hydrateSessionFocus(sessionId);
+                }
+                const sessionFocus = portfolioAsk
+                    ? []
+                    : await getSessionFocusDocumentIds(sessionId);
+                const focusDocumentIds = (
+                    portfolioAsk
+                        ? focusFromClient
+                        : [...new Set([...focusFromClient, ...sessionFocus])]
+                ).slice(0, 5);
 
                 const hrAction = await tryHrChatCommand({
                     user: req.user,
@@ -275,7 +293,12 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     const hrFocus = (hrAction.citations || [])
                         .map((c) => c.documentId)
                         .filter(Boolean) as string[];
-                    if (hrFocus.length) setSessionFocusDocumentIds(persistedSessionId, hrFocus);
+                    if (hrFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, hrFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
                     return res.json({
                         success: true,
                         data: {
@@ -324,13 +347,26 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                             ...(visualAction.visuals || []).flatMap((v) => v.sourceDocumentIds || []),
                         ]),
                     ] as string[];
-                    if (vizFocus.length) setSessionFocusDocumentIds(persistedSessionId, vizFocus);
+                    if (vizFocus.length && !portfolioAsk) {
+                        setSessionFocusDocumentIds(persistedSessionId, vizFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
                     return res.json({
                         success: true,
                         data: {
                             reply: visualAction.answer,
                             citations: visualAction.citations || [],
                             visuals: visualAction.visuals || [],
+                            coverage: visualAction.coverage,
+                            analyticsView: visualAction.analyticsView,
+                            documentCount:
+                                new Set(
+                                    (visualAction.visuals || [])
+                                        .flatMap((v) => v.sourceDocumentIds || [])
+                                ).size ||
+                                (visualAction.citations || []).length,
                             sessionId: persistedSessionId,
                             chatScope,
                             model: 'agent-analytics',

@@ -40,6 +40,15 @@ async function start() {
         } catch (err: any) {
             logger.warn(`[email-reports] tick failed: ${err?.message || err}`);
         }
+        try {
+            const { pruneStaleChatSessionFocus } = await import('./services/chatFocusStore');
+            const removed = await pruneStaleChatSessionFocus();
+            if (removed > 0) {
+                logger.info(`[chat-focus] pruned ${removed} stale session focus row(s)`);
+            }
+        } catch (err: any) {
+            logger.warn(`[chat-focus] prune failed: ${err?.message || err}`);
+        }
     };
 
     setInterval(() => {

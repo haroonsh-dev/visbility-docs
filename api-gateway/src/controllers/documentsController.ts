@@ -650,25 +650,32 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
                 .slice(0, 8)
                 .map((d) => d.documentId);
             if (healIds.length) {
-                await Promise.all(
-                    healIds.map(async (documentId) => {
-                        try {
-                            const live = await Document.findOne({ documentId });
-                            if (!live?.pythonDocumentId) return;
-                            const orgId = resolveDocumentAiOrgId(live, req.user);
-                            await syncStatusFromAiDocument(live, orgId, req.user);
-                            if (live.isModified()) await live.save();
-                        } catch (e: any) {
-                            logger.warn(`List heal sync failed for ${documentId}: ${e?.message || e}`);
-                        }
-                    })
-                );
-                documents = await Document.find(filter)
-                    .sort({ [sortBy]: sortOrder })
-                    .skip((page - 1) * limit)
-                    .limit(limit)
-                    .select('-storagePath -contentHash -storedFilename -openRemoteUserId -errorMessage')
-                    .lean();
+                const doHeal = async () => {
+                    await Promise.all(
+                        healIds.map(async (documentId) => {
+                            try {
+                                const live = await Document.findOne({ documentId });
+                                if (!live?.pythonDocumentId) return;
+                                const orgId = resolveDocumentAiOrgId(live, req.user);
+                                await syncStatusFromAiDocument(live, orgId, req.user);
+                                if (live.isModified()) await live.save();
+                            } catch (e: any) {
+                                logger.warn(`List heal sync failed for ${documentId}: ${e?.message || e}`);
+                            }
+                        })
+                    );
+                };
+                if (req.query.syncAi === 'true') {
+                    await doHeal();
+                    documents = await Document.find(filter)
+                        .sort({ [sortBy]: sortOrder })
+                        .skip((page - 1) * limit)
+                        .limit(limit)
+                        .select('-storagePath -contentHash -storedFilename -openRemoteUserId -errorMessage')
+                        .lean();
+                } else {
+                    doHeal().catch(() => {});
+                }
             }
         }
 

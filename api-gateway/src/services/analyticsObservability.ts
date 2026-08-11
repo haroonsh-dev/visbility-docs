@@ -12,6 +12,7 @@ export function logAnalyticsResolve(params: {
     visualCount?: number;
     extractionHits?: number;
     extractionMisses?: number;
+    elapsedMs?: number;
 }) {
     logger.info(
         [
@@ -27,6 +28,7 @@ export function logAnalyticsResolve(params: {
             `visuals=${params.visualCount ?? 0}`,
             `extractHit=${params.extractionHits ?? '-'}`,
             `extractMiss=${params.extractionMisses ?? '-'}`,
+            `ms=${params.elapsedMs ?? '-'}`,
         ].join(' ')
     );
 }

@@ -18,7 +18,10 @@ import {
     extractDocumentNameTokens,
     enrichSearchTextForDoc,
     loadFinanceRecords,
+    createFinanceExtractionCache,
+    resolveFinancePortfolioDocumentIds,
 } from './financeAnalyticsService';
+import { canonicalizePartyName } from './financePartyNormalize';
 import { COMPLIANCE_AGENT, COMPLIANCE_DOC_TYPES } from './complianceAnalyticsService';
 import { executeComplianceAnalytics } from './complianceChatVisualService';
 import { listTopResumesForUser } from './hrChatActionService';
@@ -31,6 +34,7 @@ import {
 } from './aiServiceClient';
 import { logAnalyticsResolve } from './analyticsObservability';
 import { getSessionFocusDocumentIds } from './chatFocusStore';
+import { mapFinanceIntentToPanelView, parseFinanceIntent, wantsPortfolioFinanceScope, wantsMonthlyTrendQuestion } from './financeIntent';
 
 async function executeHrCharts(
     user: AuthUser,
@@ -365,45 +369,6 @@ export function planAnalyticsRun(params: {
     return ordered;
 }
 
-function mapFinanceIntentToPanelView(intent: string): string {
-    switch (intent) {
-        case 'vendor_spend':
-            return 'vendors';
-        case 'client_spend':
-            return 'clients';
-        case 'monthly_trend':
-            return 'trend';
-        case 'aging':
-            return 'aging';
-        case 'doc_mix':
-            return 'mix';
-        case 'line_items':
-            return 'overview';
-        default:
-            return 'overview';
-    }
-}
-
-function parseFinanceIntent(question: string, opts?: { singleDoc?: boolean }): string {
-    const q = question.toLowerCase();
-    if (/\b(line[\s-]?items?|items?\s+list|list\s+(of\s+)?items?)\b/.test(q)) return 'line_items';
-    if (/\b(aging|overdue)\b/.test(q)) return 'aging';
-    if (/\b(trend|monthly|by month|per month|over time|timeline)\b/.test(q)) return 'monthly_trend';
-    if (/\b(vendor|supplier)\b/.test(q) && !/\bpurchase|po|quotation|rfq\b/.test(q)) {
-        return 'vendor_spend';
-    }
-    if (/\b(client|customer)\b/.test(q)) return 'client_spend';
-    if (/\b(mix|types)\b/.test(q)) return 'doc_mix';
-    // "chart of that" for one invoice → line items, not multi-vendor overview
-    if (
-        opts?.singleDoc &&
-        (questionRefersToSpecificDocument(question) || /\b(chart|graph|visual|plot)\b/.test(q))
-    ) {
-        return 'line_items';
-    }
-    return 'overview';
-}
-
 function parseHrIntent(question: string): 'ranking' | 'distribution' {
     const q = question.toLowerCase();
     if (/\b(distribution|histogram|bucket|spread)\b/.test(q)) return 'distribution';
@@ -549,7 +514,7 @@ async function executeGenericDomainAnalytics(
                     amount: total,
                     documentId: doc.documentId,
                 });
-                const key = party.toLowerCase();
+                const key = canonicalizePartyName(party) || party.toLowerCase();
                 const cur = supplierMap.get(key) || { amount: 0, docs: new Set<string>() };
                 cur.amount += total;
                 cur.docs.add(doc.documentId);
@@ -788,11 +753,13 @@ function conversationalFinanceAnswer(
         opts?.singleDoc && names.length === 1
             ? `**${names[0]}** only`
             : names.length
-              ? names.slice(0, 3).map((n) => `**${n}**`).join(', ')
+              ? `**${names.length}** scoped file(s)`
               : 'your selected finance documents';
     const lead =
         visualTitles.length > 0
-            ? `Chart for ${fileBit}. Showing: ${visualTitles.join(', ')}.`
+            ? opts?.singleDoc && names.length === 1
+                ? `Chart for ${fileBit}. Showing: ${visualTitles.join(', ')}.`
+                : `Portfolio view across ${fileBit}. Showing: ${visualTitles.join(', ')}.`
             : `I looked at ${fileBit}.`;
     if (!cleaned) return `${lead} Open Analytics for the graphs.`;
     return `${lead}\n\n${cleaned}`;
@@ -837,28 +804,43 @@ export async function runDynamicAnalytics(params: {
     /** Force dashboard-style run even without chart keywords */
     force?: boolean;
 }): Promise<DynamicAnalyticsResult> {
+    const started = Date.now();
     const chartAsk = wantsChart(params.question) || Boolean(params.force);
     if (!chartAsk && !params.force) {
         return { handled: false };
     }
 
-    const sessionFocus = getSessionFocusDocumentIds(params.sessionId);
+    const sessionFocus = await getSessionFocusDocumentIds(params.sessionId);
     const mergedFocus = [
         ...new Set([...(params.focusDocumentIds || []), ...sessionFocus]),
     ].filter(Boolean);
 
+    const financeExtractionCache = createFinanceExtractionCache();
+    const extractionStats = { hits: 0, misses: 0 };
+
+    const portfolioScope = wantsPortfolioFinanceScope(params.question);
+
     let scopedIds = params.documentIds;
+    if (portfolioScope) {
+        scopedIds = await resolveFinancePortfolioDocumentIds(params.user, params.documentIds);
+    }
     let namedFileLock = false;
     let financeIntentLogged = '-';
 
     // Dynamic: if the user names a file/vendor (e.g. glectronic), chart ONLY that file
-    if (params.documentIds?.length && extractDocumentNameTokens(params.question).length) {
+    if (
+        !portfolioScope &&
+        params.documentIds?.length &&
+        extractDocumentNameTokens(params.question).length
+    ) {
         const pool = await loadScopedDocuments(params.user, params.documentIds);
         let vendorById = new Map<string, string>();
         try {
             const records = await loadFinanceRecords(params.user, {
                 documentIds: params.documentIds,
                 maxDocs: params.documentIds.length,
+                extractionCache: financeExtractionCache,
+                extractionStats,
             });
             vendorById = new Map(records.map((r) => [r.documentId, r.vendor]));
         } catch {
@@ -881,8 +863,13 @@ export async function runDynamicAnalytics(params: {
         }
     }
 
+    if (portfolioScope && scopedIds?.length) {
+        namedFileLock = false;
+    }
+
     // Explicit single focus (Chart chip / session) → never silently chart the whole scope
     if (
+        !portfolioScope &&
         !namedFileLock &&
         mergedFocus.length === 1 &&
         chartAsk &&
@@ -892,12 +879,13 @@ export async function runDynamicAnalytics(params: {
         namedFileLock = true;
     }
 
-    if (!namedFileLock && (scopedIds?.length || mergedFocus.length)) {
+    if (!portfolioScope && !namedFileLock && (scopedIds?.length || mergedFocus.length)) {
         const narrowed = await narrowFinanceDocumentIds({
             user: params.user,
             question: params.question,
             scopedIds: params.documentIds,
             focusIds: mergedFocus,
+            portfolioScope,
         });
         if (
             questionRefersToSpecificDocument(params.question) &&
@@ -919,7 +907,7 @@ export async function runDynamicAnalytics(params: {
                     handled: true,
                     agentId: params.phase3Agent || FINANCE_AGENT,
                     answer:
-                        'Which document do you mean by “that”? Say the file name (e.g. digilog or bata), or tap a Chart chip — I’ll chart only that one.',
+                        'Which document do you mean by “that”? Say the file name (e.g. digilog or bata), or narrow Document scope to one file — I’ll chart only that one.',
                     visuals: [],
                     documentCount: params.documentIds?.length || 0,
                 };
@@ -977,24 +965,33 @@ export async function runDynamicAnalytics(params: {
 
             try {
                 if (domain === 'finance') {
+                    const portfolioFinance = wantsPortfolioFinanceScope(params.question);
+                    const singleDocIntent =
+                        (ids.length === 1 || namedFileLock) && !portfolioFinance;
                     const intent = parseFinanceIntent(params.question, {
-                        singleDoc: ids.length === 1 || namedFileLock,
+                        singleDoc: singleDocIntent,
                     }) as any;
                     financeIntentLogged = intent;
                     const result = await executeFinanceAnalytics(params.user, intent, {
                         documentIds: ids,
+                        extractionCache: financeExtractionCache,
+                        extractionStats,
                     });
                     financeCoverage = result.coverage ?? financeCoverage;
                     financeAnalyticsView = mapFinanceIntentToPanelView(intent);
                     visuals.push(...(result.visuals || []));
                     citations.push(...(result.citations || []));
+                    const singleDocLead =
+                        (ids.length === 1 || namedFileLock) &&
+                        !portfolioFinance &&
+                        !wantsMonthlyTrendQuestion(params.question);
                     answerParts.push(
                         conversationalFinanceAnswer(
                             result.answer,
                             (result.visuals || []).map((v) => v.title),
                             {
                                 filenames: docs.map((d) => d.originalFilename),
-                                singleDoc: ids.length === 1 || namedFileLock,
+                                singleDoc: singleDocLead,
                             }
                         )
                     );
@@ -1061,6 +1058,8 @@ export async function runDynamicAnalytics(params: {
             citations: uniqueCitations,
             domains,
             documentCount: scoped.length,
+            coverage: financeCoverage,
+            analyticsView: financeAnalyticsView,
         };
     }
 
@@ -1078,6 +1077,9 @@ export async function runDynamicAnalytics(params: {
         domains,
         intent: financeIntentLogged,
         visualCount: visuals.length,
+        extractionHits: extractionStats.hits,
+        extractionMisses: extractionStats.misses,
+        elapsedMs: Date.now() - started,
     });
 
     return {

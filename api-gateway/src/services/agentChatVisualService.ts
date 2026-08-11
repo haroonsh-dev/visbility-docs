@@ -227,6 +227,7 @@ export async function getAgentAnalyticsDashboard(params: {
             citations: dyn.citations || [],
             summary: dyn.answer || '',
             documentCount: dyn.documentCount || 0,
+            coverage: dyn.coverage,
             scopeMode,
         };
     }
@@ -314,12 +315,14 @@ export async function tryAgentChatVisual(params: {
                 answer: dyn.answer,
                 visuals: dyn.visuals,
                 citations: dyn.citations,
+                coverage: dyn.coverage,
+                analyticsView: dyn.analyticsView,
             };
         }
     }
 
     // Legacy fallbacks only when dynamic engine declines (no chart keywords / no docs)
-    const finance = await tryFinanceChatVisual(params);
+    const finance = await tryFinanceChatVisual({ ...params, sessionId: params.sessionId });
     if (finance.handled) return finance;
 
     const compliance = await tryComplianceChatVisual(params);

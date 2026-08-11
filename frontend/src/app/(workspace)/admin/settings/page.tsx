@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
     Key, Shield, Zap, Brain, Sparkles, Globe, Save, Trash2, Loader2, Check, AlertTriangle,
-    Eye, EyeOff, RotateCcw,
+    Eye, EyeOff, RotateCcw, Coins,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
@@ -33,6 +33,48 @@ type SettingsCache = {
 
 let settingsCache: SettingsCache | null = null;
 const SETTINGS_CACHE_MS = 60_000;
+
+function vendorAliasesToText(aliases?: Record<string, string> | null): string {
+    if (!aliases) return "";
+    return Object.entries(aliases)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+}
+
+function parseVendorAliasesText(text: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const line of text.split("\n")) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const eq = t.indexOf("=");
+        if (eq < 1) continue;
+        const key = t.slice(0, eq).trim().toLowerCase();
+        const val = t.slice(eq + 1).trim();
+        if (key && val) out[key] = val;
+    }
+    return out;
+}
+
+function fxRatesToText(rates?: Record<string, number> | null): string {
+    if (!rates) return "";
+    return Object.entries(rates)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+}
+
+function parseFxRatesText(text: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const line of text.split("\n")) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const eq = t.indexOf("=");
+        if (eq < 1) continue;
+        const key = t.slice(0, eq).trim().toUpperCase().slice(0, 3);
+        const val = Number(t.slice(eq + 1).trim());
+        if (key && Number.isFinite(val) && val > 0) out[key] = val;
+    }
+    return out;
+}
 
 const PROVIDER_CONFIG: Record<Provider, { icon: React.ReactNode; color: string; bgColor: string; borderColor: string; description: string }> = {
     groq: {
@@ -91,6 +133,15 @@ function SettingsContent() {
     const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
 
+    const [financeBaseCurrency, setFinanceBaseCurrency] = useState("");
+    const [financeAliasesText, setFinanceAliasesText] = useState("");
+    const [financeClientAliasesText, setFinanceClientAliasesText] = useState("");
+    const [financeFxText, setFinanceFxText] = useState("");
+    const [financeFyStartMonth, setFinanceFyStartMonth] = useState("");
+    const [financeLoading, setFinanceLoading] = useState(true);
+    const [financeSaving, setFinanceSaving] = useState(false);
+    const [financeSaveSuccess, setFinanceSaveSuccess] = useState<string | null>(null);
+
     const loadKeys = useCallback(async (opts?: { silent?: boolean }) => {
         const useSilent = opts?.silent || Boolean(settingsCache && Date.now() - settingsCache.at < SETTINGS_CACHE_MS);
         if (!useSilent) setLoading(true);
@@ -113,6 +164,63 @@ function SettingsContent() {
         const fresh = settingsCache && Date.now() - settingsCache.at < SETTINGS_CACHE_MS;
         void loadKeys({ silent: Boolean(fresh || settingsCache) });
     }, [loadKeys]);
+
+    type FinanceSettingsShape = {
+        baseCurrency?: string;
+        vendorAliases?: Record<string, string>;
+        clientAliases?: Record<string, string>;
+        fxRates?: Record<string, number>;
+        fyStartMonth?: number;
+    };
+
+    const applyFinanceSettings = (fs?: FinanceSettingsShape) => {
+        setFinanceBaseCurrency(fs?.baseCurrency || "");
+        setFinanceAliasesText(vendorAliasesToText(fs?.vendorAliases));
+        setFinanceClientAliasesText(vendorAliasesToText(fs?.clientAliases));
+        setFinanceFxText(fxRatesToText(fs?.fxRates));
+        setFinanceFyStartMonth(fs?.fyStartMonth ? String(fs.fyStartMonth) : "");
+    };
+
+    const loadFinanceSettings = useCallback(async () => {
+        setFinanceLoading(true);
+        try {
+            const res = await apiRequest("/docs/settings/finance");
+            applyFinanceSettings(res?.data?.financeSettings as FinanceSettingsShape | undefined);
+        } catch (e: any) {
+            setError(e.message || "Failed to load finance settings");
+        } finally {
+            setFinanceLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadFinanceSettings();
+    }, [loadFinanceSettings]);
+
+    const saveFinanceSettings = async () => {
+        setFinanceSaving(true);
+        setFinanceSaveSuccess(null);
+        setError(null);
+        try {
+            const fy = Number(financeFyStartMonth);
+            const res = await apiRequest("/docs/settings/finance", {
+                method: "PATCH",
+                body: JSON.stringify({
+                    baseCurrency: financeBaseCurrency.trim() || "",
+                    vendorAliases: parseVendorAliasesText(financeAliasesText),
+                    clientAliases: parseVendorAliasesText(financeClientAliasesText),
+                    fxRates: parseFxRatesText(financeFxText),
+                    fyStartMonth: Number.isFinite(fy) && fy >= 1 && fy <= 12 ? fy : null,
+                }),
+            });
+            applyFinanceSettings(res?.data?.financeSettings as FinanceSettingsShape | undefined);
+            setFinanceSaveSuccess("Finance analytics settings saved.");
+        } catch (e: any) {
+            setError(e.message || "Failed to save finance settings");
+        } finally {
+            setFinanceSaving(false);
+        }
+    };
 
     const getKeyForProvider = (provider: Provider): ApiKeyRecord | undefined => {
         return keys.find((k) => k.provider === provider);
@@ -487,6 +595,117 @@ function SettingsContent() {
                         </div>
                     );
                 })}
+            </div>
+
+            <div className="rounded-xl border border-border bg-surface-2/40 overflow-hidden">
+                <div className="px-5 py-4 border-b border-border flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-emerald-500/15 text-emerald-300">
+                        <Coins size={18} />
+                    </div>
+                    <div>
+                        <h2 className="text-sm font-semibold text-foreground">Finance analytics</h2>
+                        <p className="text-xs text-foreground-muted">
+                            Vendor name aliases merge OCR typos in charts; base currency labels KPI totals when set.
+                        </p>
+                    </div>
+                </div>
+                <div className="px-5 py-5 space-y-4">
+                    {financeLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-foreground-muted">
+                            <Loader2 size={14} className="animate-spin" />
+                            Loading finance settings…
+                        </div>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
+                                        Base currency (ISO 4217)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={financeBaseCurrency}
+                                        onChange={(e) => setFinanceBaseCurrency(e.target.value.toUpperCase().slice(0, 3))}
+                                        placeholder="PKR"
+                                        className="w-full premium-input rounded-xl px-4 py-2.5 text-sm font-mono uppercase"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
+                                        FY start month (1–12; blank = Jan)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={12}
+                                        value={financeFyStartMonth}
+                                        onChange={(e) => setFinanceFyStartMonth(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+                                        placeholder="7 (July for PK FY)"
+                                        className="w-full premium-input rounded-xl px-4 py-2.5 text-sm font-mono"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
+                                        Vendor aliases (one per line: alias=Canonical)
+                                    </label>
+                                    <textarea
+                                        value={financeAliasesText}
+                                        onChange={(e) => setFinanceAliasesText(e.target.value)}
+                                        rows={5}
+                                        placeholder={"glectronic=Digilog\nm/s digilog pvt ltd=Digilog"}
+                                        className="w-full premium-input rounded-xl px-4 py-3 text-sm font-mono"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
+                                        Client aliases (one per line: alias=Canonical)
+                                    </label>
+                                    <textarea
+                                        value={financeClientAliasesText}
+                                        onChange={(e) => setFinanceClientAliasesText(e.target.value)}
+                                        rows={5}
+                                        placeholder={"metro cash n carry=Metro Cash & Carry\nk-mart=K-Mart"}
+                                        className="w-full premium-input rounded-xl px-4 py-3 text-sm font-mono"
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[10px] uppercase tracking-wider font-semibold text-foreground-muted block mb-1.5">
+                                    FX rates (units of currency per 1 base — one per line: CODE=rate)
+                                </label>
+                                <textarea
+                                    value={financeFxText}
+                                    onChange={(e) => setFinanceFxText(e.target.value)}
+                                    rows={4}
+                                    placeholder={"USD=280\nEUR=305\nGBP=355"}
+                                    className="w-full premium-input rounded-xl px-4 py-3 text-sm font-mono"
+                                />
+                                <p className="text-[10px] text-foreground-muted mt-1">
+                                    Example: base=PKR, USD=280 means 1 USD → 280 PKR. Amounts without a rate stay in their original currency.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => void saveFinanceSettings()}
+                                    disabled={financeSaving}
+                                    className="btn-gradient rounded-xl px-5 py-2.5 text-sm font-semibold flex items-center gap-2"
+                                >
+                                    {financeSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                                    Save finance settings
+                                </button>
+                                {financeSaveSuccess && (
+                                    <span className="text-xs text-emerald-400 flex items-center gap-1">
+                                        <Check size={12} />
+                                        {financeSaveSuccess}
+                                    </span>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </div>
             </div>
 
             {/* Info box */}

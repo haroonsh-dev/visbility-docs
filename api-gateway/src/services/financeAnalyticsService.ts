@@ -2,6 +2,9 @@ import Document from '../models/Document';
 import { AuthUser } from './accessScope';
 import { buildDocumentFilter } from './accessScope';
 import { getDocumentExtractions, getAiDocument, resolveDocumentAiOrgId, isAiServiceEnabled } from './aiServiceClient';
+import { canonicalizePartyName, partyRollupKey, resolveVendorDisplayName } from './financePartyNormalize';
+import { normalizeFinanceUserQuestion, wantsFinanceListAllScope } from './financeQuestionNormalize';
+import { getOrgFinanceSettings } from './orgFinanceSettingsService';
 import type { ChatVisualDataRow, ChatVisualSpec, FinanceAnalyticsCoverage } from '../types/chatVisuals';
 
 export const FINANCE_AGENT = 'finance_agent';
@@ -39,12 +42,27 @@ export type FinanceRecord = {
     currency: string;
     invoiceDate: Date | null;
     dueDate: Date | null;
+    /** Mongo classification: invoice, purchase_order, receipt, … Used for PO↔invoice pairing. */
+    classification?: string;
+    /** Normalized PO / reference number for cross-doc matching. */
+    poNumber?: string;
+    /** Invoice number, used for duplicate detection. */
+    invoiceNumber?: string;
 };
 
 export type LoadFinanceOptions = {
     maxDocs?: number;
     documentIds?: string[];
+    /** Reuse extraction payloads within one analytics request. */
+    extractionCache?: Map<string, Record<string, unknown>>;
+    extractionStats?: { hits: number; misses: number };
+    vendorAliases?: Record<string, string>;
+    baseCurrency?: string;
 };
+
+export function createFinanceExtractionCache(): Map<string, Record<string, unknown>> {
+    return new Map();
+}
 
 function parseNumber(raw: unknown): number | null {
     if (raw == null) return null;
@@ -74,6 +92,25 @@ export function scalarField(raw: unknown): string {
     return '';
 }
 
+/** Scan raw OCR text for common client-block markers (Bill To, Sold To, Customer:). */
+function pickClientFromRawText(rawText: string): string {
+    if (!rawText || rawText.length < 3) return '';
+    const patterns = [
+        /(?:^|\n)\s*(?:bill\s*to|sold\s*to|customer|buyer|invoice\s*to|deliver\s*to)\s*[:\-]\s*(.+?)(?:\n|$)/i,
+        /(?:^|\n)\s*(?:bill\s*to|sold\s*to|customer|buyer|invoice\s*to)\s*\n\s*(.+?)(?:\n|$)/i,
+    ];
+    for (const re of patterns) {
+        const m = rawText.match(re);
+        if (m) {
+            let candidate = m[1].trim().replace(/[|]+/g, ' ').replace(/\s+/g, ' ');
+            // Cap length + strip trailing phone/address tokens.
+            if (candidate.length > 80) candidate = candidate.slice(0, 80);
+            if (candidate.length >= 3 && !/^\d+$/.test(candidate)) return candidate;
+        }
+    }
+    return '';
+}
+
 function pickClient(data: Record<string, unknown>): string {
     const client =
         scalarField(data.customer_name) ||
@@ -81,7 +118,10 @@ function pickClient(data: Record<string, unknown>): string {
         scalarField(data.client_name) ||
         scalarField(data.buyer_name) ||
         scalarField(data.ship_to);
-    return client || '';
+    if (client) return client;
+    // Heuristic fallback: parse from OCR text (`Bill To: …`, `Customer: …`, etc.).
+    const raw = typeof data._raw_text === 'string' ? (data._raw_text as string) : '';
+    return pickClientFromRawText(raw);
 }
 
 function pickVendor(
@@ -117,14 +157,32 @@ function pickVendor(
 /** "that / this / it" → prefer focus docs from prior chat turn, not the whole scope. */
 export function questionRefersToSpecificDocument(question: string): boolean {
     const q = question.toLowerCase().trim();
+
+    // Casual portfolio language — not a single-file pointer.
+    if (
+        /\b(that|the|this)\s+(data|info|numbers|figures|report|summary|breakdown|analytics)\b/.test(q) &&
+        !/\b(invoice|document|file|pdf|receipt|bill)\b/.test(q)
+    ) {
+        return false;
+    }
+    if (/\b(give|show|get|send|pull)\s+(me\s+)?(the\s+)?(that\s+)?(full\s+)?(finance\s+)?(data|numbers|figures|report|breakdown)\b/.test(q)) {
+        return false;
+    }
+
     if (
         /\b(this|that|the)\s+(invoice|document|file|pdf|one|bill|receipt)\b/.test(q) ||
-        /\b(chart|graph|visual|show|give|list)\b.*\b(that|this|it)\b/.test(q) ||
+        /\b(chart|graph|visual)\b.*\b(that|this|it)\b/.test(q) ||
         /\b(that|this|it)\b.*\b(chart|graph|visual|breakdown|items?|totals?)\b/.test(q)
     ) {
         return true;
     }
-    // Short follow-ups: "give me chart of that", "chart it", "for that"
+    // "give me chart of that" — not bare "give me that data"
+    if (/\b(give|show|list)\b.*\b(that|this|it)\b/.test(q)) {
+        if (/\b(chart|graph|visual|invoice|file|document|pdf|line[\s-]?items?)\b/.test(q)) {
+            return true;
+        }
+        return false;
+    }
     if (/\b(of|for|about)\s+(that|this|it)\b/.test(q)) return true;
     if (/^(chart|graph|visualize|show)\s+(that|this|it)\b/.test(q)) return true;
     return false;
@@ -139,11 +197,16 @@ export async function narrowFinanceDocumentIds(params: {
     question: string;
     scopedIds?: string[];
     focusIds?: string[];
+    /** When true, always return full scopedIds (all clients/vendors in scope). */
+    portfolioScope?: boolean;
 }): Promise<string[] | undefined> {
     const scoped = (params.scopedIds || []).filter(Boolean);
     const focus = (params.focusIds || []).filter(Boolean);
     const q = params.question;
 
+    if (params.portfolioScope && scoped.length) {
+        return scoped;
+    }
     // 1) Name in the message → only that file (never the rest of the scope)
     const fromName = await resolveFinanceDocumentIdsFromQuestion(params.user, q, {
         preferIds: scoped.length ? scoped : undefined,
@@ -169,8 +232,9 @@ export async function narrowFinanceDocumentIds(params: {
     return scoped.length ? scoped : undefined;
 }
 
-function normalizePartyKey(name: string): string {
-    return name.trim().toLowerCase().replace(/\s+/g, ' ');
+function normalizePartyKey(name: string, aliases?: Record<string, string>): string {
+    const c = partyRollupKey(name, aliases);
+    return c || name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function normalizeExtractionPayload(data: Record<string, unknown>): Record<string, unknown> {
@@ -185,25 +249,67 @@ function normalizeExtractionPayload(data: Record<string, unknown>): Record<strin
 }
 
 function inferDocumentTotal(data: Record<string, unknown>): number | null {
+    // Common header total fields (English + PKR/GST variants).
     const direct =
         parseNumber(data.total_amount) ??
         parseNumber(data['Total Amount (PKR)']) ??
         parseNumber(data['Total Amount']) ??
+        parseNumber(data['Grand Total']) ??
+        parseNumber(data['Grand Total (PKR)']) ??
+        parseNumber(data['Amount Payable']) ??
+        parseNumber(data['Total Payable']) ??
         parseNumber(data.total) ??
         parseNumber(data.amount) ??
         parseNumber(data.grand_total) ??
         parseNumber(data.net_amount) ??
         parseNumber(data.invoice_total) ??
+        parseNumber(data.invoice_amount) ??
+        parseNumber(data.amount_due) ??
+        parseNumber(data.amount_payable) ??
+        parseNumber(data.total_payable) ??
+        parseNumber(data.total_due) ??
+        parseNumber(data.paid_amount) ??
+        parseNumber(data.payment_amount) ??
         parseNumber(data.balance_due);
     if (direct != null && direct > 0) return direct;
 
-    const subtotal = parseNumber(data.subtotal);
+    const subtotal =
+        parseNumber(data.subtotal) ??
+        parseNumber(data.sub_total) ??
+        parseNumber(data.net_total) ??
+        parseNumber(data['Sub Total']);
     if (subtotal != null && subtotal > 0) {
-        const tax = parseNumber(data.tax_amount) ?? 0;
-        const ship = parseNumber(data.shipping_charges) ?? 0;
-        const disc = parseNumber(data.discount) ?? 0;
+        const tax =
+            parseNumber(data.tax_amount) ??
+            parseNumber(data.tax) ??
+            parseNumber(data.gst) ??
+            parseNumber(data.vat) ??
+            parseNumber(data.sales_tax) ??
+            0;
+        const ship = parseNumber(data.shipping_charges) ?? parseNumber(data.shipping) ?? 0;
+        const disc = parseNumber(data.discount) ?? parseNumber(data.discount_amount) ?? 0;
         return subtotal + tax + ship - disc;
     }
+
+    // Last resort: line_items sum (even when recordsFromExtraction takes a different
+    // branch, coverage should still count the file as chartable).
+    const items = data.line_items;
+    if (Array.isArray(items)) {
+        let sum = 0;
+        for (const raw of items) {
+            if (!raw || typeof raw !== 'object') continue;
+            const row = raw as Record<string, unknown>;
+            const v =
+                parseNumber(row.total) ??
+                parseNumber(row.amount) ??
+                (parseNumber(row.quantity) != null && parseNumber(row.unit_price) != null
+                    ? Number(row.quantity) * Number(row.unit_price)
+                    : null);
+            if (v != null && v > 0) sum += v;
+        }
+        if (sum > 0) return Math.round(sum * 100) / 100;
+    }
+
     return null;
 }
 
@@ -215,18 +321,40 @@ function pickExtractionData(extractions: Awaited<ReturnType<typeof getDocumentEx
         return tb - ta;
     });
     const merged: Record<string, unknown> = {};
+    const tables: unknown[] = [];
     for (const ext of [...sorted].reverse()) {
-        if (String(ext.extraction_type || '') === 'table_extraction') continue;
+        if (String(ext.extraction_type || '') === 'table_extraction') {
+            const chunk = (ext.extracted_data || {}) as Record<string, unknown>;
+            if (Array.isArray(chunk.tables)) tables.push(...(chunk.tables as unknown[]));
+            if (typeof chunk.table_text === 'string' && !merged._table_text) {
+                merged._table_text = chunk.table_text;
+            }
+            continue;
+        }
         const chunk = (ext.extracted_data || {}) as Record<string, unknown>;
         Object.assign(merged, chunk);
     }
+    if (tables.length) merged._tables = tables;
     return normalizeExtractionPayload(merged);
 }
 
 async function extractionPayloadForDoc(
-    doc: { pythonDocumentId?: string | null; organizationId?: string | null; metadata?: unknown },
-    user: AuthUser
+    doc: {
+        documentId?: string;
+        pythonDocumentId?: string | null;
+        organizationId?: string | null;
+        metadata?: unknown;
+    },
+    user: AuthUser,
+    cache?: Map<string, Record<string, unknown>>,
+    stats?: { hits: number; misses: number }
 ): Promise<Record<string, unknown>> {
+    const cacheKey = doc.documentId || doc.pythonDocumentId || '';
+    if (cache && cacheKey && cache.has(cacheKey)) {
+        if (stats) stats.hits += 1;
+        return cache.get(cacheKey)!;
+    }
+    if (stats) stats.misses += 1;
     if (!doc.pythonDocumentId) return {};
     const orgId = resolveDocumentAiOrgId(doc as any, user);
     let extractions = await getDocumentExtractions(doc.pythonDocumentId, orgId);
@@ -234,17 +362,25 @@ async function extractionPayloadForDoc(
         extractions = await getDocumentExtractions(doc.pythonDocumentId, '');
     }
     let data = pickExtractionData(extractions);
-    if (!Object.keys(data).length || inferDocumentTotal(data) == null) {
-        const aiDoc = await getAiDocument(doc.pythonDocumentId, orgId);
-        const meta = aiDoc?.extracted_data;
-        if (meta && typeof meta === 'object') {
+    // Always pull raw_text so xlsx / OCR-only files can be row-parsed. Not just when
+    // extraction is missing.
+    const aiDoc = await getAiDocument(doc.pythonDocumentId, orgId);
+    if (aiDoc && typeof aiDoc === 'object') {
+        const rawText = (aiDoc as Record<string, unknown>).raw_text;
+        if (typeof rawText === 'string' && rawText && !data._raw_text) {
+            data._raw_text = rawText;
+        }
+        const meta = (aiDoc as Record<string, unknown>).extracted_data;
+        if ((!Object.keys(data).length || inferDocumentTotal(data) == null) && meta && typeof meta === 'object') {
             data = normalizeExtractionPayload({
                 ...data,
                 ...(meta as Record<string, unknown>),
             });
         }
     }
-    return preferPrintedInvoiceTotal(normalizeExtractionPayload(data));
+    const result = preferPrintedInvoiceTotal(normalizeExtractionPayload(data));
+    if (cache && cacheKey) cache.set(cacheKey, result);
+    return result;
 }
 
 /** Prefer printed total_amount when line_items sum disagrees (common OCR/LLM failure). */
@@ -281,8 +417,14 @@ function preferPrintedInvoiceTotal(data: Record<string, unknown>): Record<string
     return data;
 }
 
+function normalizePoNumber(raw: unknown): string {
+    const s = scalarField(raw);
+    if (!s) return '';
+    return s.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 function makeRecord(
-    doc: { documentId: string; originalFilename: string },
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
     vendor: string,
     client: string,
     total: number,
@@ -290,6 +432,15 @@ function makeRecord(
     data: Record<string, unknown>
 ): FinanceRecord {
     const cur = (currency || scalarField(data.currency) || 'USD').toUpperCase().slice(0, 3);
+    const poNumber =
+        normalizePoNumber(data.po_number) ||
+        normalizePoNumber(data.purchase_order_number) ||
+        normalizePoNumber(data['PO Number']) ||
+        normalizePoNumber(data['Purchase Order']) ||
+        normalizePoNumber(data.purchase_order) ||
+        normalizePoNumber(data.reference_number) ||
+        normalizePoNumber(data.order_number);
+    const invoiceNumber = scalarField(data.invoice_number) || scalarField(data['Invoice Number']);
     return {
         documentId: doc.documentId,
         filename: doc.originalFilename,
@@ -299,6 +450,9 @@ function makeRecord(
         currency: cur,
         invoiceDate: parseDate(data.invoice_date || data.document_date || data.date),
         dueDate: parseDate(data.due_date || data.payment_due_date),
+        classification: doc.classification ? String(doc.classification).toLowerCase() : undefined,
+        poNumber: poNumber || undefined,
+        invoiceNumber: invoiceNumber || undefined,
     };
 }
 
@@ -306,6 +460,12 @@ function isStandardInvoiceExtraction(
     data: Record<string, unknown>,
     doc?: { originalFilename?: string }
 ): boolean {
+    const fn = (doc?.originalFilename || '').toLowerCase();
+    const isSpreadsheet =
+        /\.(xlsx?|csv|tsv|ods)$/i.test(fn) ||
+        /sheet|table|ledger|spreadsheet|excel|csv/i.test(String(data.document_type || ''));
+    if (isSpreadsheet) return false;
+
     const inv =
         scalarField(data.invoice_number) ||
         scalarField(data.invoice_no) ||
@@ -315,17 +475,269 @@ function isStandardInvoiceExtraction(
     return Boolean(inv && total != null && total > 0 && vendor !== 'Unknown vendor');
 }
 
+/** True if the file looks like a spreadsheet (xlsx/csv/etc.). */
+function isSpreadsheetFilename(filename?: string): boolean {
+    return /\.(xlsx?|csv|tsv|ods)$/i.test(filename || '');
+}
+
+/** Parse a markdown pipe table into rows of `{ header: value }`. */
+function parseMarkdownTable(block: string): Array<Record<string, string>> {
+    const lines = block.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('|'));
+    if (lines.length < 2) return [];
+    const cells = (line: string) =>
+        line
+            .replace(/^\|/, '')
+            .replace(/\|$/, '')
+            .split('|')
+            .map((c) => c.trim());
+    const header = cells(lines[0]).map((h) => h.toLowerCase());
+    // lines[1] is separator (---); data starts at 2
+    const rows: Array<Record<string, string>> = [];
+    for (let i = 2; i < lines.length; i++) {
+        const c = cells(lines[i]);
+        if (!c.length || c.every((x) => !x)) continue;
+        const row: Record<string, string> = {};
+        for (let j = 0; j < header.length; j++) row[header[j] || `col_${j}`] = c[j] ?? '';
+        rows.push(row);
+    }
+    return rows;
+}
+
+/** Extract markdown pipe-tables from raw_text (OCR often produces them). */
+function extractMarkdownTables(rawText: string): Array<Array<Record<string, string>>> {
+    if (!rawText) return [];
+    const blocks: string[] = [];
+    const lines = rawText.split('\n');
+    let buf: string[] = [];
+    for (const line of lines) {
+        if (line.trim().startsWith('|')) {
+            buf.push(line);
+        } else if (buf.length) {
+            if (buf.length >= 2) blocks.push(buf.join('\n'));
+            buf = [];
+        }
+    }
+    if (buf.length >= 2) blocks.push(buf.join('\n'));
+    return blocks.map(parseMarkdownTable).filter((rows) => rows.length > 0);
+}
+
+const AMOUNT_HEADERS = /^(?:amount|total|total\s*amount|grand\s*total|net\s*amount|value|price|paid|payable|payment)$/i;
+const VENDOR_HEADERS = /^(?:vendor|supplier|merchant|payee|seller|from|company)$/i;
+const CLIENT_HEADERS = /^(?:client|customer|buyer|bill[\s_]?to|sold[\s_]?to|account|to)$/i;
+const DATE_HEADERS = /^(?:date|invoice[\s_]?date|billing[\s_]?date|txn[\s_]?date|transaction[\s_]?date)$/i;
+const CURRENCY_HEADERS = /^(?:currency|ccy)$/i;
+const INVOICE_HEADERS = /^(?:invoice|invoice[\s_]?number|invoice[\s_]?no|inv[\s_]?#|inv[\s_]?no)$/i;
+const PO_HEADERS = /^(?:po|po[\s_]?number|purchase[\s_]?order|order[\s_]?number|reference|ref)$/i;
+
+function normalizeHeaderKey(h: string): string {
+    return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function findHeaderIndex(headers: string[], kind: 'amount' | 'vendor' | 'client'): number {
+    const normalized = headers.map(normalizeHeaderKey);
+    for (let i = 0; i < normalized.length; i++) {
+        const h = normalized[i];
+        if (!h) continue;
+        if (kind === 'amount') {
+            if (
+                /invoice\s*(no|number|#)|inv\s*#|qty|quantity|unit|count|rate|date|currency|month|year/i.test(h) &&
+                !/amount|spend|total|payable|payment|value|price/i.test(h)
+            ) {
+                continue;
+            }
+            if (/(amount|spend|total|payable|payment|value|price|pkr|usd|eur|gbp)/i.test(h)) {
+                return i;
+            }
+        }
+        if (kind === 'vendor') {
+            if (
+                /^(vendor|supplier|seller|merchant|payee|from|company)(\s+name)?$/i.test(h) ||
+                /^vendor\b/i.test(h) ||
+                /\bvendor\s+name\b/i.test(h)
+            ) {
+                return i;
+            }
+        }
+        if (kind === 'client') {
+            if (
+                /^(client|customer|buyer|account)(\s+name)?$/i.test(h) ||
+                /\bclient\s+name\b/i.test(h) ||
+                /\bcustomer\s+name\b/i.test(h) ||
+                /bill\s*to|sold\s*to/i.test(h)
+            ) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+function detectColumn(header: string[], match: RegExp): number {
+    for (let i = 0; i < header.length; i++) {
+        if (match.test(header[i])) return i;
+    }
+    return -1;
+}
+
+/** Turn a parsed spreadsheet table into FinanceRecords (one per row with amount + vendor|client). */
+function recordsFromTableRows(
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
+    tableRows: Array<Record<string, string>>,
+    defaults: { vendor: string; client: string; currency: string; classification?: string | null },
+    vendorAliases?: Record<string, string>,
+): FinanceRecord[] {
+    if (!tableRows.length) return [];
+    const header = Object.keys(tableRows[0]);
+    const amtKeyIdx = findHeaderIndex(header, 'amount');
+    const amtIdx =
+        amtKeyIdx >= 0
+            ? amtKeyIdx
+            : detectColumn(header.map(normalizeHeaderKey), AMOUNT_HEADERS);
+    if (amtIdx < 0) return [];
+    const vendorIdx = findHeaderIndex(header, 'vendor');
+    const clientIdx = findHeaderIndex(header, 'client');
+    const dateIdx = detectColumn(header.map(normalizeHeaderKey), DATE_HEADERS);
+    const curIdx = detectColumn(header.map(normalizeHeaderKey), CURRENCY_HEADERS);
+    const invIdx = detectColumn(header.map(normalizeHeaderKey), INVOICE_HEADERS);
+    const poIdx = detectColumn(header.map(normalizeHeaderKey), PO_HEADERS);
+
+    const cellAt = (row: Record<string, string>, idx: number) =>
+        idx >= 0 && idx < header.length ? String(row[header[idx]] ?? '').trim() : '';
+
+    const out: FinanceRecord[] = [];
+    for (const row of tableRows) {
+        const amount = parseNumber(cellAt(row, amtIdx));
+        if (amount == null || amount <= 0) continue;
+        const vendor = cellAt(row, vendorIdx) || defaults.vendor;
+        const client = cellAt(row, clientIdx) || defaults.client;
+        const currency = cellAt(row, curIdx).toUpperCase().slice(0, 3) || defaults.currency;
+        const dateStr = cellAt(row, dateIdx);
+        const invoiceNumber = cellAt(row, invIdx);
+        const poNumber = cellAt(row, poIdx);
+        const stub: Record<string, unknown> = {
+            invoice_date: dateStr || undefined,
+            invoice_number: invoiceNumber || undefined,
+            po_number: poNumber || undefined,
+            currency,
+        };
+        out.push(
+            makeRecord(
+                { ...doc, classification: defaults.classification ?? doc.classification },
+                resolveVendorDisplayName(vendor, vendorAliases),
+                client,
+                amount,
+                currency,
+                stub,
+            ),
+        );
+    }
+    return out;
+}
+
+/** Spreadsheet-shaped extractor: row-by-row FinanceRecords. */
+function recordsFromStructuredRowArrays(
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
+    data: Record<string, unknown>,
+    defaults: { vendor: string; client: string; currency: string; classification?: string | null },
+    vendorAliases?: Record<string, string>
+): FinanceRecord[] {
+    const spreadsheetRows =
+        data.rows ||
+        data.records ||
+        data.transactions ||
+        data.entries ||
+        data.data ||
+        data.items ||
+        data.sheet_data;
+    if (!Array.isArray(spreadsheetRows) || !spreadsheetRows.length) return [];
+
+    const asObjects: Array<Record<string, string>> = [];
+    for (const item of spreadsheetRows) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        const rec: Record<string, string> = {};
+        for (const [k, v] of Object.entries(row)) {
+            rec[normalizeHeaderKey(String(k))] = String(v ?? '').trim();
+        }
+        if (Object.keys(rec).length) asObjects.push(rec);
+    }
+    if (asObjects.length) {
+        return recordsFromTableRows(doc, asObjects, defaults, vendorAliases);
+    }
+    return [];
+}
+
+function recordsFromSpreadsheet(
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
+    data: Record<string, unknown>,
+    vendorAliases?: Record<string, string>,
+): FinanceRecord[] {
+    const defaults = {
+        vendor: resolveVendorDisplayName(pickVendor(data, doc.originalFilename), vendorAliases),
+        client: pickClient(data),
+        currency: (scalarField(data.currency) || 'USD').toUpperCase().slice(0, 3),
+        classification: doc.classification ?? null,
+    };
+
+    const fromJson = recordsFromStructuredRowArrays(doc, data, defaults, vendorAliases);
+    if (fromJson.length) return fromJson;
+
+    // 1) Prefer table_extraction payload's `tables` (OCR-detected).
+    const tables = Array.isArray(data._tables) ? (data._tables as unknown[]) : [];
+    const collected: FinanceRecord[] = [];
+    for (const t of tables) {
+        if (!t || typeof t !== 'object') continue;
+        const rowsRaw = (t as Record<string, unknown>).rows;
+        const headersRaw = (t as Record<string, unknown>).headers;
+        if (!Array.isArray(rowsRaw)) continue;
+        const headers = Array.isArray(headersRaw)
+            ? (headersRaw as unknown[]).map((h) => String(h ?? '').toLowerCase())
+            : [];
+        const tableRows: Array<Record<string, string>> = (rowsRaw as unknown[])
+            .filter((r) => Array.isArray(r))
+            .map((r) => {
+                const cells = r as unknown[];
+                const rec: Record<string, string> = {};
+                for (let i = 0; i < cells.length; i++) {
+                    const key = headers[i] || `col_${i}`;
+                    rec[key] = String(cells[i] ?? '').trim();
+                }
+                return rec;
+            });
+        collected.push(...recordsFromTableRows(doc, tableRows, defaults, vendorAliases));
+    }
+    if (collected.length) return collected;
+
+    // 2) Fallback: parse markdown pipe-tables inside raw_text.
+    const rawText = typeof data._raw_text === 'string' ? (data._raw_text as string) : '';
+    for (const tableRows of extractMarkdownTables(rawText)) {
+        collected.push(...recordsFromTableRows(doc, tableRows, defaults, vendorAliases));
+    }
+    return collected;
+}
+
 /**
  * Build finance rows for one document. Prefer one row per invoice (vendor + total_amount).
  * Avoids LLM-hallucinated vendor_breakdown on single invoices and line-item double counting.
  */
 function recordsFromExtraction(
-    doc: { documentId: string; originalFilename: string },
-    data: Record<string, unknown>
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
+    data: Record<string, unknown>,
+    vendorAliases?: Record<string, string>
 ): FinanceRecord[] {
+    // Spreadsheet-first: xlsx / csv → one record per meaningful row.
+    if (isSpreadsheetFilename(doc.originalFilename)) {
+        const sheetRecords = recordsFromSpreadsheet(doc, data, vendorAliases);
+        if (sheetRecords.length) return sheetRecords;
+        return [];
+    }
+
     const currency = scalarField(data.currency) || 'USD';
     const client = pickClient(data);
-    const defaultVendor = pickVendor(data, doc.originalFilename);
+    const defaultVendor = resolveVendorDisplayName(
+        pickVendor(data, doc.originalFilename),
+        vendorAliases
+    );
     const invoiceDate = parseDate(data.invoice_date || data.document_date || data.date);
     const dueDate = parseDate(data.due_date || data.payment_due_date);
 
@@ -341,6 +753,41 @@ function recordsFromExtraction(
     }
 
     const records: FinanceRecord[] = [];
+
+    const spreadsheetRows =
+        data.rows ||
+        data.records ||
+        data.transactions ||
+        data.entries ||
+        data.data ||
+        data.items;
+    if (Array.isArray(spreadsheetRows) && spreadsheetRows.length > 0) {
+        for (const item of spreadsheetRows) {
+            if (!item || typeof item !== 'object') continue;
+            const row = item as Record<string, unknown>;
+            const total =
+                parseNumber(row.amount) ??
+                parseNumber(row.total) ??
+                parseNumber(row.total_amount) ??
+                parseNumber(row.price) ??
+                (parseNumber(row.quantity) != null && parseNumber(row.unit_price) != null
+                    ? Number(row.quantity) * Number(row.unit_price)
+                    : null);
+            if (total == null || total <= 0) continue;
+            const vendor =
+                scalarField(row.vendor_name) ||
+                scalarField(row.vendor) ||
+                scalarField(row.supplier) ||
+                defaultVendor;
+            const rowClient =
+                scalarField(row.client_name) ||
+                scalarField(row.client) ||
+                scalarField(row.customer) ||
+                client;
+            records.push(makeRecord(doc, vendor, rowClient, total, currency, row));
+        }
+        if (records.length) return records;
+    }
 
     const docType = scalarField(data.document_type).toLowerCase();
     const allowVendorBreakdown =
@@ -443,6 +890,15 @@ function recordsFromExtraction(
     return records;
 }
 
+/** Test / fixture hook — build chart rows from extraction JSON without DB. */
+export function buildFinanceRecordsFromExtraction(
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
+    data: Record<string, unknown>,
+    vendorAliases?: Record<string, string>
+): FinanceRecord[] {
+    return recordsFromExtraction(doc, data, vendorAliases);
+}
+
 async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
     const results: R[] = [];
     let i = 0;
@@ -471,6 +927,11 @@ function buildFinanceScopeQuery(filter: Record<string, unknown>, documentIds?: s
                     $regex: /invoice|inv[_\-.]|bill|receipt|expense|statement/i,
                 },
             },
+            {
+                originalFilename: {
+                    $regex: /\.(xlsx?|xls|csv|tsv)$/i,
+                },
+            },
         ],
     };
     if (documentIds?.length) {
@@ -483,9 +944,20 @@ function buildFinanceScopeQuery(filter: Record<string, unknown>, documentIds?: s
 export type FinanceFileCoverage = {
     documentId: string;
     filename: string;
-    status: 'in_charts' | 'missing_amount' | 'no_extraction' | 'not_linked';
+    status:
+        | 'in_charts'
+        | 'missing_amount'
+        | 'no_extraction'
+        | 'not_linked'
+        | 'unsupported_format';
     detail?: string;
 };
+
+const UNSUPPORTED_FINANCE_EXTENSIONS = /\.(xlsx|xls|csv|tsv|numbers|ods)$/i;
+
+function isUnsupportedFinanceFile(filename: string): boolean {
+    return UNSUPPORTED_FINANCE_EXTENSIONS.test(filename || '');
+}
 
 export async function buildFinanceFileCoverage(
     user: AuthUser,
@@ -513,6 +985,16 @@ export async function buildFinanceFileCoverage(
             });
             continue;
         }
+        if (isUnsupportedFinanceFile(doc.originalFilename)) {
+            report.push({
+                documentId: doc.documentId,
+                filename: doc.originalFilename,
+                status: 'unsupported_format',
+                detail:
+                    'Spreadsheet parsed but no rows matched an "amount / total" column — check column headers or reprocess.',
+            });
+            continue;
+        }
         if (!doc.pythonDocumentId) {
             report.push({
                 documentId: doc.documentId,
@@ -522,7 +1004,7 @@ export async function buildFinanceFileCoverage(
             });
             continue;
         }
-        const data = await extractionPayloadForDoc(doc, user);
+        const data = await extractionPayloadForDoc(doc, user, options.extractionCache, options.extractionStats);
         const keys = Object.keys(data).filter((k) => !k.startsWith('_'));
         if (!keys.length) {
             report.push({
@@ -536,7 +1018,11 @@ export async function buildFinanceFileCoverage(
         const total = inferDocumentTotal(data);
         const vendor = pickVendor(data, doc.originalFilename);
         const hints: string[] = [];
-        if (total == null) hints.push('no total_amount/subtotal');
+        if (total == null) {
+            hints.push(
+                'no total_amount / subtotal / grand_total / amount_due / line_items — reprocess as **invoice** so an amount is captured',
+            );
+        }
         if (vendor === 'Unknown vendor') hints.push('no vendor_name');
         report.push({
             documentId: doc.documentId,
@@ -544,8 +1030,8 @@ export async function buildFinanceFileCoverage(
             status: 'missing_amount',
             detail:
                 hints.length > 0
-                    ? `Extraction ran but ${hints.join(' and ')}. Fields found: ${keys.slice(0, 6).join(', ')}${keys.length > 6 ? '…' : ''}.`
-                    : `Extraction present but could not build a chart row (${keys.slice(0, 6).join(', ')}).`,
+                    ? `Extraction ran but ${hints.join(' and ')}. Fields found: ${keys.slice(0, 8).join(', ')}${keys.length > 8 ? '…' : ''}.`
+                    : `Extraction present but could not build a chart row (${keys.slice(0, 8).join(', ')}).`,
         });
     }
     return report;
@@ -553,6 +1039,14 @@ export async function buildFinanceFileCoverage(
 
 export async function loadFinanceRecords(user: AuthUser, options: LoadFinanceOptions = {}): Promise<FinanceRecord[]> {
     const maxDocs = options.maxDocs ?? 200;
+    let vendorAliases = options.vendorAliases;
+    let baseCurrency = options.baseCurrency;
+    if ((!vendorAliases || !baseCurrency) && user.organizationId) {
+        const orgFin = await getOrgFinanceSettings(user.organizationId);
+        vendorAliases = vendorAliases ?? orgFin.vendorAliases;
+        baseCurrency = baseCurrency ?? orgFin.baseCurrency;
+    }
+
     const filter = await buildDocumentFilter(user, {});
     const query = buildFinanceScopeQuery(filter, options.documentIds);
 
@@ -566,8 +1060,8 @@ export async function loadFinanceRecords(user: AuthUser, options: LoadFinanceOpt
 
     const nested = await mapPool(docs, 6, async (doc) => {
         try {
-            const data = await extractionPayloadForDoc(doc, user);
-            return recordsFromExtraction(doc, data);
+            const data = await extractionPayloadForDoc(doc, user, options.extractionCache, options.extractionStats);
+            return recordsFromExtraction(doc, data, vendorAliases);
         } catch {
             return [] as FinanceRecord[];
         }
@@ -576,12 +1070,13 @@ export async function loadFinanceRecords(user: AuthUser, options: LoadFinanceOpt
     return nested.flat();
 }
 
-function dominantCurrency(records: FinanceRecord[]): string {
+function dominantCurrency(records: FinanceRecord[], preferred?: string): string {
     const counts = new Map<string, number>();
     for (const r of records) {
         counts.set(r.currency, (counts.get(r.currency) || 0) + 1);
     }
-    let best = 'USD';
+    if (preferred && counts.has(preferred)) return preferred;
+    let best = preferred || 'USD';
     let max = 0;
     for (const [c, n] of counts) {
         if (n > max) {
@@ -599,7 +1094,8 @@ function docIdsField(ids: Set<string>): string {
 export function computeFinanceCoverage(
     records: FinanceRecord[],
     documentsInScope: number,
-    files?: FinanceFileCoverage[]
+    files?: FinanceFileCoverage[],
+    warnings?: string[]
 ): FinanceAnalyticsCoverage {
     const withAmount = new Set(records.map((r) => r.documentId));
     const withClient = new Set(records.filter((r) => r.client.trim()).map((r) => r.documentId));
@@ -612,20 +1108,201 @@ export function computeFinanceCoverage(
         documentsWithClient: withClient.size,
         documentsWithVendor: withVendor.size,
         files,
+        warnings: warnings?.length ? warnings.slice(0, 10) : undefined,
     };
+}
+
+/** Group records that look like the same real invoice (used for both warnings and dedupe). */
+function groupDuplicateRecords(records: FinanceRecord[]): Map<string, FinanceRecord[]> {
+    const byKey = new Map<string, FinanceRecord[]>();
+    for (const r of records) {
+        // Prefer invoice_number when present — most reliable duplicate signal.
+        const invKey = r.invoiceNumber
+            ? `INV|${(canonicalizePartyName(r.vendor) || r.vendor.toLowerCase())}|${r.invoiceNumber.trim().toUpperCase()}|${r.currency}`
+            : null;
+        const amt = Math.round(r.total * 100) / 100;
+        const day = r.invoiceDate ? r.invoiceDate.toISOString().slice(0, 10) : 'unknown-date';
+        const fallbackKey = `AMT|${canonicalizePartyName(r.vendor) || r.vendor.toLowerCase()}|${r.currency}|${amt}|${day}`;
+        const key = invKey || fallbackKey;
+        const arr = byKey.get(key) || [];
+        arr.push(r);
+        byKey.set(key, arr);
+    }
+    return byKey;
+}
+
+/** Same vendor + amount + currency + invoice day (or same invoice number) → likely duplicate upload. */
+export function findDuplicateInvoiceWarnings(records: FinanceRecord[]): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    // Strict: same invoice_number + vendor
+    const byInv = new Map<string, FinanceRecord[]>();
+    for (const r of records) {
+        if (!r.invoiceNumber) continue;
+        const key = `${(canonicalizePartyName(r.vendor) || r.vendor.toLowerCase())}|${r.invoiceNumber.trim().toUpperCase()}|${r.currency}`;
+        (byInv.get(key) || byInv.set(key, []).get(key)!).push(r);
+    }
+    for (const [, g] of byInv) {
+        const docs = new Set(g.map((r) => r.documentId));
+        if (docs.size < 2) continue;
+        const names = [...new Set(g.map((r) => r.filename))];
+        const sig = `inv:${names.slice(0, 3).join('|')}`;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        out.push(
+            `Possible duplicate: **${names.slice(0, 3).join('**, **')}** share vendor + invoice number.`,
+        );
+    }
+    // Weaker: same vendor + amount + currency + date (catches OCR that missed invoice_number)
+    const byAmt = new Map<string, FinanceRecord[]>();
+    for (const r of records) {
+        const amt = Math.round(r.total * 100) / 100;
+        const day = r.invoiceDate ? r.invoiceDate.toISOString().slice(0, 10) : 'unknown-date';
+        const key = `${canonicalizePartyName(r.vendor) || r.vendor.toLowerCase()}|${r.currency}|${amt}|${day}`;
+        (byAmt.get(key) || byAmt.set(key, []).get(key)!).push(r);
+    }
+    for (const [, g] of byAmt) {
+        const docs = new Set(g.map((r) => r.documentId));
+        if (docs.size < 2) continue;
+        const names = [...new Set(g.map((r) => r.filename))];
+        const sig = `amt:${names.slice(0, 3).join('|')}`;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        out.push(
+            `Possible duplicate: **${names.slice(0, 3).join('**, **')}** share vendor, amount, and invoice date.`,
+        );
+    }
+    return out.slice(0, 5);
+}
+
+/**
+ * Drop duplicate invoices before aggregation so totals aren't inflated.
+ * Keeps the record whose document was uploaded/updated most recently (assumed sort order).
+ * Returns dedupedRecords + list of duplicate document ids that were dropped.
+ */
+export function dedupeFinanceRecords(records: FinanceRecord[]): {
+    records: FinanceRecord[];
+    droppedDocumentIds: string[];
+    droppedFilenames: string[];
+} {
+    const groups = groupDuplicateRecords(records);
+    const keep: FinanceRecord[] = [];
+    const droppedDocumentIds: string[] = [];
+    const droppedFilenames: string[] = [];
+    for (const [, g] of groups) {
+        if (g.length === 1) {
+            keep.push(g[0]);
+            continue;
+        }
+        // Keep first occurrence (docs are sorted createdAt desc → newest wins).
+        keep.push(g[0]);
+        for (const dup of g.slice(1)) {
+            if (dup.documentId !== g[0].documentId) {
+                droppedDocumentIds.push(dup.documentId);
+                droppedFilenames.push(dup.filename);
+            }
+        }
+    }
+    return { records: keep, droppedDocumentIds: [...new Set(droppedDocumentIds)], droppedFilenames: [...new Set(droppedFilenames)] };
+}
+
+export type PoInvoicePair = {
+    poNumber: string;
+    vendor: string;
+    currency: string;
+    poDocumentId?: string;
+    poFilename?: string;
+    poAmount?: number;
+    invoiceDocumentIds: string[];
+    invoiceFilenames: string[];
+    invoicedAmount: number;
+    variance: number;
+    variancePct: number | null;
+    /** 'matched' | 'over_invoiced' | 'under_invoiced' | 'po_only' | 'invoice_only' */
+    status: 'matched' | 'over_invoiced' | 'under_invoiced' | 'po_only' | 'invoice_only';
+};
+
+/** Pair purchase_order records with invoice records by po_number + vendor + currency. */
+export function pairPurchaseOrdersWithInvoices(records: FinanceRecord[]): PoInvoicePair[] {
+    const groups = new Map<string, { po?: FinanceRecord; invoices: FinanceRecord[] }>();
+    for (const r of records) {
+        if (!r.poNumber) continue;
+        const vendorKey = canonicalizePartyName(r.vendor) || r.vendor.toLowerCase();
+        const key = `${r.poNumber}|${vendorKey}|${r.currency}`;
+        const g = groups.get(key) || { invoices: [] };
+        const cls = (r.classification || '').toLowerCase();
+        if (cls === 'purchase_order' || cls === 'po' || cls === 'quotation') {
+            // Keep the largest PO if multiple (usually the header total, not a line).
+            if (!g.po || r.total > g.po.total) g.po = r;
+        } else {
+            g.invoices.push(r);
+        }
+        groups.set(key, g);
+    }
+    const pairs: PoInvoicePair[] = [];
+    for (const [key, g] of groups) {
+        const [poNumber] = key.split('|');
+        const anchor = g.po || g.invoices[0];
+        if (!anchor) continue;
+        const invoicedAmount = g.invoices.reduce((s, r) => s + r.total, 0);
+        const poAmount = g.po?.total ?? 0;
+        const variance = invoicedAmount - poAmount;
+        const variancePct = poAmount > 0 ? Math.round((variance / poAmount) * 1000) / 10 : null;
+        let status: PoInvoicePair['status'];
+        if (g.po && !g.invoices.length) status = 'po_only';
+        else if (!g.po && g.invoices.length) status = 'invoice_only';
+        else if (Math.abs(variance) <= Math.max(1, poAmount * 0.02)) status = 'matched';
+        else if (variance > 0) status = 'over_invoiced';
+        else status = 'under_invoiced';
+        pairs.push({
+            poNumber,
+            vendor: anchor.vendor,
+            currency: anchor.currency,
+            poDocumentId: g.po?.documentId,
+            poFilename: g.po?.filename,
+            poAmount: g.po?.total,
+            invoiceDocumentIds: g.invoices.map((r) => r.documentId),
+            invoiceFilenames: g.invoices.map((r) => r.filename),
+            invoicedAmount,
+            variance,
+            variancePct,
+            status,
+        });
+    }
+    return pairs.sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
+}
+
+export function formatPoPairingTable(pairs: PoInvoicePair[], maxRows = 15): string {
+    if (!pairs.length) return '';
+    const rows = pairs.slice(0, maxRows);
+    const lines = [
+        `| PO | Vendor | PO amount | Invoiced | Variance | Status |`,
+        `| --- | --- | ---: | ---: | ---: | --- |`,
+        ...rows.map((p) => {
+            const cur = p.currency;
+            const poAmt = p.poAmount != null ? p.poAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+            const invAmt = p.invoicedAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const varStr = `${p.variance >= 0 ? '+' : ''}${p.variance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${p.variancePct != null ? ` (${p.variancePct}%)` : ''}`;
+            const statusLabel = p.status === 'matched' ? '✅ matched' : p.status === 'over_invoiced' ? '⚠️ over-invoiced' : p.status === 'under_invoiced' ? 'ℹ️ under-invoiced' : p.status === 'po_only' ? '📋 PO only' : '🧾 invoice only';
+            return `| ${p.poNumber} | ${p.vendor.replace(/\|/g, '\\|')} | ${cur} ${poAmt} | ${cur} ${invAmt} | ${varStr} | ${statusLabel} |`;
+        }),
+    ];
+    return lines.join('\n');
 }
 
 function aggregateByParty(
     records: FinanceRecord[],
     party: 'vendor' | 'client',
-    maxBars = 20
+    maxBars = 20,
+    vendorAliases?: Record<string, string>,
+    preferredCurrency?: string
 ): { rows: ChatVisualDataRow[]; currency: string; docCount: number } {
     const groups = new Map<string, { label: string; amount: number; currency: string; docs: Set<string> }>();
 
     for (const r of records) {
         const raw = party === 'vendor' ? r.vendor : r.client;
         if (!raw?.trim()) continue;
-        const key = `${normalizePartyKey(raw)}::${r.currency}`;
+        const key = `${normalizePartyKey(raw, party === 'vendor' ? vendorAliases : undefined)}::${r.currency}`;
         const existing = groups.get(key);
         if (existing) {
             existing.amount += r.total;
@@ -641,7 +1318,7 @@ function aggregateByParty(
     }
 
     const sorted = [...groups.values()].sort((a, b) => b.amount - a.amount).slice(0, maxBars);
-    const currency = dominantCurrency(records);
+    const currency = dominantCurrency(records, preferredCurrency);
     const categoryKey = party === 'vendor' ? 'vendor' : 'client';
     const rows: ChatVisualDataRow[] = sorted.map((g) => ({
         [categoryKey]:
@@ -679,13 +1356,23 @@ export function formatVendorSpendTable(records: FinanceRecord[], maxRows = 25): 
     return lines.join('\n');
 }
 
-export function buildVendorSpendVisual(records: FinanceRecord[]): ChatVisualSpec {
-    const { rows, currency, docCount } = aggregateByParty(records, 'vendor', 20);
+export function buildVendorSpendVisual(
+    records: FinanceRecord[],
+    opts?: { vendorAliases?: Record<string, string>; baseCurrency?: string }
+): ChatVisualSpec {
+    const { rows, currency, docCount } = aggregateByParty(
+        records,
+        'vendor',
+        20,
+        opts?.vendorAliases,
+        opts?.baseCurrency
+    );
     const withVendor = records.filter((r) => r.vendor && r.vendor !== 'Unknown vendor');
     const sourceDocumentIds = [...new Set(records.map((r) => r.documentId))];
     const unknown = records.filter((r) => !r.vendor || r.vendor === 'Unknown vendor').length;
     const warnings: string[] = [];
     if (unknown) warnings.push(`${unknown} document(s) missing vendor_name — reprocess if labels look wrong.`);
+    warnings.push(...findDuplicateInvoiceWarnings(records));
     if (sourceDocumentIds.length === 1) {
         warnings.push(`Scoped to 1 file: ${records[0]?.filename || 'invoice'}.`);
     }
@@ -702,7 +1389,7 @@ export function buildVendorSpendVisual(records: FinanceRecord[]): ChatVisualSpec
         data: rows.length ? rows : [{ vendor: 'No vendor on file', amount: 0 }],
         sourceDocumentIds,
         dataQuality: {
-            level: unknown ? 'medium' : 'high',
+            level: unknown || warnings.length > 1 ? 'medium' : 'high',
             warnings: warnings.length ? warnings : undefined,
         },
         footer: withVendor.length
@@ -711,21 +1398,74 @@ export function buildVendorSpendVisual(records: FinanceRecord[]): ChatVisualSpec
     };
 }
 
+export function formatClientSpendTable(records: FinanceRecord[], maxRows = 100): string {
+    const clientRecords = records.filter((r) => r.client.trim());
+    const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', maxRows);
+    if (!rows.length) return '_No client totals — customer_name / bill_to missing on extractions._';
+    const lines = [
+        `| Client | Total (${currency}) | Invoices |`,
+        `| --- | ---: | ---: |`,
+        ...rows.map((r) => {
+            const client = String(r.client ?? '');
+            const amount = Number(r.amount ?? 0);
+            const ids = String(r._documentIds || '');
+            const invCount = ids ? ids.split(',').filter(Boolean).length : 0;
+            return `| ${client.replace(/\|/g, '\\|')} | ${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | ${invCount || '—'} |`;
+        }),
+    ];
+    lines.push('');
+    lines.push(`**Clients in chart:** ${rows.length} · **Invoice documents:** ${docCount}`);
+    return lines.join('\n');
+}
+
 export function buildClientSpendVisual(records: FinanceRecord[]): ChatVisualSpec {
     const clientRecords = records.filter((r) => r.client.trim());
-    const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', 20);
+    const missingClientRecords = records.filter((r) => !r.client.trim());
+    const maxBars = Math.min(100, Math.max(20, new Set(clientRecords.map((r) => r.client)).size));
+    const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', maxBars);
+
+    // Add a "Missing client" bucket so users see excluded totals instead of us hiding them.
+    const missingAmount = missingClientRecords
+        .filter((r) => r.currency === currency)
+        .reduce((sum, r) => sum + r.total, 0);
+    const missingDocIds = [...new Set(missingClientRecords.map((r) => r.documentId))];
+    const dataRows: ChatVisualDataRow[] = [...rows];
+    if (missingClientRecords.length) {
+        dataRows.push({
+            client: `Missing client (${missingClientRecords.length})`,
+            amount: Math.round(missingAmount * 100) / 100,
+            _documentIds: missingDocIds.join(','),
+        });
+    }
+
+    const totalRecords = records.length;
+    const missingRatio = totalRecords ? missingClientRecords.length / totalRecords : 0;
+    const warnings: string[] = [];
+    if (missingClientRecords.length) {
+        warnings.push(
+            `${missingClientRecords.length} of ${totalRecords} invoice(s) have no customer_name / bill_to / client_name — grouped under "Missing client".`
+        );
+    }
+    const quality: 'high' | 'medium' | 'low' =
+        missingRatio >= 0.5 ? 'low' : missingRatio >= 0.2 ? 'medium' : 'high';
 
     return {
         id: `fin_client_${Date.now()}`,
         agentId: FINANCE_AGENT,
         kind: 'bar',
         title: 'Revenue / spend by client',
-        subtitle: `${rows.length} client(s) · ${docCount} document(s) · primary ${currency}`,
+        subtitle: `${rows.length} client(s)${missingClientRecords.length ? ` + missing bucket` : ''} · ${docCount} document(s) · primary ${currency}`,
         currency,
         categoryKey: 'client',
         series: [{ key: 'amount', label: `Amount (${currency})`, color: '#4f46e5' }],
-        data: rows.length ? rows : [{ client: 'No client on file', amount: 0 }],
+        data: dataRows.length
+            ? dataRows
+            : [{ client: 'No client on file', amount: 0 }],
         footer: 'Grouped by customer_name, bill_to, or client_name from extractions.',
+        dataQuality: warnings.length ? { level: quality, warnings } : undefined,
+        emptyState: dataRows.length
+            ? undefined
+            : 'No invoices with a client field in scope. Reprocess so customer_name / bill_to are extracted.',
     };
 }
 
@@ -753,6 +1493,16 @@ export function buildMonthlyTrendVisual(records: FinanceRecord[]): ChatVisualSpe
             _documentIds: docIdsField(v.docs),
         }));
 
+    const missingDates = records.length - filtered.length;
+    const warnings: string[] = [];
+    if (!rows.length && records.length) {
+        warnings.push(
+            `${records.length} invoice(s) in scope, but none have an invoice_date extracted.`
+        );
+    } else if (missingDates > 0) {
+        warnings.push(`${missingDates} invoice(s) skipped — no invoice_date on extraction.`);
+    }
+
     return {
         id: `fin_trend_${Date.now()}`,
         agentId: FINANCE_AGENT,
@@ -764,6 +1514,12 @@ export function buildMonthlyTrendVisual(records: FinanceRecord[]): ChatVisualSpe
         series: [{ key: 'amount', label: `Total (${currency})`, color: '#0d9488' }],
         data: rows,
         footer: 'Grouped by invoice date from extracted metadata.',
+        emptyState: rows.length
+            ? undefined
+            : 'No invoice_date fields found on scoped invoices. Reprocess them so the trend can be plotted.',
+        dataQuality: warnings.length
+            ? { level: rows.length ? 'medium' : 'low', warnings }
+            : undefined,
     };
 }
 
@@ -845,6 +1601,34 @@ export function sumTotalsByCurrency(records: FinanceRecord[]): Map<string, numbe
     return map;
 }
 
+/**
+ * Convert every record to `baseCurrency` using org fxRates.
+ * Records whose currency has no rate keep their original value + currency (and are
+ * surfaced as `unconvertedCurrencies` so the UI can warn).
+ */
+export function convertRecordsToBase(
+    records: FinanceRecord[],
+    settings: { baseCurrency?: string; fxRates?: Record<string, number> },
+): { records: FinanceRecord[]; converted: number; unconvertedCurrencies: string[] } {
+    const base = settings.baseCurrency;
+    if (!base || !settings.fxRates || !Object.keys(settings.fxRates).length) {
+        return { records, converted: 0, unconvertedCurrencies: [] };
+    }
+    let converted = 0;
+    const missing = new Set<string>();
+    const out = records.map((r) => {
+        if (!r.currency || r.currency === base) return r;
+        const rate = settings.fxRates?.[r.currency];
+        if (!rate || rate <= 0) {
+            missing.add(r.currency);
+            return r;
+        }
+        converted += 1;
+        return { ...r, total: r.total / rate, currency: base };
+    });
+    return { records: out, converted, unconvertedCurrencies: [...missing] };
+}
+
 const QUESTION_STOP_WORDS = new Set([
     'give',
     'show',
@@ -893,9 +1677,29 @@ const QUESTION_STOP_WORDS = new Set([
     'vendors',
     'client',
     'clients',
+    'customers',
     'breakdown',
     'analytics',
     'overview',
+    'all',
+    'every',
+    'each',
+    'entire',
+    'whole',
+    'data',
+    'chat',
+    'what',
+    'across',
+    'scope',
+    'scoped',
+    'portfolio',
+    'list',
+    'lists',
+    'listing',
+    'clietns',
+    'clietn',
+    'cleints',
+    'cleint',
     'electronics', // too generic alone; digilog/bata still match
 ]);
 
@@ -952,7 +1756,7 @@ export function expandNameToken(token: string): string[] {
 
 /** Tokens from the question that might be a filename / vendor / invoice #. */
 export function extractDocumentNameTokens(question: string): string[] {
-    const normalized = question.toLowerCase().replace(/[^a-z0-9\s_-]/g, ' ');
+    const normalized = normalizeFinanceUserQuestion(question).replace(/[^a-z0-9\s_-]/g, ' ');
     const words = normalized
         .split(/\s+/)
         .map((w) => w.trim())
@@ -980,6 +1784,11 @@ export type NameMatchDoc = {
  * Returns only the best match(es) — never the whole scope.
  */
 export function matchDocumentIdsByNameTokens(docs: NameMatchDoc[], question: string): string[] {
+    if (wantsFinanceListAllScope(question)) return [];
+    const q = normalizeFinanceUserQuestion(question);
+    if (/\b(all|every|full|entire)\b/.test(q) && /\b(client|customer|vendor|supplier|lists?|data)\b/.test(q)) {
+        return [];
+    }
     const tokens = extractDocumentNameTokens(question);
     if (!tokens.length || !docs.length) return [];
 
@@ -1283,7 +2092,7 @@ export async function executeLineItemAnalytics(
     const answerParts: string[] = ['Here are the line items from your scoped documents (from extraction):', ''];
 
     for (const doc of docs) {
-        const data = await extractionPayloadForDoc(doc, user);
+        const data = await extractionPayloadForDoc(doc, user, loadOpts.extractionCache, loadOpts.extractionStats);
         const visual = buildLineItemsVisual(doc, data);
         const rows = extractLineItemRows(data);
         const currency = (scalarField(data.currency) || 'PKR').toUpperCase().slice(0, 3);
@@ -1360,4 +2169,35 @@ export async function countFinanceDocumentsInScope(
     const filter = await buildDocumentFilter(user, {});
     const query = buildFinanceScopeQuery(filter, documentIds);
     return Document.countDocuments(query);
+}
+
+/** All ready finance-classified document IDs the user can access (library-wide cap). */
+export async function listFinanceDocumentIdsForUser(
+    user: AuthUser,
+    maxDocs = 200
+): Promise<string[]> {
+    const filter = await buildDocumentFilter(user, {});
+    const query = buildFinanceScopeQuery(filter, undefined);
+    const docs = await Document.find(query)
+        .select('documentId')
+        .sort({ createdAt: -1 })
+        .limit(maxDocs)
+        .lean();
+    return docs.map((d) => d.documentId).filter(Boolean);
+}
+
+/**
+ * Portfolio finance asks use every finance-ready doc the user can access,
+ * merged with explicit chat selection (deduped).
+ */
+export async function resolveFinancePortfolioDocumentIds(
+    user: AuthUser,
+    chatScopedIds?: string[],
+    maxDocs = 200
+): Promise<string[]> {
+    const library = await listFinanceDocumentIdsForUser(user, maxDocs);
+    const selected = (chatScopedIds || []).filter(Boolean);
+    if (!selected.length) return library;
+    const set = new Set([...selected, ...library]);
+    return [...set].slice(0, maxDocs);
 }

@@ -47,10 +47,17 @@ export type FinanceAnalyticsCoverage = {
     documentsWithAmount: number;
     documentsWithClient: number;
     documentsWithVendor: number;
+    /** Duplicate invoices, alias hints, etc. */
+    warnings?: string[];
     files?: Array<{
         documentId: string;
         filename: string;
-        status: 'in_charts' | 'missing_amount' | 'no_extraction' | 'not_linked';
+        status:
+            | 'in_charts'
+            | 'missing_amount'
+            | 'no_extraction'
+            | 'not_linked'
+            | 'unsupported_format';
         detail?: string;
     }>;
 };

@@ -75,5 +75,8 @@ const DocumentSchema = new Schema<IDocument>(
 );
 
 DocumentSchema.index({ departmentId: 1, visibilityScope: 1 });
+DocumentSchema.index({ organizationId: 1, createdAt: -1 });
+DocumentSchema.index({ uploadedBy: 1, createdAt: -1 });
+DocumentSchema.index({ status: 1, createdAt: -1 });
 
 export default mongoose.model<IDocument>('Document', DocumentSchema);

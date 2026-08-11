@@ -4,6 +4,11 @@ import ApiKey, { AIProvider } from '../models/ApiKey';
 import { PERMISSIONS } from '../types/permissions';
 import { hasPermission } from '../services/accessScope';
 import { recordActivityFromReq } from '../services/activityLog';
+import {
+    getOrgFinanceSettings,
+    updateOrgFinanceSettings,
+    type OrgFinanceSettings,
+} from '../services/orgFinanceSettingsService';
 
 const PROVIDER_DEFAULTS: Record<AIProvider, { label: string; model: string; baseUrl?: string }> = {
     groq: { label: 'Groq', model: 'llama-3.3-70b-versatile', baseUrl: 'https://api.groq.com/openai/v1' },
@@ -290,6 +295,69 @@ export const setPrimaryProvider = async (req: Request, res: Response, next: Next
         });
 
         res.json({ success: true, message: `Primary provider set to ${provider}` });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/** Finance analytics defaults for the organization (vendor aliases, reporting currency). */
+export const getFinanceSettings = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const orgId = requireOrg(req);
+        if (!orgId) {
+            return res.status(400).json({ success: false, message: 'organizationId required' });
+        }
+        const settings = await getOrgFinanceSettings(orgId);
+        res.json({ success: true, data: { financeSettings: settings } });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const patchFinanceSettings = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!hasPermission(req.user, PERMISSIONS.PAGE_SETTINGS)) {
+            return res.status(403).json({ success: false, message: 'Missing permission: page.settings' });
+        }
+        const orgId = requireOrg(req);
+        if (!orgId) {
+            return res.status(400).json({ success: false, message: 'organizationId required' });
+        }
+        const body = (req.body || {}) as OrgFinanceSettings;
+        const patch: OrgFinanceSettings = {};
+        if (body.baseCurrency !== undefined) {
+            patch.baseCurrency = typeof body.baseCurrency === 'string' ? body.baseCurrency : '';
+        }
+        if (body.vendorAliases !== undefined) {
+            patch.vendorAliases =
+                body.vendorAliases && typeof body.vendorAliases === 'object' && !Array.isArray(body.vendorAliases)
+                    ? body.vendorAliases
+                    : {};
+        }
+        if (body.clientAliases !== undefined) {
+            patch.clientAliases =
+                body.clientAliases && typeof body.clientAliases === 'object' && !Array.isArray(body.clientAliases)
+                    ? body.clientAliases
+                    : {};
+        }
+        if (body.fyStartMonth !== undefined) {
+            patch.fyStartMonth = body.fyStartMonth as number;
+        }
+        if (body.fxRates !== undefined) {
+            patch.fxRates =
+                body.fxRates && typeof body.fxRates === 'object' && !Array.isArray(body.fxRates)
+                    ? (body.fxRates as Record<string, number>)
+                    : {};
+        }
+        const settings = await updateOrgFinanceSettings(orgId, patch);
+        recordActivityFromReq(req, {
+            action: 'settings.finance.update',
+            category: 'admin',
+            resourceType: 'organization',
+            resourceId: orgId,
+            message: 'Updated finance analytics settings',
+        });
+        res.json({ success: true, data: { financeSettings: settings } });
     } catch (error) {
         next(error);
     }

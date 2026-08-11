@@ -106,20 +106,44 @@ const COMPLIANCE_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
 ];
 
 function deriveKpis(visuals: ChatVisualSpec[]) {
-    const currency = visuals.find((v) => v.currency)?.currency;
+    const spendVisual =
+        visuals.find((v) => /vendor|invoice volume|trend/i.test(v.title)) ||
+        visuals.find((v) => v.currency && v.series[0]?.key);
+    const currency = spendVisual?.currency || visuals.find((v) => v.currency)?.currency;
     let primaryMetric: number | null = null;
-    const vendor = visuals.find((v) => /vendor/i.test(v.title));
-    const client = visuals.find((v) => /client/i.test(v.title));
-    const primary = vendor || client;
-    if (primary) {
-        const key = primary.series[0]?.key;
-        if (key) {
-            primaryMetric = primary.data.reduce((s, row) => s + Number(row[key] || 0), 0);
+    const totalsByCurrency = new Map<string, number>();
+
+    for (const v of visuals) {
+        const cur = v.currency;
+        const key = v.series[0]?.key;
+        if (!cur || !key || v.kind === "pie") continue;
+        if (!/vendor|client|invoice volume|trend|spend/i.test(v.title)) continue;
+        const sum = v.data.reduce((s, row) => s + Number(row[key] || 0), 0);
+        totalsByCurrency.set(cur, (totalsByCurrency.get(cur) || 0) + sum);
+    }
+
+    if (spendVisual) {
+        const key = spendVisual.series[0]?.key;
+        if (key && spendVisual.currency) {
+            primaryMetric = spendVisual.data.reduce((s, row) => s + Number(row[key] || 0), 0);
         }
     }
+
+    const multiCurrency =
+        totalsByCurrency.size > 1
+            ? [...totalsByCurrency.entries()]
+                  .sort((a, b) => b[1] - a[1])
+                  .map(
+                      ([c, a]) =>
+                          `${c} ${a.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                  )
+                  .join(" · ")
+            : null;
+
     return {
         currency,
         primaryMetric,
+        multiCurrency,
         chartCount: visuals.length,
     };
 }
@@ -315,6 +339,73 @@ export default function ChatAnalyticsSidePanel({
                     <AnalyticsSkeleton />
                 ) : visuals.length > 0 ? (
                     <div key={visualsKey || "visuals"} className="p-4 sm:p-5 lg:p-6 space-y-5">
+                        {coverage && agentId === "finance_agent" && "documentsWithAmount" in coverage && (
+                            <div className="rounded-xl border border-border bg-surface-2/40 px-3 py-2.5 text-[11px] text-foreground-muted leading-relaxed space-y-2">
+                                <p className="text-foreground">
+                                    <span className="font-semibold">Chat-scoped finance: </span>
+                                    <span className="tabular-nums font-semibold">{coverage.documentsInScope}</span>{" "}
+                                    file(s);{" "}
+                                    <span className="tabular-nums font-semibold">{coverage.documentsWithAmount}</span>{" "}
+                                    with amounts;{" "}
+                                    <span className="tabular-nums font-semibold">{coverage.documentsWithVendor}</span>{" "}
+                                    with vendors;{" "}
+                                    <span className="tabular-nums font-semibold">{coverage.documentsWithClient}</span>{" "}
+                                    with clients.
+                                </p>
+                                {coverage.warnings && coverage.warnings.length > 0 && (
+                                    <ul className="space-y-1 border-t border-border pt-2 mt-1">
+                                        {coverage.warnings.map((w, i) => (
+                                            <li
+                                                key={i}
+                                                className="text-[10px] text-amber-800 dark:text-amber-300/90 leading-snug"
+                                            >
+                                                {w.replace(/\*\*/g, "")}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                {coverage.files && coverage.files.length > 0 && (
+                                    <ul className="space-y-1.5 max-h-40 overflow-y-auto border-t border-border pt-2 mt-1">
+                                        {coverage.files.map((f) => {
+                                            const isCharted = f.status === "in_charts";
+                                            const badgeText = isCharted
+                                                ? "In charts"
+                                                : f.status === "unsupported_format"
+                                                  ? "Unsupported"
+                                                  : f.status === "no_extraction"
+                                                    ? "No extraction"
+                                                    : f.status === "not_linked"
+                                                      ? "Not linked"
+                                                      : "Skipped";
+                                            return (
+                                                <li key={f.documentId} className="flex flex-col gap-0.5">
+                                                    <div className="flex items-center gap-2">
+                                                        <span
+                                                            className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                                                                isCharted
+                                                                    ? "bg-emerald-500/15 text-emerald-600"
+                                                                    : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                                                            }`}
+                                                        >
+                                                            {badgeText}
+                                                        </span>
+                                                        <Link
+                                                            href={`/documents/${f.documentId}/details`}
+                                                            className="text-accent hover:underline truncate font-medium"
+                                                        >
+                                                            {f.filename}
+                                                        </Link>
+                                                    </div>
+                                                    {f.detail && !isCharted ? (
+                                                        <p className="pl-0 text-[10px] leading-snug">{f.detail}</p>
+                                                    ) : null}
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
                         {coverage && agentId === "compliance_agent" && "documentsWithExpiry" in coverage && (
                             <div className="rounded-xl border border-border bg-surface-2/40 px-3 py-2.5 text-[11px] text-foreground-muted leading-relaxed space-y-2">
                                 <p className="text-foreground">
@@ -411,9 +502,11 @@ export default function ChatAnalyticsSidePanel({
                                         Primary total
                                     </p>
                                     <p className="text-lg font-bold tabular-nums mt-0.5 truncate">
-                                        {kpis.primaryMetric != null && kpis.currency
-                                            ? `${kpis.currency} ${kpis.primaryMetric.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                                            : "—"}
+                                        {kpis.multiCurrency
+                                            ? kpis.multiCurrency
+                                            : kpis.primaryMetric != null && kpis.currency
+                                              ? `${kpis.currency} ${kpis.primaryMetric.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                                              : "—"}
                                     </p>
                                 </div>
                             </div>

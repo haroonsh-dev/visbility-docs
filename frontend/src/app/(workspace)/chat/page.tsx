@@ -29,7 +29,12 @@ import ChatAnalyticsSidePanel, {
     type AnalyticsPanelView,
 } from "@/components/ChatAnalyticsSidePanel";
 import type { ChatVisualSpec, FinanceAnalyticsCoverage } from "@/types/chatVisuals";
-import { isFinanceAnalyticsDoc } from "@/lib/financeAnalyticsScope";
+import {
+    isFinanceAnalyticsDoc,
+    listFinanceReadyDocIds,
+    wantsFinanceListAllScope,
+    wantsPortfolioFinanceScope,
+} from "@/lib/financeAnalyticsScope";
 import {
     filterComplianceAnalyticsDocIds,
     isComplianceAnalyticsDoc,
@@ -386,6 +391,7 @@ function ChatContent() {
     const [analyticsScopeMode, setAnalyticsScopeMode] = useState<"all" | "selected">("all");
     const [chatContextDocIds, setChatContextDocIds] = useState<string[]>([]);
     const lastPromptRef = useRef<string>("");
+    const prevAgentUrlRef = useRef<string | null>(null);
     const prevPathRef = useRef<string | null>(null);
     const deepLinkAppliedRef = useRef(false);
 
@@ -489,14 +495,18 @@ function ChatContent() {
     const chatColumnMax = showAnalyticsRail ? "max-w-none w-full" : "max-w-3xl";
 
     useEffect(() => {
-        if (agentUrlParam && ANALYTICS_AGENT_IDS.has(agentUrlParam)) {
-            setAnalyticsAgentId(agentUrlParam);
+        if (!agentUrlParam || !ANALYTICS_AGENT_IDS.has(agentUrlParam)) return;
+        setAnalyticsAgentId(agentUrlParam);
+        const prev = prevAgentUrlRef.current;
+        prevAgentUrlRef.current = agentUrlParam;
+        if (prev !== null && prev !== agentUrlParam) {
             setAnalyticsView("overview");
             setAnalyticsVisuals([]);
             chatAnalyticsLockRef.current = false;
         }
     }, [agentUrlParam]);
 
+    // Dashboard fetch only when user changes tab or hits Refresh — not on panel open / agent entry.
     const loadAgentAnalytics = useCallback(
         async (agentId: string, view: AnalyticsPanelView = "overview", scopeDocIds?: string[]) => {
             if (!ANALYTICS_AGENT_IDS.has(agentId)) return;
@@ -549,14 +559,8 @@ function ChatContent() {
         return merged.length ? merged : undefined;
     }, [chatScope, selectedDocIds, libraryDocs, chatContextDocIds]);
 
-    useEffect(() => {
-        if (!agentUrlParam || !ANALYTICS_AGENT_IDS.has(agentUrlParam) || !analyticsPanelOpen) return;
-        if (chatAnalyticsLockRef.current) return;
-        void loadAgentAnalytics(agentUrlParam, analyticsView, analyticsScopeDocIds);
-    }, [agentUrlParam, analyticsPanelOpen, analyticsView, analyticsScopeDocIds, loadAgentAnalytics]);
-
     const openAnalyticsPanel = useCallback(
-        (fetchDashboard = true) => {
+        (fetchDashboard = false) => {
             setAnalyticsPanelOpen(true);
             if (fetchDashboard && !chatAnalyticsLockRef.current) {
                 const aid = analyticsAgentId || agentUrlParam;
@@ -1102,7 +1106,15 @@ function ChatContent() {
                 body.provider = chosenModel.provider;
                 body.model = chosenModel.model;
             }
-            if (analyticsScopeDocIds?.length) {
+            const portfolioAsk =
+                wantsPortfolioFinanceScope(trimmed) || wantsFinanceListAllScope(trimmed);
+            const effectiveAgent =
+                (typeof body.phase3Agent === "string" ? body.phase3Agent : undefined) || agentUrlParam;
+            const financePortfolioIds =
+                effectiveAgent === "finance_agent" ? listFinanceReadyDocIds(libraryDocs) : [];
+            if (portfolioAsk && financePortfolioIds.length) {
+                body.analyticsDocumentIds = financePortfolioIds;
+            } else if (analyticsScopeDocIds?.length) {
                 body.analyticsDocumentIds = analyticsScopeDocIds;
             }
             let focusFromLastTurn: string[] = [];
@@ -1116,18 +1128,18 @@ function ChatContent() {
                     break;
                 }
             }
-            const focusIds = [
-                ...new Set([...focusFromLastTurn, ...chatContextDocIds]),
-            ].filter(Boolean);
+            const focusIds = portfolioAsk
+                ? []
+                : [...new Set([...focusFromLastTurn, ...chatContextDocIds])].filter(Boolean);
             if (focusIds.length) {
                 body.focusDocumentIds = focusIds.slice(0, 3);
             }
 
-            const effectiveAgent =
-                (typeof body.phase3Agent === "string" ? body.phase3Agent : undefined) || agentUrlParam;
             if (messageMayUseAnalytics(trimmed, effectiveAgent)) {
-                chatAnalyticsLockRef.current = false;
-                setAnalyticsVisuals([]);
+                // Keep any existing chart visible; show loading over it.
+                // Lock stays engaged so the dashboard effect doesn't overwrite
+                // the response we're about to receive.
+                chatAnalyticsLockRef.current = true;
                 setAnalyticsLoading(true);
             }
 
@@ -1163,10 +1175,42 @@ function ChatContent() {
                 if (vizAgent && ANALYTICS_AGENT_IDS.has(vizAgent)) {
                     setAnalyticsAgentId(vizAgent);
                 }
+                const respView = data?.data?.analyticsView;
+                if (typeof respView === "string") {
+                    const allowed = new Set([
+                        "overview",
+                        "vendors",
+                        "clients",
+                        "trend",
+                        "aging",
+                        "mix",
+                        "expiry",
+                        "findings",
+                        "cert_status",
+                        "status_mix",
+                        "scores",
+                        "score_dist",
+                    ]);
+                    if (allowed.has(respView)) {
+                        setAnalyticsView(respView as AnalyticsPanelView);
+                    }
+                }
+                const respCoverage = data?.data?.coverage;
+                if (respCoverage && typeof respCoverage === "object") {
+                    setAnalyticsCoverage(respCoverage as FinanceAnalyticsCoverage);
+                }
+                const respDocCount = data?.data?.documentCount;
+                if (typeof respDocCount === "number") {
+                    setAnalyticsDocCount(respDocCount);
+                }
                 const citIds = (data?.data?.citations || [])
                     .map((c: { documentId?: string }) => c.documentId)
                     .filter((id: string | undefined): id is string => Boolean(id));
                 if (citIds.length) setChatContextDocIds(citIds);
+            } else if (data?.data?.model === "agent-analytics") {
+                // Handled by analytics router but returned no chart — release lock
+                // so panel can refetch overview / respect subsequent asks.
+                chatAnalyticsLockRef.current = false;
             }
             patchAssistant(assistantId, {
                 agentId: data?.data?.agentId,
@@ -1827,7 +1871,7 @@ function ChatContent() {
                             type="button"
                             onClick={() => {
                                 if (showAnalyticsRail) setAnalyticsPanelOpen(false);
-                                else openAnalyticsPanel(true);
+                                else openAnalyticsPanel(analyticsVisuals.length > 0);
                             }}
                             className={`hidden sm:inline-flex items-center gap-1.5 rounded-full border px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors ${
                                 showAnalyticsRail
