@@ -20,6 +20,13 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     training_certificate: "hr_agent",
     resume: "hr_agent",
     transcript: "hr_agent",
+    hr_report: "hr_agent",
+    hr_shortlist: "hr_agent",
+    promotion_letter: "hr_agent",
+    warning_letter: "hr_agent",
+    relieving_letter: "hr_agent",
+    joining_letter: "hr_agent",
+    internship_letter: "hr_agent",
     // Legal
     contract: "legal_agent",
     agreement: "legal_agent",
@@ -48,6 +55,11 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     iso_document: "compliance_agent",
     compliance_form: "compliance_agent",
     regulatory_document: "compliance_agent",
+    compliance_report: "compliance_agent",
+    finance_report: "finance_agent",
+    ncr_letter: "compliance_agent",
+    capa_letter: "compliance_agent",
+    certificate_of_compliance: "compliance_agent",
     other: "other_agent",
 };
 
@@ -69,23 +81,37 @@ export const AGENT_FILTER_OPTIONS = [
 /** Skills that actually have chat charts / actions today (honest capability list). */
 export const AGENT_CHART_CAPABILITIES: Record<string, string[]> = {
     finance_agent: [
-        "Vendor / client spend charts",
+        "AP vendor / AR client charts",
         "Invoice line-item charts",
-        "Aging & monthly trend",
-        "Named-file targeting (e.g. digilog)",
+        "AP aging & monthly trend",
+        "Portfolio + named-file targeting",
         "Data-quality + reprocess hints",
+        "Finance report PDF generation",
     ],
     hr_agent: [
         "CV score ranking chart",
         "Score distribution",
-        "Offer letter generation",
-        "Experience letter generation",
+        "Certificate expiry chart",
+        "Onboarding completeness",
+        "Employee directory",
+        "Leave / payroll / attendance charts",
+        "Performance reviews + transcripts",
+        "Offer + experience letters",
+        "Joining / internship / training certificates",
+        "Promotion / warning / relieving letters",
+        "HR report + shortlist PDF",
+        "Dynamic HR intent routing (plain-language asks)",
     ],
     compliance_agent: [
-        "Certificate expiry timeline",
-        "Findings by severity",
-        "Status mix",
-        "Named-file targeting",
+        "Certificate expiry timeline + validity",
+        "Findings by severity (audits / inspections)",
+        "Overall compliance status mix",
+        "Missing-document / packet completeness",
+        "Expiry attention (plain language)",
+        "Full compliance report PDF",
+        "Section PDFs (certs / findings / register)",
+        "NCR / CAPA / certificate-of-compliance letters",
+        "Dynamic compliance intent routing",
     ],
     procurement_agent: [
         "Supplier spend bars",
@@ -166,6 +192,13 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
     training_certificate: "Training certificate",
     resume: "Resume / CV",
     transcript: "Transcript",
+    hr_report: "HR report",
+    hr_shortlist: "HR shortlist",
+    promotion_letter: "Promotion letter",
+    warning_letter: "Warning letter",
+    relieving_letter: "Relieving letter",
+    joining_letter: "Joining letter",
+    internship_letter: "Internship letter",
     contract: "Contract",
     agreement: "Agreement",
     nda: "NDA",
@@ -190,6 +223,11 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
     iso_document: "ISO document",
     compliance_form: "Compliance form",
     regulatory_document: "Regulatory document",
+    compliance_report: "Compliance report",
+    finance_report: "Finance report",
+    ncr_letter: "NCR letter",
+    capa_letter: "CAPA letter",
+    certificate_of_compliance: "Certificate of compliance",
     unclassified: "Unclassified",
     other: "Other",
 };
@@ -234,6 +272,8 @@ export function inferDocTypeFromFilename(filename: string): string | null {
     if (name.includes("offer") && name.includes("letter")) return "offer_letter";
     if (name.includes("employment") && name.includes("contract")) return "employment_contract";
     if (name.includes("leave")) return "leave_application";
+    if (name.includes("joining") && name.includes("letter")) return "joining_letter";
+    if (name.includes("internship") && name.includes("letter")) return "internship_letter";
     if (name.includes("training") && name.includes("certificate")) return "training_certificate";
     if (name.includes("transcript")) return "transcript";
     if (name.includes("invoice")) return "invoice";

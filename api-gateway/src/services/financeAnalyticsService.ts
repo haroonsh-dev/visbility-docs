@@ -48,6 +48,18 @@ export type FinanceRecord = {
     poNumber?: string;
     /** Invoice number, used for duplicate detection. */
     invoiceNumber?: string;
+    /** invoice = billable doc; payment = receipt applied against invoices; other = PO/etc. */
+    recordKind?: 'invoice' | 'payment' | 'other';
+    /** Payment receipt amount (same as total for payments). */
+    amountPaid?: number;
+    /** Free-text purpose from payment_for. */
+    paymentFor?: string;
+    /** Invoice number this payment is meant to settle (from invoice_number or payment_for). */
+    paysInvoiceNumber?: string;
+    /** Sum of matched payments applied to this invoice. */
+    paidApplied?: number;
+    /** Remaining balance after matched payments (defaults to total when unset). */
+    outstanding?: number;
 };
 
 export type LoadFinanceOptions = {
@@ -142,14 +154,8 @@ function pickVendor(
             vendor = scalarField((vn as Record<string, unknown>).name);
         }
     }
-    const name = `${vendor || ''} ${filenameHint || ''}`.toLowerCase();
-    // Digilog logo OCR often becomes NIGILOG / GLECTRONICS / CLECTRONICS / GLECTRONIC
-    if (
-        /digilog|nigilog|glectronic|clectronic|dialog\s*electronics/i.test(name) ||
-        /digilog/i.test(filenameHint || '')
-    ) {
-        return 'Digilog Electronics';
-    }
+    // Vendor aliases (OCR typos → canonical) come from org finance settings, not hardcoded brands.
+    void filenameHint;
     if (vendor) return vendor;
     return 'Unknown vendor';
 }
@@ -423,6 +429,123 @@ function normalizePoNumber(raw: unknown): string {
     return s.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+/** Normalize invoice numbers for payment↔invoice matching (INV-2024-102 ≡ inv2024102). */
+export function normalizeInvoiceNumberKey(raw: string): string {
+    return raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** Pull an invoice reference out of payment_for / narrative text. */
+export function extractInvoiceRefFromText(text: string): string {
+    const s = (text || '').trim();
+    if (!s) return '';
+    const patterns = [
+        /invoice\s*(?:number|no\.?|#)?\s*[:#]?\s*([A-Z0-9][A-Z0-9\-_/]*)/i,
+        /(?:against|for|re|towards)\s+(?:invoice|inv\.?)\s*#?\s*([A-Z0-9][A-Z0-9\-_/]*)/i,
+        /\b(INV[-_]?\d[\w\-]*)\b/i,
+    ];
+    for (const re of patterns) {
+        const m = s.match(re);
+        if (m?.[1] && normalizeInvoiceNumberKey(m[1]).length >= 3) return m[1].trim();
+    }
+    return '';
+}
+
+export function isPaymentRecord(r: FinanceRecord): boolean {
+    if (r.recordKind === 'payment') return true;
+    const cls = (r.classification || '').toLowerCase();
+    return cls === 'payment_receipt';
+}
+
+/** Amount used for AP/AR/aging after settlement (outstanding when set). */
+export function chartAmount(r: FinanceRecord): number {
+    if (typeof r.outstanding === 'number' && Number.isFinite(r.outstanding)) return r.outstanding;
+    return r.total;
+}
+
+function isPaymentExtraction(
+    doc: { classification?: string | null },
+    data: Record<string, unknown>
+): boolean {
+    const cls = String(doc.classification || '').toLowerCase();
+    if (cls === 'payment_receipt') return true;
+    const amountPaid =
+        parseNumber(data.amount_paid) ?? parseNumber(data.paid_amount) ?? parseNumber(data.payment_amount);
+    if (amountPaid == null || amountPaid <= 0) return false;
+    const hasPaymentShape =
+        Boolean(scalarField(data.payment_for)) ||
+        Boolean(scalarField(data.payer_name)) ||
+        Boolean(scalarField(data.payee_name)) ||
+        Boolean(scalarField(data.receipt_number));
+    if (!hasPaymentShape) return false;
+    // Don't treat a normal invoice that also has amount_paid as a receipt.
+    const invoiceTotal =
+        parseNumber(data.total_amount) ??
+        parseNumber(data.grand_total) ??
+        parseNumber(data.invoice_total) ??
+        parseNumber(data.invoice_amount);
+    return invoiceTotal == null || invoiceTotal <= 0;
+}
+
+function resolvePaysInvoiceNumber(data: Record<string, unknown>): string {
+    const direct =
+        scalarField(data.invoice_number) ||
+        scalarField(data.invoice_no) ||
+        scalarField(data.invoice_id) ||
+        scalarField(data['Invoice Number']);
+    if (direct) return direct;
+    const fromPurpose = extractInvoiceRefFromText(scalarField(data.payment_for));
+    if (fromPurpose) return fromPurpose;
+    const extra = data.additional_information;
+    if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+        const o = extra as Record<string, unknown>;
+        return (
+            scalarField(o.invoice_number) ||
+            scalarField(o.invoice_no) ||
+            extractInvoiceRefFromText(scalarField(o.payment_for) || scalarField(o.remarks) || '')
+        );
+    }
+    return '';
+}
+
+function makePaymentRecord(
+    doc: { documentId: string; originalFilename: string; classification?: string | null },
+    data: Record<string, unknown>,
+    vendorAliases?: Record<string, string>
+): FinanceRecord {
+    const amountPaid =
+        parseNumber(data.amount_paid) ??
+        parseNumber(data.paid_amount) ??
+        parseNumber(data.payment_amount) ??
+        inferDocumentTotal(data) ??
+        0;
+    const payee = resolveVendorDisplayName(
+        scalarField(data.payee_name) || pickVendor(data, doc.originalFilename),
+        vendorAliases
+    );
+    const payer = scalarField(data.payer_name) || pickClient(data);
+    const paymentFor = scalarField(data.payment_for);
+    const paysInvoiceNumber = resolvePaysInvoiceNumber(data) || undefined;
+    const currency = (scalarField(data.currency) || 'USD').toUpperCase().slice(0, 3);
+    return {
+        documentId: doc.documentId,
+        filename: doc.originalFilename,
+        vendor: payee.trim() || 'Unknown vendor',
+        client: payer.trim(),
+        total: amountPaid,
+        currency,
+        invoiceDate: parseDate(data.payment_date || data.document_date || data.date),
+        dueDate: null,
+        classification: doc.classification
+            ? String(doc.classification).toLowerCase()
+            : 'payment_receipt',
+        recordKind: 'payment',
+        amountPaid,
+        paymentFor: paymentFor || undefined,
+        paysInvoiceNumber,
+        // Do NOT set invoiceNumber — avoids dedupe colliding with the target invoice.
+    };
+}
+
 function makeRecord(
     doc: { documentId: string; originalFilename: string; classification?: string | null },
     vendor: string,
@@ -441,6 +564,8 @@ function makeRecord(
         normalizePoNumber(data.reference_number) ||
         normalizePoNumber(data.order_number);
     const invoiceNumber = scalarField(data.invoice_number) || scalarField(data['Invoice Number']);
+    const cls = doc.classification ? String(doc.classification).toLowerCase() : undefined;
+    const isPo = cls === 'purchase_order' || cls === 'po' || cls === 'quotation';
     return {
         documentId: doc.documentId,
         filename: doc.originalFilename,
@@ -450,9 +575,12 @@ function makeRecord(
         currency: cur,
         invoiceDate: parseDate(data.invoice_date || data.document_date || data.date),
         dueDate: parseDate(data.due_date || data.payment_due_date),
-        classification: doc.classification ? String(doc.classification).toLowerCase() : undefined,
+        classification: cls,
         poNumber: poNumber || undefined,
         invoiceNumber: invoiceNumber || undefined,
+        recordKind: isPo ? 'other' : 'invoice',
+        outstanding: total,
+        paidApplied: 0,
     };
 }
 
@@ -730,6 +858,12 @@ function recordsFromExtraction(
         const sheetRecords = recordsFromSpreadsheet(doc, data, vendorAliases);
         if (sheetRecords.length) return sheetRecords;
         return [];
+    }
+
+    // Payment receipts: never treat amount_paid as invoice spend.
+    if (isPaymentExtraction(doc, data)) {
+        const pay = makePaymentRecord(doc, data, vendorAliases);
+        return pay.total > 0 ? [pay] : [];
     }
 
     const currency = scalarField(data.currency) || 'USD';
@@ -1116,6 +1250,12 @@ export function computeFinanceCoverage(
 function groupDuplicateRecords(records: FinanceRecord[]): Map<string, FinanceRecord[]> {
     const byKey = new Map<string, FinanceRecord[]>();
     for (const r of records) {
+        // Payments never dedupe against invoices (even when they reference the same INV#).
+        if (isPaymentRecord(r)) {
+            const key = `PAY|${r.documentId}|${Math.round((r.amountPaid ?? r.total) * 100)}`;
+            byKey.set(key, [r]);
+            continue;
+        }
         // Prefer invoice_number when present — most reliable duplicate signal.
         const invKey = r.invoiceNumber
             ? `INV|${(canonicalizePartyName(r.vendor) || r.vendor.toLowerCase())}|${r.invoiceNumber.trim().toUpperCase()}|${r.currency}`
@@ -1206,6 +1346,101 @@ export function dedupeFinanceRecords(records: FinanceRecord[]): {
     return { records: keep, droppedDocumentIds: [...new Set(droppedDocumentIds)], droppedFilenames: [...new Set(droppedFilenames)] };
 }
 
+export type PaymentSettlementResult = {
+    /** Invoice / non-payment rows with outstanding + paidApplied set. */
+    records: FinanceRecord[];
+    payments: FinanceRecord[];
+    /** Payments that reduced at least one invoice. */
+    appliedPayments: number;
+    /** Payments with no matching invoice (missing/wrong INV# or currency). */
+    unmatchedPayments: number;
+    totalPaidApplied: number;
+    totalOutstanding: number;
+    totalGross: number;
+};
+
+/**
+ * Match payment_receipt rows to invoices by invoice number + currency and compute
+ * outstanding = invoice total − applied payments (floored at 0).
+ */
+export function applyPaymentsToInvoices(records: FinanceRecord[]): PaymentSettlementResult {
+    const payments = records.filter(isPaymentRecord);
+    const others = records.filter((r) => !isPaymentRecord(r));
+
+    const byInv = new Map<string, number[]>();
+    others.forEach((r, i) => {
+        if (!r.invoiceNumber) return;
+        const key = `${normalizeInvoiceNumberKey(r.invoiceNumber)}|${r.currency}`;
+        const arr = byInv.get(key) || [];
+        arr.push(i);
+        byInv.set(key, arr);
+    });
+
+    const paidByIdx = new Map<number, number>();
+    let appliedPayments = 0;
+    let unmatchedPayments = 0;
+    let totalPaidApplied = 0;
+
+    for (const p of payments) {
+        const ref = (p.paysInvoiceNumber || '').trim();
+        const payAmt = p.amountPaid ?? p.total;
+        if (!ref || !(payAmt > 0)) {
+            unmatchedPayments += 1;
+            continue;
+        }
+        const key = `${normalizeInvoiceNumberKey(ref)}|${p.currency}`;
+        const idxs = byInv.get(key);
+        if (!idxs?.length) {
+            unmatchedPayments += 1;
+            continue;
+        }
+        let remaining = payAmt;
+        let appliedThis = 0;
+        for (const i of idxs) {
+            if (remaining <= 0) break;
+            const inv = others[i];
+            const already = paidByIdx.get(i) || 0;
+            const open = Math.max(0, inv.total - already);
+            const apply = Math.min(open, remaining);
+            if (apply <= 0) continue;
+            paidByIdx.set(i, already + apply);
+            remaining -= apply;
+            appliedThis += apply;
+        }
+        if (appliedThis > 0) {
+            appliedPayments += 1;
+            totalPaidApplied += appliedThis;
+        } else {
+            unmatchedPayments += 1;
+        }
+    }
+
+    const settled = others.map((r, i) => {
+        const paid = paidByIdx.get(i) || 0;
+        const outstanding = Math.max(0, Math.round((r.total - paid) * 100) / 100);
+        return {
+            ...r,
+            recordKind: r.recordKind || (r.classification === 'purchase_order' ? 'other' : 'invoice'),
+            paidApplied: Math.round(paid * 100) / 100,
+            outstanding,
+        };
+    });
+
+    const invoiceLike = settled.filter((r) => r.recordKind !== 'other');
+    const totalGross = invoiceLike.reduce((s, r) => s + r.total, 0);
+    const totalOutstanding = invoiceLike.reduce((s, r) => s + (r.outstanding ?? r.total), 0);
+
+    return {
+        records: settled,
+        payments,
+        appliedPayments,
+        unmatchedPayments,
+        totalPaidApplied: Math.round(totalPaidApplied * 100) / 100,
+        totalOutstanding: Math.round(totalOutstanding * 100) / 100,
+        totalGross: Math.round(totalGross * 100) / 100,
+    };
+}
+
 export type PoInvoicePair = {
     poNumber: string;
     vendor: string;
@@ -1226,6 +1461,7 @@ export type PoInvoicePair = {
 export function pairPurchaseOrdersWithInvoices(records: FinanceRecord[]): PoInvoicePair[] {
     const groups = new Map<string, { po?: FinanceRecord; invoices: FinanceRecord[] }>();
     for (const r of records) {
+        if (isPaymentRecord(r)) continue;
         if (!r.poNumber) continue;
         const vendorKey = canonicalizePartyName(r.vendor) || r.vendor.toLowerCase();
         const key = `${r.poNumber}|${vendorKey}|${r.currency}`;
@@ -1300,17 +1536,19 @@ function aggregateByParty(
     const groups = new Map<string, { label: string; amount: number; currency: string; docs: Set<string> }>();
 
     for (const r of records) {
+        if (isPaymentRecord(r)) continue;
         const raw = party === 'vendor' ? r.vendor : r.client;
         if (!raw?.trim()) continue;
         const key = `${normalizePartyKey(raw, party === 'vendor' ? vendorAliases : undefined)}::${r.currency}`;
+        const amt = chartAmount(r);
         const existing = groups.get(key);
         if (existing) {
-            existing.amount += r.total;
+            existing.amount += amt;
             existing.docs.add(r.documentId);
         } else {
             groups.set(key, {
                 label: raw.trim(),
-                amount: r.total,
+                amount: amt,
                 currency: r.currency,
                 docs: new Set([r.documentId]),
             });
@@ -1329,15 +1567,16 @@ function aggregateByParty(
         _documentIds: docIdsField(g.docs),
     }));
 
-    const docCount = new Set(records.map((r) => r.documentId)).size;
+    const docCount = new Set(records.filter((r) => !isPaymentRecord(r)).map((r) => r.documentId)).size;
     return { rows, currency, docCount };
 }
 
 export function formatVendorSpendTable(records: FinanceRecord[], maxRows = 25): string {
     const { rows, currency, docCount } = aggregateByParty(records, 'vendor', maxRows);
     if (!rows.length) return '_No vendor totals could be computed from extractions._';
+    const settled = records.some((r) => (r.paidApplied || 0) > 0);
     const lines = [
-        `| Vendor | Total (${currency}) | Invoices |`,
+        `| Vendor | ${settled ? 'Outstanding' : 'Total'} (${currency}) | Invoices |`,
         `| --- | ---: | ---: |`,
         ...rows.map((r) => {
             const vendor = String(r.vendor ?? '');
@@ -1351,7 +1590,7 @@ export function formatVendorSpendTable(records: FinanceRecord[], maxRows = 25): 
     const grand = totalsByCurrency.get(currency) ?? [...totalsByCurrency.values()].reduce((a, b) => a + b, 0);
     lines.push('');
     lines.push(
-        `**Grand total (${currency}):** ${grand.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} across **${docCount}** invoice document(s).`
+        `**Grand ${settled ? 'outstanding' : 'total'} (${currency}):** ${grand.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} across **${docCount}** invoice document(s).`
     );
     return lines.join('\n');
 }
@@ -1367,25 +1606,34 @@ export function buildVendorSpendVisual(
         opts?.vendorAliases,
         opts?.baseCurrency
     );
-    const withVendor = records.filter((r) => r.vendor && r.vendor !== 'Unknown vendor');
-    const sourceDocumentIds = [...new Set(records.map((r) => r.documentId))];
-    const unknown = records.filter((r) => !r.vendor || r.vendor === 'Unknown vendor').length;
+    const withVendor = records.filter((r) => !isPaymentRecord(r) && r.vendor && r.vendor !== 'Unknown vendor');
+    const sourceDocumentIds = [...new Set(records.filter((r) => !isPaymentRecord(r)).map((r) => r.documentId))];
+    const unknown = records.filter(
+        (r) => !isPaymentRecord(r) && (!r.vendor || r.vendor === 'Unknown vendor')
+    ).length;
+    const settled = records.some((r) => (r.paidApplied || 0) > 0);
     const warnings: string[] = [];
     if (unknown) warnings.push(`${unknown} document(s) missing vendor_name — reprocess if labels look wrong.`);
-    warnings.push(...findDuplicateInvoiceWarnings(records));
+    warnings.push(...findDuplicateInvoiceWarnings(records.filter((r) => !isPaymentRecord(r))));
     if (sourceDocumentIds.length === 1) {
-        warnings.push(`Scoped to 1 file: ${records[0]?.filename || 'invoice'}.`);
+        warnings.push(`Scoped to 1 file: ${records.find((r) => !isPaymentRecord(r))?.filename || 'invoice'}.`);
     }
 
     return {
         id: `fin_vendor_${Date.now()}`,
         agentId: FINANCE_AGENT,
         kind: 'bar',
-        title: sourceDocumentIds.length === 1 ? 'Spend for this invoice' : 'Spend by vendor',
-        subtitle: `${rows.length} vendor(s) · ${docCount} document(s) with amounts · primary ${currency}`,
+        title: sourceDocumentIds.length === 1 ? 'AP — this invoice' : 'Accounts payable — by vendor',
+        subtitle: `${rows.length} vendor(s) · ${docCount} document(s) · primary ${currency} · ${settled ? 'net outstanding' : 'gross invoice totals'}`,
         currency,
         categoryKey: 'vendor',
-        series: [{ key: 'amount', label: `Amount (${currency})`, color: '#2563eb' }],
+        series: [
+            {
+                key: 'amount',
+                label: settled ? `Outstanding (${currency})` : `AP amount (${currency})`,
+                color: '#2563eb',
+            },
+        ],
         data: rows.length ? rows : [{ vendor: 'No vendor on file', amount: 0 }],
         sourceDocumentIds,
         dataQuality: {
@@ -1393,17 +1641,20 @@ export function buildVendorSpendVisual(
             warnings: warnings.length ? warnings : undefined,
         },
         footer: withVendor.length
-            ? `Sum of one extracted total_amount per invoice (not LLM estimates). Files: ${sourceDocumentIds.length}. Reprocess if a vendor looks wrong.`
+            ? settled
+                ? `AP view: invoice total − matched payment receipts (by invoice #). Files: ${sourceDocumentIds.length}.`
+                : `AP view: sum of extracted total_amount per invoice. Add payment receipts to net outstanding. Files: ${sourceDocumentIds.length}.`
             : 'Add vendor_name on invoices or line items with vendor to populate this chart.',
     };
 }
 
 export function formatClientSpendTable(records: FinanceRecord[], maxRows = 100): string {
-    const clientRecords = records.filter((r) => r.client.trim());
+    const clientRecords = records.filter((r) => !isPaymentRecord(r) && r.client.trim());
     const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', maxRows);
     if (!rows.length) return '_No client totals — customer_name / bill_to missing on extractions._';
+    const settled = records.some((r) => (r.paidApplied || 0) > 0);
     const lines = [
-        `| Client | Total (${currency}) | Invoices |`,
+        `| Client | ${settled ? 'Outstanding' : 'Total'} (${currency}) | Invoices |`,
         `| --- | ---: | ---: |`,
         ...rows.map((r) => {
             const client = String(r.client ?? '');
@@ -1419,15 +1670,17 @@ export function formatClientSpendTable(records: FinanceRecord[], maxRows = 100):
 }
 
 export function buildClientSpendVisual(records: FinanceRecord[]): ChatVisualSpec {
-    const clientRecords = records.filter((r) => r.client.trim());
-    const missingClientRecords = records.filter((r) => !r.client.trim());
+    const nonPay = records.filter((r) => !isPaymentRecord(r));
+    const clientRecords = nonPay.filter((r) => r.client.trim());
+    const missingClientRecords = nonPay.filter((r) => !r.client.trim());
     const maxBars = Math.min(100, Math.max(20, new Set(clientRecords.map((r) => r.client)).size));
     const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', maxBars);
+    const settled = nonPay.some((r) => (r.paidApplied || 0) > 0);
 
     // Add a "Missing client" bucket so users see excluded totals instead of us hiding them.
     const missingAmount = missingClientRecords
         .filter((r) => r.currency === currency)
-        .reduce((sum, r) => sum + r.total, 0);
+        .reduce((sum, r) => sum + chartAmount(r), 0);
     const missingDocIds = [...new Set(missingClientRecords.map((r) => r.documentId))];
     const dataRows: ChatVisualDataRow[] = [...rows];
     if (missingClientRecords.length) {
@@ -1438,7 +1691,7 @@ export function buildClientSpendVisual(records: FinanceRecord[]): ChatVisualSpec
         });
     }
 
-    const totalRecords = records.length;
+    const totalRecords = nonPay.length;
     const missingRatio = totalRecords ? missingClientRecords.length / totalRecords : 0;
     const warnings: string[] = [];
     if (missingClientRecords.length) {
@@ -1453,15 +1706,23 @@ export function buildClientSpendVisual(records: FinanceRecord[]): ChatVisualSpec
         id: `fin_client_${Date.now()}`,
         agentId: FINANCE_AGENT,
         kind: 'bar',
-        title: 'Revenue / spend by client',
-        subtitle: `${rows.length} client(s)${missingClientRecords.length ? ` + missing bucket` : ''} · ${docCount} document(s) · primary ${currency}`,
+        title: 'Accounts receivable — by client',
+        subtitle: `${rows.length} client(s)${missingClientRecords.length ? ` + missing bucket` : ''} · ${docCount} document(s) · primary ${currency} · ${settled ? 'net outstanding' : 'gross invoice totals'}`,
         currency,
         categoryKey: 'client',
-        series: [{ key: 'amount', label: `Amount (${currency})`, color: '#4f46e5' }],
+        series: [
+            {
+                key: 'amount',
+                label: settled ? `Outstanding (${currency})` : `AR amount (${currency})`,
+                color: '#4f46e5',
+            },
+        ],
         data: dataRows.length
             ? dataRows
             : [{ client: 'No client on file', amount: 0 }],
-        footer: 'Grouped by customer_name, bill_to, or client_name from extractions.',
+        footer: settled
+            ? 'AR view: customer totals after matching payment receipts by invoice #.'
+            : 'AR view: grouped by customer_name / bill_to / client_name. Add payment receipts to net outstanding.',
         dataQuality: warnings.length ? { level: quality, warnings } : undefined,
         emptyState: dataRows.length
             ? undefined
@@ -1470,8 +1731,9 @@ export function buildClientSpendVisual(records: FinanceRecord[]): ChatVisualSpec
 }
 
 export function buildMonthlyTrendVisual(records: FinanceRecord[]): ChatVisualSpec {
-    const currency = dominantCurrency(records);
-    const filtered = records.filter((r) => r.currency === currency && r.invoiceDate);
+    const invoices = records.filter((r) => !isPaymentRecord(r));
+    const currency = dominantCurrency(invoices.length ? invoices : records);
+    const filtered = invoices.filter((r) => r.currency === currency && r.invoiceDate);
     const byMonth = new Map<string, { amount: number; docs: Set<string> }>();
     for (const r of filtered) {
         const d = r.invoiceDate!;
@@ -1493,14 +1755,20 @@ export function buildMonthlyTrendVisual(records: FinanceRecord[]): ChatVisualSpe
             _documentIds: docIdsField(v.docs),
         }));
 
-    const missingDates = records.length - filtered.length;
+    const missingDates = invoices.filter((r) => !r.invoiceDate).length;
+    const otherCurrency = invoices.filter((r) => r.currency !== currency).length;
     const warnings: string[] = [];
-    if (!rows.length && records.length) {
+    if (!rows.length && invoices.length) {
         warnings.push(
-            `${records.length} invoice(s) in scope, but none have an invoice_date extracted.`
+            `${invoices.length} invoice(s) in scope, but none have an invoice_date extracted.`
         );
     } else if (missingDates > 0) {
         warnings.push(`${missingDates} invoice(s) skipped — no invoice_date on extraction.`);
+    }
+    if (otherCurrency > 0) {
+        warnings.push(
+            `${otherCurrency} invoice(s) in other currencies excluded from this ${currency} trend.`
+        );
     }
 
     return {
@@ -1508,12 +1776,12 @@ export function buildMonthlyTrendVisual(records: FinanceRecord[]): ChatVisualSpe
         agentId: FINANCE_AGENT,
         kind: 'area',
         title: 'Invoice volume over time',
-        subtitle: `Monthly totals · ${currency}${filtered.length < records.length ? ' (primary currency)' : ''}`,
+        subtitle: `Monthly billed totals · ${currency}${otherCurrency ? ` · ${otherCurrency} other-currency excluded` : ''}`,
         currency,
         categoryKey: 'month',
-        series: [{ key: 'amount', label: `Total (${currency})`, color: '#0d9488' }],
+        series: [{ key: 'amount', label: `Billed (${currency})`, color: '#0d9488' }],
         data: rows,
-        footer: 'Grouped by invoice date from extracted metadata.',
+        footer: 'Gross invoice totals by invoice_date (payments are not included in the trend).',
         emptyState: rows.length
             ? undefined
             : 'No invoice_date fields found on scoped invoices. Reprocess them so the trend can be plotted.',
@@ -1524,12 +1792,14 @@ export function buildMonthlyTrendVisual(records: FinanceRecord[]): ChatVisualSpe
 }
 
 export function buildAgingVisual(records: FinanceRecord[]): ChatVisualSpec {
-    const currency = dominantCurrency(records);
-    const filtered = records.filter((r) => r.currency === currency);
+    const invoices = records.filter((r) => !isPaymentRecord(r));
+    const currency = dominantCurrency(invoices.length ? invoices : records);
+    const filtered = invoices.filter((r) => r.currency === currency);
     const now = Date.now();
     const bucketKeys = ['Current (not due)', '1–30 days', '31–60 days', '61–90 days', '90+ days'] as const;
     const buckets = new Map<string, { amount: number; docs: Set<string> }>();
     for (const k of bucketKeys) buckets.set(k, { amount: 0, docs: new Set() });
+    const settled = invoices.some((r) => (r.paidApplied || 0) > 0);
 
     for (const r of filtered) {
         let key: (typeof bucketKeys)[number] = 'Current (not due)';
@@ -1548,7 +1818,7 @@ export function buildAgingVisual(records: FinanceRecord[]): ChatVisualSpec {
             }
         }
         const b = buckets.get(key)!;
-        b.amount += r.total;
+        b.amount += chartAmount(r);
         b.docs.add(r.documentId);
     }
 
@@ -1561,17 +1831,39 @@ export function buildAgingVisual(records: FinanceRecord[]): ChatVisualSpec {
         };
     });
 
+    const otherCurrency = invoices.filter((r) => r.currency !== currency).length;
+    const warnings: string[] = [];
+    if (settled) {
+        warnings.push('Aging uses outstanding = invoice total − matched payment receipts (by invoice #).');
+    } else {
+        warnings.push('Aging uses gross invoice totals. Add payment receipts that reference invoice numbers to net outstanding.');
+    }
+    if (otherCurrency > 0) {
+        warnings.push(
+            `${otherCurrency} invoice(s) in other currencies excluded from this ${currency} aging chart.`
+        );
+    }
+
     return {
         id: `fin_aging_${Date.now()}`,
         agentId: FINANCE_AGENT,
         kind: 'bar',
-        title: 'Payables aging',
-        subtitle: `By due date · ${currency}`,
+        title: settled ? 'AP aging (outstanding by due date)' : 'AP aging (by due date)',
+        subtitle: `By due date · ${currency}${otherCurrency ? ` · ${otherCurrency} other-currency excluded` : ''}`,
         currency,
         categoryKey: 'bucket',
-        series: [{ key: 'amount', label: `Outstanding (${currency})`, color: '#d97706' }],
+        series: [
+            {
+                key: 'amount',
+                label: settled ? `Outstanding (${currency})` : `Amount (${currency})`,
+                color: '#d97706',
+            },
+        ],
         data: rows,
-        footer: 'Based on due dates and totals from finance documents.',
+        footer: settled
+            ? 'Outstanding balances by due_date after payment matching.'
+            : 'Totals from due_date + total_amount. Match payment receipts by invoice # for net outstanding.',
+        dataQuality: { level: otherCurrency || !settled ? 'medium' : 'high', warnings },
     };
 }
 
@@ -1596,7 +1888,8 @@ export function buildDocTypeMixVisual(counts: Array<{ type: string; count: numbe
 export function sumTotalsByCurrency(records: FinanceRecord[]): Map<string, number> {
     const map = new Map<string, number>();
     for (const r of records) {
-        map.set(r.currency, (map.get(r.currency) || 0) + r.total);
+        if (isPaymentRecord(r)) continue;
+        map.set(r.currency, (map.get(r.currency) || 0) + chartAmount(r));
     }
     return map;
 }
@@ -1624,7 +1917,16 @@ export function convertRecordsToBase(
             return r;
         }
         converted += 1;
-        return { ...r, total: r.total / rate, currency: base };
+        const scale = (n: number | undefined) =>
+            n != null && Number.isFinite(n) ? n / rate : undefined;
+        return {
+            ...r,
+            total: r.total / rate,
+            currency: base,
+            amountPaid: scale(r.amountPaid),
+            outstanding: scale(r.outstanding),
+            paidApplied: scale(r.paidApplied),
+        };
     });
     return { records: out, converted, unconvertedCurrencies: [...missing] };
 }
@@ -1703,7 +2005,10 @@ const QUESTION_STOP_WORDS = new Set([
     'electronics', // too generic alone; digilog/bata still match
 ]);
 
-/** Known OCR / typo aliases → canonical filename token. */
+/**
+ * Filename / question-token OCR aliases used only for document-name matching.
+ * Display labels still come from extraction + org finance vendorAliases (not forced here).
+ */
 const NAME_ALIASES: Record<string, string> = {
     dialong: 'digilog',
     dialog: 'digilog',

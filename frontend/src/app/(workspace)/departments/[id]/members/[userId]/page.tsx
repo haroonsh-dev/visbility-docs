@@ -22,6 +22,7 @@ import FilterSelect from "@/components/FilterSelect";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
 import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
+import { isGeneratedArtifactDoc, shouldShowChatWithDocument } from "@/lib/generatedDocuments";
 import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { usePermissions } from "@/context/PermissionsContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -618,12 +619,17 @@ function MemberDetailContent() {
                                         <ChatWithDocumentLink
                                             documentId={doc.documentId}
                                             ready={!!doc.pythonDocumentId}
+                                            hidden={!shouldShowChatWithDocument(doc)}
                                         />
                                         <Link
-                                            href={`/documents/details?doc=${doc.documentId}`}
+                                            href={
+                                                isGeneratedArtifactDoc(doc)
+                                                    ? `/documents/${doc.documentId}`
+                                                    : `/documents/details?doc=${doc.documentId}`
+                                            }
                                             className="btn-secondary rounded-lg px-3 py-2 text-sm inline-flex items-center gap-1.5"
                                         >
-                                            <Info size={14} /> Details
+                                            <Info size={14} /> {isGeneratedArtifactDoc(doc) ? "Open PDF" : "Details"}
                                         </Link>
                                         <Link
                                             href={`/documents/${doc.documentId}`}

@@ -23,7 +23,12 @@ import logger from '../utils/logger';
 import { recordActivityFromReq } from '../services/activityLog';
 import { DOC_TYPE_TO_AGENT } from '../services/documentStorage';
 import { requireAllowedAgent } from '../services/planService';
+import { tryHrDynamicAgent } from '../services/hrIntentRouter';
 import { tryHrChatCommand } from '../services/hrChatActionService';
+import { tryHrExtendedChatCommand } from '../services/hrChatReportService';
+import { tryComplianceDynamicAgent } from '../services/complianceIntentRouter';
+import { tryComplianceReportCommand } from '../services/complianceChatActionService';
+import { tryFinanceReportCommand } from '../services/financeChatActionService';
 import { getAgentAnalyticsDashboard, tryAgentChatVisual } from '../services/agentChatVisualService';
 import { wantsPortfolioFinanceScope } from '../services/financeIntent';
 import { wantsFinanceListAllScope } from '../services/financeQuestionNormalize';
@@ -261,6 +266,116 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                         : [...new Set([...focusFromClient, ...sessionFocus])]
                 ).slice(0, 5);
 
+                const hrDynamic = await tryHrDynamicAgent({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (hrDynamic.handled && hrDynamic.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: hrDynamic.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (hrDynamic.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `HR dynamic agent reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const hrFocus = [
+                        ...new Set([
+                            ...(hrDynamic.citations || []).map((c) => c.documentId).filter(Boolean),
+                            ...(hrDynamic.visuals || []).flatMap((v) => v.sourceDocumentIds || []),
+                        ]),
+                    ] as string[];
+                    if (hrFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, hrFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: hrDynamic.answer,
+                            citations: hrDynamic.citations || [],
+                            visuals: hrDynamic.visuals || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'hr-dynamic-agent',
+                            agentId: phase3Agent || 'hr_agent',
+                            documentCount:
+                                new Set(
+                                    (hrDynamic.visuals || []).flatMap((v) => v.sourceDocumentIds || [])
+                                ).size || (hrDynamic.citations || []).length,
+                        },
+                    });
+                }
+
+                const hrExtended = await tryHrExtendedChatCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (hrExtended.handled && hrExtended.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: hrExtended.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (hrExtended.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `HR extended chat reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const hrFocus = (hrExtended.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (hrFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, hrFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: hrExtended.answer,
+                            citations: hrExtended.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'hr-agent-actions',
+                            agentId: phase3Agent || 'hr_agent',
+                        },
+                    });
+                }
+
                 const hrAction = await tryHrChatCommand({
                     user: req.user,
                     question: message,
@@ -308,6 +423,169 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                             chatScope,
                             model: 'hr-agent-actions',
                             agentId: phase3Agent || 'hr_agent',
+                        },
+                    });
+                }
+
+                const complianceDynamic = await tryComplianceDynamicAgent({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (complianceDynamic.handled && complianceDynamic.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: complianceDynamic.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (complianceDynamic.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `Compliance dynamic agent reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const focusIds = [
+                        ...new Set([
+                            ...(complianceDynamic.citations || []).map((c) => c.documentId).filter(Boolean),
+                            ...(complianceDynamic.visuals || []).flatMap((v) => v.sourceDocumentIds || []),
+                        ]),
+                    ] as string[];
+                    if (focusIds.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, focusIds, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: complianceDynamic.answer,
+                            citations: complianceDynamic.citations || [],
+                            visuals: complianceDynamic.visuals || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'compliance-dynamic-agent',
+                            agentId: phase3Agent || 'compliance_agent',
+                            documentCount:
+                                new Set(
+                                    (complianceDynamic.visuals || []).flatMap(
+                                        (v) => v.sourceDocumentIds || []
+                                    )
+                                ).size || (complianceDynamic.citations || []).length,
+                        },
+                    });
+                }
+
+                const complianceReportAction = await tryComplianceReportCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (complianceReportAction.handled && complianceReportAction.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: complianceReportAction.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (complianceReportAction.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `Compliance report reply ok but append-exchange failed (restart ai-backend?): ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const reportFocus = (complianceReportAction.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (reportFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, reportFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: complianceReportAction.answer,
+                            citations: complianceReportAction.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'compliance-agent-report',
+                            agentId: phase3Agent || 'compliance_agent',
+                        },
+                    });
+                }
+
+                const financeReportAction = await tryFinanceReportCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (financeReportAction.handled && financeReportAction.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: financeReportAction.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (financeReportAction.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `Finance report reply ok but append-exchange failed (restart ai-backend?): ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const reportFocus = (financeReportAction.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (reportFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, reportFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: financeReportAction.answer,
+                            citations: financeReportAction.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'finance-agent-report',
+                            agentId: phase3Agent || 'finance_agent',
                         },
                     });
                 }

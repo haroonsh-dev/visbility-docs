@@ -7,6 +7,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import DocumentDetailPanel, { hasModelData, isAnalysisFinished } from "@/components/DocumentDetailPanel";
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
+import { isGeneratedArtifactDoc } from "@/lib/generatedDocuments";
 
 function DocumentDetailsContent() {
     const params = useParams();
@@ -72,6 +73,7 @@ function DocumentDetailsContent() {
 
         (async () => {
             const data = await load();
+            if (isGeneratedArtifactDoc(data?.document)) return;
             if (hasModelData(data?.aiDocument) || isAnalysisFinished(data?.aiDocument, data?.job, data?.document?.status)) return;
             if (attemptedRef.current) return;
             attemptedRef.current = true;

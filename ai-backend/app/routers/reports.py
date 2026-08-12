@@ -1,8 +1,9 @@
 import logging
+import base64
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from ..auth_deps import get_current_user
-from ..services.report_service import generate_report
+from ..services.report_service import generate_report, generate_pdf_from_html
 from ..services.email_service import send_email
 
 logger = logging.getLogger("visibility-docs")
@@ -23,6 +24,24 @@ async def generate_report_html(body: GenerateReportRequest):
         "html": html,
         "organization_id": body.organization_id,
         "phase3_agent": body.phase3_agent or None,
+    }
+
+
+class GenerateComplianceReportPdfRequest(BaseModel):
+    html: str = Field(..., min_length=1, max_length=2_000_000)
+    filename: str = Field(default="Compliance_Report.pdf")
+
+
+@router.post("/compliance/pdf", summary="Generate a compliance report PDF (base64)")
+async def generate_compliance_report_pdf(body: GenerateComplianceReportPdfRequest):
+    pdf_bytes = generate_pdf_from_html(body.html)
+    safe_name = body.filename.strip() or "Compliance_Report.pdf"
+
+    return {
+        "filename": safe_name,
+        "mime_type": "application/pdf",
+        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        "size_bytes": len(pdf_bytes),
     }
 
 

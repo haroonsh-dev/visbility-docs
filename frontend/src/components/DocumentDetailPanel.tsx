@@ -346,7 +346,7 @@ export default function DocumentDetailPanel({
                         className="btn-gradient rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
                     >
                         <FileText size={14} />
-                        Open PDF · Print
+                        Offer letter
                     </Link>
                 )}
                 {isExperienceLetterDoc && finished && (
@@ -355,7 +355,7 @@ export default function DocumentDetailPanel({
                         className="btn-gradient rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2"
                     >
                         <FileText size={14} />
-                        Open PDF · Print
+                        Experience letter
                     </Link>
                 )}
                 <button

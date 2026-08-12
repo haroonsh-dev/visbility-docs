@@ -65,22 +65,24 @@ function parseLocalDate(iso: string): Date | null {
     return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function todayLocal(): Date {
+function todayLocalIso(): string {
     const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    return t;
+    const y = t.getFullYear();
+    const m = String(t.getMonth() + 1).padStart(2, "0");
+    const d = String(t.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
 }
 
-function canSubmitForm(saving: boolean, loading: boolean): boolean {
-    return !saving && !loading;
+function canSubmitForm(saving: boolean): boolean {
+    return !saving;
 }
 
 function validateDates(form: ExperienceLetterForm): string | null {
     const letter = form.letter_date ? parseLocalDate(form.letter_date) : null;
     const from = form.employment_from ? parseLocalDate(form.employment_from) : null;
     const to = form.employment_to ? parseLocalDate(form.employment_to) : null;
-    const today = todayLocal();
-    if (letter && letter > today) {
+    const today = parseLocalDate(todayLocalIso());
+    if (letter && today && letter > today) {
         return "Letter date cannot be in the future.";
     }
     if (from && to && to < from) {
@@ -126,12 +128,12 @@ export default function ExperienceLetterModal({
             const res = await apiRequest(`/docs/documents/${documentId}/experience-letter/prefill`);
             const prefill = res?.data?.prefill || {};
             const orgName = (res?.data?.organizationName as string | undefined)?.trim();
-            const letterDate = new Date().toISOString().slice(0, 10);
+            const letterDate = todayLocalIso();
             setForm({
                 employee_name: prefill.candidate_name || prefill.employee_name || "",
                 company_name: orgName || prefill.company_name || "Company",
                 company_address: prefill.company_address || "",
-                job_title: prefill.job_title || "",
+                job_title: prefill.job_title || prefill.current_title || "",
                 department: prefill.department || "",
                 cnic: prefill.cnic || "",
                 employment_from: prefill.employment_from || "",
@@ -165,22 +167,29 @@ export default function ExperienceLetterModal({
             setError(dateErr);
             return;
         }
-        if (!form.employee_name.trim()) {
+        const employeeName = form.employee_name.trim();
+        if (!employeeName) {
             setError("Employee name is required (fill manually if resume prefill failed).");
             return;
         }
-        if (!form.job_title.trim()) {
-            setError("Job title is required.");
-            return;
-        }
+        const payload: ExperienceLetterForm = {
+            ...form,
+            employee_name: employeeName,
+            job_title: form.job_title.trim() || "Employee",
+            company_name: form.company_name.trim() || "Company",
+            letter_date: form.letter_date || todayLocalIso(),
+        };
         setSaving(true);
         setError(null);
         try {
             const res = await apiRequest(`/docs/documents/${documentId}/experience-letter/generate`, {
                 method: "POST",
-                body: JSON.stringify({ experience: form }),
+                body: JSON.stringify({ experience: payload }),
+                timeoutMs: 90_000,
             });
-            const newId = res?.data?.document?.documentId as string | undefined;
+            const newId =
+                (res?.data?.document?.documentId as string | undefined) ||
+                (res?.data?.documentId as string | undefined);
             if (newId) {
                 setCreatedId(newId);
                 onCreated?.(newId);
@@ -223,14 +232,16 @@ export default function ExperienceLetterModal({
     const formBody = createdId ? (
         <div className="space-y-3 text-sm">
             <p className="text-(--vb-blue-bright)">
-                Experience certificate saved — open the PDF below to print or download.
+                Experience certificate saved.
             </p>
             <Link
                 href={detailsHref(createdId)}
                 className="btn-gradient inline-flex rounded-xl px-4 py-2 text-sm"
                 onClick={onClose}
             >
-                Open PDF · Print
+                {form.employee_name.trim()
+                    ? `Experience letter — ${form.employee_name.trim()}`
+                    : "Open experience letter"}
             </Link>
         </div>
     ) : (
@@ -241,11 +252,18 @@ export default function ExperienceLetterModal({
                     Loading fields from resume…
                 </p>
             )}
-            {error && <p className="text-sm text-rose-400">{error}</p>}
+            {error && (
+                <p className="text-sm text-rose-400" role="alert">
+                    {error}
+                </p>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {field("Employee name", "employee_name", { required: true })}
                 {field("CNIC", "cnic", { placeholder: "12345-1234567-1" })}
-                {field("Job title", "job_title", { required: true })}
+                {field("Job title", "job_title", {
+                    required: true,
+                    placeholder: "e.g. Software Engineer",
+                })}
                 {field("Company", "company_name", { required: true, className: "sm:col-span-2" })}
                 {field("Company address", "company_address", {
                     className: "sm:col-span-2",
@@ -285,7 +303,7 @@ export default function ExperienceLetterModal({
             <div className="flex flex-col items-end gap-2 pt-1">
                 {loading && (
                     <p className="text-xs text-foreground-secondary w-full text-left">
-                        Wait for resume fields to finish loading, or fill the form manually if prefill failed.
+                        Prefill still loading — you can edit fields and generate anytime.
                     </p>
                 )}
                 <div className="flex flex-wrap gap-2 justify-end w-full">
@@ -295,11 +313,11 @@ export default function ExperienceLetterModal({
                     <button
                         type="button"
                         onClick={() => void submit()}
-                        disabled={!canSubmitForm(saving, loading)}
+                        disabled={!canSubmitForm(saving)}
                         className="btn-gradient rounded-xl px-4 py-2 text-sm inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {saving ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-                        {saving ? "Saving…" : loading ? "Loading…" : "Generate & save"}
+                        {saving ? "Saving…" : "Generate & save"}
                     </button>
                 </div>
             </div>

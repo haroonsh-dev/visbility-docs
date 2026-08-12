@@ -27,6 +27,14 @@ import { executeComplianceAnalytics } from './complianceChatVisualService';
 import { listTopResumesForUser } from './hrChatActionService';
 import { HR_AGENT } from './offerLetterGenerationService';
 import {
+    classifyHrWorkIntent,
+    type HrWorkTool,
+} from './hrIntentRouter';
+import {
+    executeHrPortfolioAnalytics,
+    type HrVisualIntent,
+} from './hrAnalyticsService';
+import {
     getDocumentExtractions,
     getAiDocument,
     resolveDocumentAiOrgId,
@@ -369,10 +377,41 @@ export function planAnalyticsRun(params: {
     return ordered;
 }
 
-function parseHrIntent(question: string): 'ranking' | 'distribution' {
+function parseHrIntent(question: string, phase3Agent?: string): HrVisualIntent {
+    const classified = classifyHrWorkIntent(question, phase3Agent || HR_AGENT);
+    const tool = classified?.tool;
+    const analytics: HrWorkTool[] = [
+        'directory',
+        'certs',
+        'onboarding',
+        'leave',
+        'payroll',
+        'attendance',
+        'performance',
+        'transcript',
+        'ranking',
+        'distribution',
+        'overview',
+    ];
+    if (tool && analytics.includes(tool)) return tool as HrVisualIntent;
     const q = question.toLowerCase();
     if (/\b(distribution|histogram|bucket|spread)\b/.test(q)) return 'distribution';
+    if (/\b(leave|payroll|attendance|cert|onboarding|performance|transcript|directory)\b/.test(q)) {
+        return (detectFallbackHrIntent(q) || 'overview') as HrVisualIntent;
+    }
     return 'ranking';
+}
+
+function detectFallbackHrIntent(q: string): HrVisualIntent | null {
+    if (/\bleave\b/.test(q)) return 'leave';
+    if (/\bpayroll|salary\b/.test(q)) return 'payroll';
+    if (/\battendance\b/.test(q)) return 'attendance';
+    if (/\bcert\b/.test(q)) return 'certs';
+    if (/\bonboarding\b/.test(q)) return 'onboarding';
+    if (/\bperformance|appraisal\b/.test(q)) return 'performance';
+    if (/\btranscript|gpa\b/.test(q)) return 'transcript';
+    if (/\bdirectory|employee\b/.test(q)) return 'directory';
+    return null;
 }
 
 function parseComplianceIntent(question: string): string {
@@ -997,11 +1036,23 @@ export async function runDynamicAnalytics(params: {
                     );
                     primaryAgent = FINANCE_AGENT;
                 } else if (domain === 'hr') {
-                    const intent = parseHrIntent(params.question);
-                    const result = await executeHrCharts(params.user, 15, ids, intent);
-                    visuals.push(...(result.visuals || []));
-                    citations.push(...(result.citations || []));
-                    answerParts.push(conversationalHrAnswer(result.answer));
+                    const intent = parseHrIntent(params.question, params.phase3Agent);
+                    if (intent === 'ranking' || intent === 'distribution') {
+                        const result = await executeHrCharts(params.user, 15, ids, intent);
+                        visuals.push(...(result.visuals || []));
+                        citations.push(...(result.citations || []));
+                        answerParts.push(conversationalHrAnswer(result.answer));
+                    } else {
+                        const result = await executeHrPortfolioAnalytics(
+                            params.user,
+                            intent,
+                            ids,
+                            15
+                        );
+                        visuals.push(...(result.visuals || []));
+                        citations.push(...(result.citations || []));
+                        answerParts.push(conversationalHrAnswer(result.answer));
+                    }
                     if (!domains.includes('finance')) primaryAgent = HR_AGENT;
                 } else if (domain === 'compliance') {
                     const intent = parseComplianceIntent(params.question) as any;

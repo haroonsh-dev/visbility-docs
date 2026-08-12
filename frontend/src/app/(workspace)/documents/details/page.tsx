@@ -8,6 +8,7 @@ import DocumentDetailPanel, { hasModelData, isAnalysisFinished } from "@/compone
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
 import { usePermissions } from "@/context/PermissionsContext";
+import { isGeneratedArtifactDoc } from "@/lib/generatedDocuments";
 
 type DocRecord = {
     documentId: string;
@@ -22,7 +23,7 @@ type DocRecord = {
     classification?: string | null;
     pageCount?: number;
     createdAt: string;
-    metadata?: { cvScore?: number; phase3Agent?: string } | null;
+    metadata?: { cvScore?: number; phase3Agent?: string; generatedVia?: string; source?: string } | null;
 };
 
 type DocIntel = {
@@ -115,7 +116,15 @@ function DetailsWorkspace() {
     );
 
     const runModelIfNeeded = useCallback(
-        async (id: string, ai?: Record<string, unknown> | null, job?: Record<string, unknown> | null, docStatus?: string) => {
+        async (
+            id: string,
+            ai?: Record<string, unknown> | null,
+            job?: Record<string, unknown> | null,
+            docStatus?: string,
+            doc?: DocRecord | null
+        ) => {
+            // Generated reports/letters are already complete PDFs — never kick off AI reprocess.
+            if (isGeneratedArtifactDoc(doc)) return false;
             if (hasModelData(ai) || isAnalysisFinished(ai, job, docStatus)) return false;
             if (attemptedRunRef.current.has(id)) return false;
             // Don't re-trigger if AI already processing
@@ -156,16 +165,21 @@ function DetailsWorkspace() {
                 const data = await fetchIntelligence(id);
                 const ai = data?.aiDocument as Record<string, unknown> | null;
                 const job = data?.job as Record<string, unknown> | null;
-                const docStatus = (data?.document as { status?: string } | undefined)?.status;
+                const document = data?.document as DocRecord | undefined;
+                const docStatus = document?.status;
 
-                if (!data?.document) {
+                if (!document) {
                     setSelected(null);
                     setError("Document not found");
                     return;
                 }
 
+                if (isGeneratedArtifactDoc(document)) {
+                    return;
+                }
+
                 if (!hasModelData(ai) && !isAnalysisFinished(ai, job, docStatus)) {
-                    const started = await runModelIfNeeded(id, ai, job, docStatus);
+                    const started = await runModelIfNeeded(id, ai, job, docStatus, document);
                     if (started) return;
                 }
 

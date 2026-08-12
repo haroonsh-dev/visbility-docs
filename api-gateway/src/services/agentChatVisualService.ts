@@ -4,6 +4,12 @@ import { requireAllowedAgent } from './planService';
 import { listTopResumesForUser } from './hrChatActionService';
 import { HR_AGENT } from './offerLetterGenerationService';
 import {
+    detectHrVisualIntent,
+    executeHrPortfolioAnalytics,
+    mapHrPanelView,
+    type HrVisualIntent as HrPortfolioIntent,
+} from './hrAnalyticsService';
+import {
     type FinanceVisualIntent,
     tryFinanceChatVisual,
     wantsVisualization,
@@ -16,28 +22,17 @@ import {
 } from './complianceChatVisualService';
 import { runDynamicAnalytics, runDynamicDashboard } from './dynamicAnalyticsEngine';
 
-export type HrVisualIntent = 'ranking' | 'distribution';
+export type HrVisualIntent = 'ranking' | 'distribution' | HrPortfolioIntent;
 
-function detectHrVisualIntent(question: string, phase3Agent?: string): HrVisualIntent | null {
-    const q = question.toLowerCase();
-    const hrContext =
-        phase3Agent === HR_AGENT ||
-        /\b(resume|resumes|cv|cvs|candidate|candidates|hiring)\b/i.test(question);
-    if (!hrContext) return null;
-    const wantsViz =
-        /\b(chart|graph|visuali[sz]e|visual|plot|rank|ranking|score|distribution|histogram|bucket)\b/i.test(
-            q
-        ) || (/\btop\b/.test(q) && /\b(resume|cv|candidate)\b/.test(q));
-    if (!wantsViz) return null;
-    if (/\b(distribution|histogram|bucket|spread)\b/i.test(q)) return 'distribution';
-    return 'ranking';
+function detectHrVisualIntentLegacy(question: string, phase3Agent?: string): HrVisualIntent | null {
+    return detectHrVisualIntent(question, phase3Agent);
 }
 
 export async function executeHrAnalytics(
     user: AuthUser,
     limit = 10,
     documentIds?: string[],
-    intent: HrVisualIntent = 'ranking'
+    intent: 'ranking' | 'distribution' = 'ranking'
 ): Promise<{
     visuals: ChatVisualSpec[];
     citations: NonNullable<AgentChatVisualResult['citations']>;
@@ -150,7 +145,7 @@ async function tryHrChatVisual(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<AgentChatVisualResult> {
-    const intent = detectHrVisualIntent(params.question, params.phase3Agent);
+    const intent = detectHrVisualIntentLegacy(params.question, params.phase3Agent);
     if (!intent) return { handled: false };
 
     if (params.user.role !== 'superAdmin') {
@@ -162,12 +157,30 @@ async function tryHrChatVisual(params: {
 
     const m = params.question.toLowerCase().match(/top\s+(\d{1,2})/);
     const limit = m ? Math.max(1, Math.min(20, Number(m[1]))) : 10;
-    const result = await executeHrAnalytics(params.user, limit, params.documentIds, intent);
 
-    if (!result.visuals.length) {
-        return { handled: true, agentId: HR_AGENT, answer: result.answer };
+    if (intent === 'ranking' || intent === 'distribution') {
+        const result = await executeHrAnalytics(params.user, limit, params.documentIds, intent);
+        if (!result.visuals.length) {
+            return { handled: true, agentId: HR_AGENT, answer: result.answer };
+        }
+        return {
+            handled: true,
+            agentId: HR_AGENT,
+            visuals: result.visuals,
+            citations: result.citations,
+            answer: result.answer,
+        };
     }
 
+    const result = await executeHrPortfolioAnalytics(
+        params.user,
+        intent,
+        params.documentIds,
+        limit
+    );
+    if (!result.visuals.length && !result.answer) {
+        return { handled: true, agentId: HR_AGENT, answer: result.answer };
+    }
     return {
         handled: true,
         agentId: HR_AGENT,
@@ -178,8 +191,7 @@ async function tryHrChatVisual(params: {
 }
 
 function mapHrView(view?: string): HrVisualIntent {
-    if (view === 'score_dist') return 'distribution';
-    return 'ranking';
+    return mapHrPanelView(view);
 }
 
 export async function getAgentAnalyticsDashboard(params: {
@@ -254,7 +266,18 @@ export async function getAgentAnalyticsDashboard(params: {
     if (agentId === HR_AGENT) {
         const limit = params.limit ? Math.max(1, Math.min(20, params.limit)) : 10;
         const intent = mapHrView(params.view);
-        const result = await executeHrAnalytics(user, limit, params.documentIds, intent);
+        if (intent === 'ranking' || intent === 'distribution') {
+            const result = await executeHrAnalytics(user, limit, params.documentIds, intent);
+            return {
+                agentId: HR_AGENT,
+                visuals: result.visuals,
+                citations: result.citations,
+                summary: result.answer,
+                documentCount: result.documentCount,
+                scopeMode,
+            };
+        }
+        const result = await executeHrPortfolioAnalytics(user, intent, params.documentIds, limit);
         return {
             agentId: HR_AGENT,
             visuals: result.visuals,

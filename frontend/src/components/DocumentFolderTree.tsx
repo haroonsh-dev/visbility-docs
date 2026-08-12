@@ -4,6 +4,7 @@ import React from "react";
 import { FileText, Folder, Trash2 } from "lucide-react";
 import { agentLabel, docTypeLabel, resolveDocAgent } from "@/lib/documentAgents";
 import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
+import { shouldShowChatWithDocument } from "@/lib/generatedDocuments";
 
 export type FolderTreeDoc = {
     documentId: string;
@@ -11,7 +12,7 @@ export type FolderTreeDoc = {
     status: string;
     classification?: string | null;
     pythonDocumentId?: string | null;
-    metadata?: { phase3Agent?: string; cvScore?: number } | null;
+    metadata?: { phase3Agent?: string; cvScore?: number; generatedVia?: string; source?: string } | null;
 };
 
 type DocumentFolderTreeProps = {
@@ -175,6 +176,7 @@ export default function DocumentFolderTree({
                                                         <ChatWithDocumentLink
                                                             documentId={d.documentId}
                                                             ready={!!d.pythonDocumentId}
+                                                            hidden={!shouldShowChatWithDocument(d)}
                                                             compact
                                                             className="p-1.5 min-h-0 opacity-0 group-hover:opacity-100"
                                                         />

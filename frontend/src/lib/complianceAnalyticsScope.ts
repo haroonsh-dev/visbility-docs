@@ -22,9 +22,11 @@ type ScopeDoc = {
 };
 
 export function isComplianceAnalyticsDoc(doc: ScopeDoc): boolean {
+    const c = String(doc.classification || "").toLowerCase();
+    // Generated reports are library artifacts, not chart sources.
+    if (c === "compliance_report") return false;
     const agent = resolveDocAgent(doc as Parameters<typeof resolveDocAgent>[0]);
     if (agent === "compliance_agent") return true;
-    const c = String(doc.classification || "").toLowerCase();
     return COMPLIANCE_TYPES.has(c);
 }
 

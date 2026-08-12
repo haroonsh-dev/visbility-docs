@@ -39,6 +39,20 @@ Output a single JSON object strictly conforming to the following schema:
     "license_type": {"type": "string"},
     "issue_date": {"type": "string", "format": "date"},
     "expiration_date": {"type": "string", "format": "date"},
+    "expiry_date": {"type": "string", "format": "date", "description": "Alias of expiration_date when present — use same YYYY-MM-DD value"},
+    "standard_or_regulation": {"type": "string", "description": "Primary regulation / standard name if stated"},
+    "compliance_status": {"type": "string", "description": "compliant | non_compliant | partially_compliant | not_assessed when stated"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      },
+      "description": "Map mandatory_conditions that are explicitly breached into findings; otherwise leave empty and keep conditions in mandatory_conditions"
+    },
     "mandatory_conditions": {"type": "array", "items": {"type": "string"}},
     "additional_information": {
       "type": "object",

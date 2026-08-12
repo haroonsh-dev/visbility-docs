@@ -24,7 +24,14 @@ export type AnalyticsPanelView =
     | "cert_status"
     | "status_mix"
     | "scores"
-    | "score_dist";
+    | "score_dist"
+    | "onboarding"
+    | "leave"
+    | "payroll"
+    | "attendance"
+    | "directory"
+    | "performance"
+    | "transcript";
 
 type Props = {
     open: boolean;
@@ -60,10 +67,14 @@ const PROMPTS: Record<string, string[]> = {
         "Chart invoice trend by month",
     ],
     hr_agent: [
-        "Chart top CV scores in scope",
-        "CV score distribution",
-        "Generate offer letter for [name]. Company Visibility Bots, title AI Engineer, salary PKR 80000 monthly, joining 2026-09-01",
-        "Generate experience letter for [name]. Company Visibility Bots, title Software Engineer, from 2024-01-01 to 2026-08-01",
+        "Any certificates expiring soon?",
+        "Who's on leave?",
+        "Show performance reviews",
+        "Show onboarding gaps",
+        "Show employee directory",
+        "How do transcripts look?",
+        "Generate HR report",
+        "Export shortlist top 10",
     ],
     compliance_agent: [
         "Chart certificate expiry",
@@ -84,17 +95,25 @@ const PROMPTS: Record<string, string[]> = {
 
 const FINANCE_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
     { id: "overview", label: "Overview" },
-    { id: "clients", label: "Clients" },
-    { id: "vendors", label: "Vendors" },
+    { id: "clients", label: "AR · Clients" },
+    { id: "vendors", label: "AP · Vendors" },
     { id: "trend", label: "Trend" },
-    { id: "aging", label: "Aging" },
+    { id: "aging", label: "AP Aging" },
     { id: "mix", label: "Doc mix" },
 ];
 
 const HR_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
-    { id: "overview", label: "Ranking" },
-    { id: "scores", label: "Top scores" },
-    { id: "score_dist", label: "Distribution" },
+    { id: "overview", label: "Overview" },
+    { id: "scores", label: "CV scores" },
+    { id: "score_dist", label: "CV dist" },
+    { id: "expiry", label: "Certs" },
+    { id: "onboarding", label: "Onboarding" },
+    { id: "directory", label: "Directory" },
+    { id: "leave", label: "Leave" },
+    { id: "payroll", label: "Payroll" },
+    { id: "attendance", label: "Attendance" },
+    { id: "performance", label: "Performance" },
+    { id: "transcript", label: "Transcripts" },
 ];
 
 const COMPLIANCE_VIEWS: { id: AnalyticsPanelView; label: string }[] = [

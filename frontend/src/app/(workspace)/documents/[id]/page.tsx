@@ -116,6 +116,15 @@ function DocumentPreviewContent() {
                     setPreview({ kind: "sheets", sheets });
                     return;
                 }
+                if (
+                    mime === "text/html" ||
+                    extension === "html" ||
+                    extension === "htm"
+                ) {
+                    const html = await blob.text();
+                    setPreview({ kind: "html", html });
+                    return;
+                }
                 if (mime.includes("word") || extension === "docx" || extension === "doc") {
                     const result = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() });
                     setPreview({ kind: "html", html: result.value || "<p>No preview content found.</p>" });
@@ -161,6 +170,14 @@ function DocumentPreviewContent() {
         String(doc?.classification || "").toLowerCase() === "offer_letter" ||
         /\boffer[\s_-]?letter\b/i.test(String(doc?.originalFilename || ""));
 
+    const isExperienceLetter =
+        String(doc?.classification || "").toLowerCase() === "experience_letter" ||
+        /\bexperience[\s_-]?letter\b/i.test(String(doc?.originalFilename || ""));
+
+    const isComplianceReport =
+        String(doc?.classification || "").toLowerCase() === "compliance_report" ||
+        /\bcompliance[\s_-]?report\b/i.test(String(doc?.originalFilename || ""));
+
     const printPdf = () => {
         if (!id) return;
         const url = getDocumentPreviewUrl(id);
@@ -174,6 +191,16 @@ function DocumentPreviewContent() {
                 /* browser may block auto-print */
             }
         });
+    };
+
+    const printHtml = () => {
+        if (preview.kind !== "html") return;
+        const win = window.open("", "_blank", "noopener,noreferrer");
+        if (!win) return;
+        win.document.write(preview.html);
+        win.document.close();
+        win.focus();
+        win.print();
     };
 
     return (
@@ -192,6 +219,8 @@ function DocumentPreviewContent() {
                             <h1 className={`text-lg sm:text-xl font-bold break-all ${colors.textPrimary}`}>{doc.originalFilename}</h1>
                             <p className={`text-sm ${colors.textMuted}`}>
                                 {isOfferLetter ? "Offer letter · " : ""}
+                                {isExperienceLetter ? "Experience letter · " : ""}
+                                {isComplianceReport ? "Compliance report · " : ""}
                                 {doc.mimeType} · {doc.status}
                             </p>
                         </div>
@@ -205,8 +234,17 @@ function DocumentPreviewContent() {
                                     <Printer size={14} /> Print
                                 </button>
                             )}
+                            {preview.kind === "html" && (
+                                <button
+                                    type="button"
+                                    onClick={printHtml}
+                                    className="btn-gradient rounded-xl px-4 py-2.5 text-sm flex items-center gap-2"
+                                >
+                                    <Printer size={14} /> Print / Save PDF
+                                </button>
+                            )}
                             <a href={downloadUrl} className="btn-secondary rounded-xl px-4 py-2.5 text-sm flex items-center gap-2">
-                                <Download size={14} /> Download PDF
+                                <Download size={14} /> Download
                             </a>
                         </div>
                     </div>

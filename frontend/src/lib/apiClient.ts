@@ -57,9 +57,12 @@ function buildApiUrl(endpoint: string): string {
     return `${API_BASE}${path}`;
 }
 
-async function networkSafeFetch(url: string, options: RequestInit): Promise<Response> {
+async function networkSafeFetch(
+    url: string,
+    options: RequestInit,
+    timeoutMs = 12_000
+): Promise<Response> {
     try {
-        const timeoutMs = 12_000;
         const signal =
             options.signal ||
             (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
@@ -128,19 +131,20 @@ async function refreshAccessToken(): Promise<string | null> {
 
 export async function apiRequest<T = any>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit & { timeoutMs?: number } = {}
 ): Promise<T> {
     const url = buildApiUrl(endpoint);
+    const { timeoutMs, ...fetchOptions } = options;
 
     const token = getAuthValue("accessToken") || getAuthValue("token");
 
     const doFetch = async (accessToken: string | null) => {
-        const headers = new Headers(options.headers || {});
-        if (!(options.body instanceof FormData) && !headers.has("Content-Type")) {
+        const headers = new Headers(fetchOptions.headers || {});
+        if (!(fetchOptions.body instanceof FormData) && !headers.has("Content-Type")) {
             headers.set("Content-Type", "application/json");
         }
         if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-        return networkSafeFetch(url, { ...options, headers });
+        return networkSafeFetch(url, { ...fetchOptions, headers }, timeoutMs ?? 12_000);
     };
 
     let res = await doFetch(token);

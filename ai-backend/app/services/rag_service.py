@@ -1377,13 +1377,12 @@ class RAGService:
                     .select("document_id, extracted_data") \
                     .in_("document_id", unique_ids) \
                     .eq("organization_id", org_id) \
-                    .eq("extraction_type", "resume") \
                     .execute()
                 rows = getattr(r, "data", [])
             else:
                 rows = _local_select_in("document_extractions",
                     columns="document_id, extracted_data",
-                    filters={"organization_id": org_id, "extraction_type": "resume"},
+                    filters={"organization_id": org_id},
                     in_column="document_id", in_values=unique_ids)
             for row in rows:
                 raw = row.get("extracted_data", "{}")
@@ -1391,10 +1390,18 @@ class RAGService:
                     parsed = json.loads(raw)
                 else:
                     parsed = raw or {}
-                ev = parsed.get("cv_evaluation") or {}
-                score = ev.get("overall_score")
+                if not isinstance(parsed, dict):
+                    continue
+                score = parsed.get("cv_score")
+                if score is None:
+                    ev = parsed.get("cv_evaluation") or {}
+                    if isinstance(ev, dict):
+                        score = ev.get("overall_score")
                 if score is not None:
-                    scores[row["document_id"]] = float(score)
+                    try:
+                        scores[row["document_id"]] = float(score)
+                    except (TypeError, ValueError):
+                        pass
         except Exception:
             pass
         return scores

@@ -17,6 +17,12 @@ export interface IOrganization extends Document {
         /** Fixed FX rates keyed by ISO currency code → units per 1 baseCurrency. */
         fxRates?: Record<string, number>;
     };
+    complianceSettings?: {
+        expiryWarningDays?: number;
+        requiredDocTypes?: string[];
+        severityAliases?: Record<string, string>;
+        standardAliases?: Record<string, string>;
+    };
     createdAt: Date;
     updatedAt: Date;
 }
@@ -36,6 +42,12 @@ const OrganizationSchema = new Schema<IOrganization>(
             clientAliases: { type: Schema.Types.Mixed, default: undefined },
             fyStartMonth: { type: Number, default: null },
             fxRates: { type: Schema.Types.Mixed, default: undefined },
+        },
+        complianceSettings: {
+            expiryWarningDays: { type: Number, default: null },
+            requiredDocTypes: { type: [String], default: undefined },
+            severityAliases: { type: Schema.Types.Mixed, default: undefined },
+            standardAliases: { type: Schema.Types.Mixed, default: undefined },
         },
     },
     { timestamps: true }

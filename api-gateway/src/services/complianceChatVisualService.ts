@@ -31,11 +31,23 @@ export function detectComplianceVisualIntent(
 ): ComplianceVisualIntent | null {
     const q = question.toLowerCase();
     const scoped = Boolean(options?.hasScopedComplianceDocuments);
+    const onCompliance = phase3Agent === COMPLIANCE_AGENT;
     const inContext = hasComplianceContext(question, phase3Agent) || scoped;
 
     if (!inContext && !wantsVisualization(question)) return null;
     if (!inContext && wantsVisualization(question)) {
         if (phase3Agent && phase3Agent !== COMPLIANCE_AGENT && !scoped) return null;
+    }
+
+    // Soft mode on Compliance Agent — natural language without "chart"
+    if (onCompliance || scoped) {
+        if (/\b(expir|expiry|renewal|validity|days until)\b/.test(q)) return 'expiry';
+        if (/\b(finding|findings|severity|non[- ]?conformance|ncr|major|minor|critical)\b/.test(q)) {
+            return 'findings';
+        }
+        if (/\b(certificate|cert status|valid|expired)\b/.test(q)) return 'cert_status';
+        if (/\b(pass|fail|compliance status|overall|compliant)\b/.test(q)) return 'status_mix';
+        if (/\b(overview|dashboard|summary|what can you do|start)\b/.test(q)) return 'overview';
     }
 
     if (/\b(expir|expiry|renewal|validity|days until)\b/.test(q)) return 'expiry';

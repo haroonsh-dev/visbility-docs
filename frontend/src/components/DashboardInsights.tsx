@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { EmptyState, StatusBadge } from "@/components/ui";
 import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
+import { shouldShowChatWithDocument } from "@/lib/generatedDocuments";
 
 type DashboardDocument = {
     documentId: string;
@@ -283,6 +284,7 @@ export default function DashboardInsights({
                                 <ChatWithDocumentLink
                                     documentId={doc.documentId}
                                     ready={!!doc.pythonDocumentId}
+                                    hidden={!shouldShowChatWithDocument(doc)}
                                     compact
                                     className="shrink-0 px-2.5"
                                 />

@@ -126,6 +126,23 @@ class DocumentService:
             if full_data and ev:
                 doc["cv_extraction_data"] = ev
 
+        def _apply_score_from_parsed(parsed: dict):
+            if not isinstance(parsed, dict):
+                return False
+            # Resume skill stores top-level cv_score (current schema).
+            direct = parsed.get("cv_score")
+            if direct is not None:
+                try:
+                    doc["cv_score"] = float(direct)
+                    return True
+                except (TypeError, ValueError):
+                    pass
+            ev = parsed.get("cv_evaluation") or {}
+            if isinstance(ev, dict) and ev.get("overall_score") is not None:
+                _apply_cv(ev)
+                return True
+            return False
+
         if is_resume:
             try:
                 ext_result = SupabaseDB.select(
@@ -142,17 +159,14 @@ class DocumentService:
                             parsed = json.loads(raw)
                         else:
                             parsed = raw or {}
-                        ev = parsed.get("cv_evaluation") or {}
-                        if ev:
-                            _apply_cv(ev)
+                        if _apply_score_from_parsed(parsed):
                             return
             except Exception:
                 pass
 
         extracted = doc.get("extracted_data") or {}
         if isinstance(extracted, dict):
-            ev = extracted.get("cv_evaluation") or {}
-            _apply_cv(ev)
+            _apply_score_from_parsed(extracted)
 
     def _attach_metadata(self, doc: dict, organization_id: str):
         org_id = organization_id or doc.get("organization_id") or ""
@@ -231,10 +245,18 @@ class DocumentService:
             for row in rows:
                 raw = row.get("extracted_data", "{}")
                 parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
-                ev = parsed.get("cv_evaluation") or {}
-                score = ev.get("overall_score")
+                if not isinstance(parsed, dict):
+                    continue
+                score = parsed.get("cv_score")
+                if score is None:
+                    ev = parsed.get("cv_evaluation") or {}
+                    if isinstance(ev, dict):
+                        score = ev.get("overall_score")
                 if score is not None:
-                    scores[row["document_id"]] = float(score)
+                    try:
+                        scores[row["document_id"]] = float(score)
+                    except (TypeError, ValueError):
+                        pass
             for d in docs:
                 if d["id"] in scores:
                     d["cv_score"] = scores[d["id"]]

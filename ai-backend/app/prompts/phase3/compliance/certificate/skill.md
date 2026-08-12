@@ -39,6 +39,21 @@ You must output a single JSON object strictly conforming to the following schema
     "issue_date": {"type": "string", "format": "date"},
     "expiry_date": {"type": "string", "format": "date"},
     "certification_standard": {"type": "string"},
+    "standard_or_regulation": {"type": "string", "description": "Same as certification_standard when present; prefer ISO / regulation name for analytics"},
+    "status": {"type": "string", "description": "VALID | EXPIRING_SOON | EXPIRED when explicitly stated; else null"},
+    "compliance_status": {"type": "string", "description": "compliant | non_compliant | partially_compliant | not_assessed when stated"},
+    "days_until_expiry": {"type": ["integer", "null"], "description": "Only if explicitly stated; do not calculate"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      },
+      "description": "Any non-conformances or conditions noted on the certificate"
+    },
     "scope_of_certification": {"type": "string"},
     "additional_information": {
       "type": "object",

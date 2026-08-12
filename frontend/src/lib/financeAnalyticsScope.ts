@@ -20,6 +20,8 @@ const EXCLUDED_TYPES = new Set([
     "transcript",
     "employment_contract",
     "leave_application",
+    "finance_report",
+    "compliance_report",
 ]);
 
 type ScopeDoc = {

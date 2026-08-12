@@ -75,6 +75,11 @@ export const KNOWN_DOCUMENT_TYPES = new Set([
     'iso_document',
     'compliance_form',
     'regulatory_document',
+    'compliance_report',
+    'ncr_letter',
+    'capa_letter',
+    'certificate_of_compliance',
+    'finance_report',
     'other',
 ]);
 
@@ -124,6 +129,11 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     iso_document: 'compliance_agent',
     compliance_form: 'compliance_agent',
     regulatory_document: 'compliance_agent',
+    compliance_report: 'compliance_agent',
+    ncr_letter: 'compliance_agent',
+    capa_letter: 'compliance_agent',
+    certificate_of_compliance: 'compliance_agent',
+    finance_report: 'finance_agent',
     other: 'other_agent',
 };
 

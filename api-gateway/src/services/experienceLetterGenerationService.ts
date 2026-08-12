@@ -1,21 +1,29 @@
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import Document from '../models/Document';
 import { AuthUser } from './accessScope';
-import { applyDocumentTypeStorage, ensureUploadDir, saveUploadedFile } from './documentStorage';
+import {
+    applyDocumentTypeStorage,
+    ensureUploadDir,
+    getDocumentDir,
+    resolveOrgFolder,
+} from './documentStorage';
+import { sanitizeFilename } from '../utils/fileValidation';
 import {
     generateExperienceLetterPdf,
-    resolveAiOrganizationId,
     resolveDocumentAiOrgId,
-    updateAiDocumentFilePath,
-    updateAiDocumentSettings,
 } from './aiServiceClient';
 import { decodeOfferLetterPdfBase64, HR_AGENT } from './offerLetterGenerationService';
 import logger from '../utils/logger';
 
 export type ExperiencePayload = Record<string, unknown>;
 
+/**
+ * Generate experience certificate PDF and save as a ready artifact (no AI reprocess).
+ * Same pattern as compliance/HR chat-generated PDFs so Open/Print works immediately.
+ */
 export async function createExperienceLetterFromResume(
     user: AuthUser,
     sourceDocumentId: string,
@@ -38,62 +46,62 @@ export async function createExperienceLetterFromResume(
 
     const buf = decodeOfferLetterPdfBase64(generated);
     ensureUploadDir();
-    const tmpDir = path.join(process.cwd(), 'uploads', '_tmp');
-    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-    const tmpPath = path.join(tmpDir, `experience_${uuidv4()}.pdf`);
-    fs.writeFileSync(tmpPath, buf);
 
-    const { doc: saved } = await saveUploadedFile(
-        user,
-        {
-            path: tmpPath,
-            originalname: generated.filename,
-            mimetype: generated.mime_type || 'application/pdf',
-            size: buf.length,
-        },
-        HR_AGENT
+    const documentId = `doc_${uuidv4()}`;
+    const orgFolder = resolveOrgFolder(user.organizationId, user.userId);
+    const destDir = getDocumentDir(orgFolder, documentId, { inbox: true });
+    fs.mkdirSync(destDir, { recursive: true });
+
+    const originalFilename = sanitizeFilename(
+        generated.filename || `Experience_Letter_${Date.now()}.pdf`
     );
+    const storagePath = path.join(destDir, originalFilename);
+    fs.writeFileSync(storagePath, buf);
 
-    const newDoc = await Document.findOne({ documentId: saved.documentId });
-    if (!newDoc) {
-        throw Object.assign(new Error('Failed to load saved experience letter'), { statusCode: 500 });
-    }
+    const contentHash = crypto.createHash('sha256').update(buf).digest('hex');
 
-    newDoc.classification = 'experience_letter';
-    newDoc.metadata = {
-        ...(newDoc.metadata || {}),
-        phase3Agent: HR_AGENT,
-        generatedFromDocumentId: source.documentId,
-        generatedFromFilename: source.originalFilename,
-        generatedVia: 'hr_chat',
-    };
+    const letterDoc = await Document.create({
+        documentId,
+        organizationId: user.organizationId || null,
+        uploadedBy: user.userId,
+        openRemoteUserId: (user as { openRemoteUserId?: string | null }).openRemoteUserId || null,
+        originalFilename,
+        storedFilename: originalFilename,
+        mimeType: generated.mime_type || 'application/pdf',
+        sizeBytes: buf.length,
+        storagePath,
+        contentHash,
+        pythonDocumentId: null,
+        aiProcessingStatus: null,
+        aiErrorMessage: null,
+        status: 'ready',
+        classification: 'experience_letter',
+        metadata: {
+            source: 'hr_chat',
+            phase3Agent: HR_AGENT,
+            generatedVia: 'experience_letter',
+            generatedFromDocumentId: source.documentId,
+            generatedFromFilename: source.originalFilename,
+            storageLayout: 'by-type',
+            storageType: 'inbox',
+            aiSynced: false,
+        },
+    });
 
-    if (newDoc.pythonDocumentId) {
-        try {
-            await updateAiDocumentSettings({
-                pythonDocumentId: newDoc.pythonDocumentId,
-                organizationId: resolveAiOrganizationId(user),
-                documentType: 'experience_letter',
-                phase3Agent: HR_AGENT,
-            });
-        } catch (e: any) {
-            logger.warn(`Experience letter AI type update failed for ${newDoc.documentId}: ${e?.message || e}`);
-        }
+    try {
+        const { applyDocumentVisibilityScope } = await import('./documentVisibility');
+        await applyDocumentVisibilityScope(letterDoc, null);
+        await letterDoc.save();
+    } catch (e: any) {
+        logger.warn(`Experience letter visibility failed for ${letterDoc.documentId}: ${e?.message || e}`);
     }
 
     try {
-        const moved = await applyDocumentTypeStorage(newDoc, 'experience_letter');
-        if (moved && newDoc.pythonDocumentId && fs.existsSync(newDoc.storagePath)) {
-            await updateAiDocumentFilePath({
-                pythonDocumentId: newDoc.pythonDocumentId,
-                organizationId: resolveAiOrganizationId(user),
-                filePath: newDoc.storagePath,
-            });
-        }
+        await applyDocumentTypeStorage(letterDoc, 'experience_letter');
+        await letterDoc.save();
     } catch (e: any) {
-        logger.warn(`Experience letter storage relocate failed for ${newDoc.documentId}: ${e?.message || e}`);
+        logger.warn(`Experience letter storage relocate failed for ${letterDoc.documentId}: ${e?.message || e}`);
     }
 
-    await newDoc.save();
-    return { source, letterDoc: newDoc };
+    return { source, letterDoc };
 }

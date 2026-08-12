@@ -9,6 +9,7 @@ import FilterSelect from "@/components/FilterSelect";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
 import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
+import { isGeneratedArtifactDoc, shouldShowChatWithDocument } from "@/lib/generatedDocuments";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { usePermissions } from "@/context/PermissionsContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -362,8 +363,9 @@ function DepartmentContent() {
                                         <ChatWithDocumentLink
                                             documentId={doc.documentId}
                                             ready={!!doc.pythonDocumentId}
+                                            hidden={!shouldShowChatWithDocument(doc)}
                                         />
-                                        <Link href={`/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 flex-1 sm:flex-initial min-h-10"><Info size={14} /> Details</Link>
+                                        <Link href={isGeneratedArtifactDoc(doc) ? `/documents/${doc.documentId}` : `/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 flex-1 sm:flex-initial min-h-10"><Info size={14} /> {isGeneratedArtifactDoc(doc) ? "Open PDF" : "Details"}</Link>
                                         <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 flex-1 sm:flex-initial min-h-10"><Eye size={14} /> Preview</Link>
                                         {canDeleteDocs() && <button type="button" onClick={() => removeDocument(doc.documentId, doc.originalFilename)} className="btn-ghost rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 text-rose-500 min-h-10"><Trash2 size={14} /> Delete</button>}
                                         {(canShareDocs() || me?.orgRole?.isLeader) && <button type="button" onClick={() => setSharingDoc({ documentId: doc.documentId, filename: doc.originalFilename })} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 min-h-10"><Share2 size={14} /> Share</button>}

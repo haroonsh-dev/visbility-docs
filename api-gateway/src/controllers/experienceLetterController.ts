@@ -156,7 +156,13 @@ export const generateExperienceLetterFromResume = async (
         res.status(201).json({
             success: true,
             data: {
-                document: letterDoc,
+                document: {
+                    documentId: letterDoc.documentId,
+                    originalFilename: letterDoc.originalFilename,
+                    classification: letterDoc.classification,
+                    status: letterDoc.status,
+                    mimeType: letterDoc.mimeType,
+                },
                 sourceDocumentId: source.documentId,
             },
         });

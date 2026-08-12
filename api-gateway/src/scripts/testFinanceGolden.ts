@@ -9,6 +9,9 @@ import {
     dedupeFinanceRecords,
     pairPurchaseOrdersWithInvoices,
     convertRecordsToBase,
+    applyPaymentsToInvoices,
+    buildAgingVisual,
+    extractInvoiceRefFromText,
     type FinanceRecord,
 } from '../services/financeAnalyticsService';
 import { canonicalizePartyName, partyRollupKey } from '../services/financePartyNormalize';
@@ -333,6 +336,82 @@ check('PO pairing: over-invoiced when invoice > PO', () => {
     const pairs = pairPurchaseOrdersWithInvoices([...poRecord, ...invRecord]);
     assert(pairs[0].status === 'over_invoiced', `status=${pairs[0].status}`);
     assert(pairs[0].variance === 200, `variance=${pairs[0].variance}`);
+});
+
+check('payment receipt: parses as payment, not invoice spend', () => {
+    const rows = buildFinanceRecordsFromExtraction(
+        { documentId: 'pay1', originalFilename: 'receipt.pdf', classification: 'payment_receipt' },
+        {
+            amount_paid: 450_000,
+            currency: 'PKR',
+            payer_name: 'Nexus Global',
+            payee_name: 'Visibility Telecom',
+            payment_for: 'Payment against Invoice # INV-2024-102',
+            receipt_number: 'RCT-1',
+        }
+    );
+    assert(rows.length === 1, `rows=${rows.length}`);
+    assert(rows[0].recordKind === 'payment', `kind=${rows[0].recordKind}`);
+    assert(rows[0].amountPaid === 450_000, `paid=${rows[0].amountPaid}`);
+    assert(/INV-2024-102/i.test(rows[0].paysInvoiceNumber || ''), `pays=${rows[0].paysInvoiceNumber}`);
+});
+
+check('payment settlement: outstanding = invoice − matched payment', () => {
+    const inv = buildFinanceRecordsFromExtraction(
+        { documentId: 'inv-pay', originalFilename: 'inv.pdf', classification: 'invoice' },
+        {
+            invoice_number: 'INV-2024-102',
+            vendor_name: 'Visibility Telecom',
+            total_amount: 500_000,
+            currency: 'PKR',
+            customer_name: 'Nexus Global',
+        }
+    );
+    const pay = buildFinanceRecordsFromExtraction(
+        { documentId: 'pay-match', originalFilename: 'rct.pdf', classification: 'payment_receipt' },
+        {
+            amount_paid: 200_000,
+            currency: 'PKR',
+            payee_name: 'Visibility Telecom',
+            payer_name: 'Nexus Global',
+            payment_for: 'Payment against Invoice # INV-2024-102',
+        }
+    );
+    const settled = applyPaymentsToInvoices([...inv, ...pay]);
+    assert(settled.appliedPayments === 1, `applied=${settled.appliedPayments}`);
+    assert(settled.records.length === 1, `invRows=${settled.records.length}`);
+    assert(settled.records[0].outstanding === 300_000, `out=${settled.records[0].outstanding}`);
+    assert(settled.records[0].paidApplied === 200_000, `paidApplied=${settled.records[0].paidApplied}`);
+    const aging = buildAgingVisual(settled.records);
+    const sum = aging.data.reduce((s, r) => s + Number(r.amount || 0), 0);
+    assert(sum === 300_000, `agingSum=${sum}`);
+});
+
+check('payment settlement: unmatched payment leaves gross outstanding', () => {
+    const inv = buildFinanceRecordsFromExtraction(
+        { documentId: 'inv-u', originalFilename: 'inv.pdf', classification: 'invoice' },
+        { invoice_number: 'INV-9', vendor_name: 'Acme', total_amount: 1000, currency: 'USD' }
+    );
+    const pay = buildFinanceRecordsFromExtraction(
+        { documentId: 'pay-u', originalFilename: 'rct.pdf', classification: 'payment_receipt' },
+        {
+            amount_paid: 400,
+            currency: 'USD',
+            payee_name: 'Acme',
+            payment_for: 'Misc deposit',
+        }
+    );
+    const settled = applyPaymentsToInvoices([...inv, ...pay]);
+    assert(settled.appliedPayments === 0, 'no apply');
+    assert(settled.unmatchedPayments === 1, `unmatched=${settled.unmatchedPayments}`);
+    assert(settled.records[0].outstanding === 1000, `out=${settled.records[0].outstanding}`);
+});
+
+check('extractInvoiceRefFromText: Invoice # INV-2024-102', () => {
+    assert(
+        /INV-2024-102/i.test(extractInvoiceRefFromText('Payment against Invoice # INV-2024-102')),
+        'ref'
+    );
 });
 
 console.log(`\n${passed} checks passed`);

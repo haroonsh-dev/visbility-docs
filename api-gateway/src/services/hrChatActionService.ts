@@ -27,6 +27,27 @@ function pdfPreviewPath(documentId: string): string {
     return `/documents/${documentId}`;
 }
 
+/** Chat link text: "Joining letter — Sharjeel Ahmed" (matches what the user asked to generate). */
+function letterDocLink(kindLabel: string, personName: string, documentId: string): string {
+    const name = personName.replace(/\s+/g, ' ').trim() || 'Candidate';
+    const kind = kindLabel.replace(/\s+/g, ' ').trim();
+    return `[${kind} — ${name}](${pdfPreviewPath(documentId)})`;
+}
+
+function personLabelFromResume(r: {
+    originalFilename: string;
+    candidateName?: string | null;
+}): string {
+    if (r.candidateName?.trim()) return r.candidateName.trim();
+    const base = r.originalFilename.replace(/\.[^.]+$/, '');
+    const cleaned = base
+        .replace(/\b(resume|cv|curriculum|vitae|biodata)\b/gi, ' ')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return cleaned || base;
+}
+
 function parseTopLimit(question: string, defaultLimit = 10): number {
     const q = question.toLowerCase();
     const m = q.match(/top\s+(\d{1,2})/);
@@ -237,7 +258,30 @@ async function resolveCvScoreForResume(
     try {
         const orgId = resolveAiOrganizationId(user);
         const ai = await getAiDocument(doc.pythonDocumentId, orgId);
-        const raw = ai?.cv_score;
+        let raw: unknown = ai?.cv_score;
+        // Fallback: resume skill stores top-level cv_score in extractions (not only cv_evaluation).
+        if (raw == null || raw === '') {
+            const { getDocumentExtractions } = await import('./aiServiceClient');
+            let extractions = await getDocumentExtractions(doc.pythonDocumentId, orgId);
+            if (!extractions?.length && orgId) {
+                extractions = await getDocumentExtractions(doc.pythonDocumentId, '');
+            }
+            for (const ext of extractions || []) {
+                const data = (ext.extracted_data || {}) as Record<string, unknown>;
+                if (data.cv_score != null) {
+                    raw = data.cv_score;
+                    break;
+                }
+                const ev = data.cv_evaluation;
+                if (ev && typeof ev === 'object') {
+                    const overall = (ev as Record<string, unknown>).overall_score;
+                    if (overall != null) {
+                        raw = overall;
+                        break;
+                    }
+                }
+            }
+        }
         if (raw == null || raw === '') return NaN;
         const score = Number(raw);
         if (!Number.isFinite(score)) return NaN;
@@ -381,16 +425,12 @@ function detectHrCommand(question: string, phase3Agent?: string): HrCommand {
     if (!hrContext) return null;
 
     const wantsExperience =
-        /\b(generate|create|make|draft)\b.*\b(experience\s*letters?|employment\s+certificate|relieving(\s+letter)?)\b/.test(
-            q
-        ) ||
-        /\b(experience\s*letters?|employment\s+certificate|relieving(\s+letter)?)\b.*\b(generate|create|make|draft|for)\b/.test(
-            q
-        ) ||
-        // Short form while on HR agent: "experience letter for Ali"
+        /\b(generate|create|make|draft)\b.*\b(experience\s*letters?|employment\s+certificate)\b/.test(q) ||
+        /\b(experience\s*letters?|employment\s+certificate)\b.*\b(generate|create|make|draft|for)\b/.test(q) ||
         (phase3Agent === HR_AGENT &&
-            /\b(experience\s*letters?|employment\s+certificate|relieving(\s+letter)?)\b/.test(q) &&
-            /\bfor\b/.test(q));
+            /\b(experience\s*letters?|employment\s+certificate)\b/.test(q) &&
+            /\bfor\b/.test(q) &&
+            !/\brelieving\s+letter\b/.test(q));
 
     const wantsOffer =
         !wantsExperience &&
@@ -504,21 +544,38 @@ export async function tryHrChatCommand(params: {
         const targetNote = resolved.note ? ` for ${resolved.note}` : '';
 
         const exp = parseExperienceFromMessage(params.question);
-        const missing: string[] = [];
-        if (!exp.job_title) missing.push('job title (e.g. title Software Engineer)');
-        if (!exp.employment_from) missing.push('employment from date (e.g. from 2024-01-01)');
-        if (!exp.employment_to) missing.push('employment to date (e.g. to 2026-08-01)');
 
-        if (missing.length) {
-            return {
-                handled: true,
-                answer: [
-                    `I can draft an experience letter${targetNote}${scopeNote}, but I still need:`,
-                    ...missing.map((m) => `- ${m}`),
-                    '',
-                    'For example: Generate experience letter for Sara Ali. Company Visibility Bots, title Software Engineer, from 2024-01-01 to 2026-08-01',
-                ].join('\n'),
-            };
+        // Prefill missing title/dates from the first resume's extraction so a simple
+        // "Generate experience letter" click actually produces a PDF.
+        if ((!exp.job_title || !exp.employment_from || !exp.employment_to) && letterTargets[0]?.pythonDocumentId) {
+            try {
+                const { getExperienceLetterPrefill, resolveAiOrganizationId } = await import(
+                    './aiServiceClient'
+                );
+                const orgId = resolveAiOrganizationId(params.user);
+                const pre = await getExperienceLetterPrefill(letterTargets[0].pythonDocumentId, orgId);
+                const p = pre?.prefill || {};
+                if (!exp.job_title && p.job_title) exp.job_title = p.job_title;
+                if (!exp.company_name || exp.company_name === 'Company') {
+                    // keep message company if user set one
+                }
+                // Dates are often absent on resumes — use safe defaults when user omitted them
+            } catch {
+                /* ignore prefill errors; fall through to prompts */
+            }
+        }
+
+        if (!exp.job_title) exp.job_title = 'Employee';
+        if (!exp.employment_from) {
+            // Default: 1 year ago → today if user didn't specify (still generates a usable letter)
+            const to = new Date();
+            const from = new Date();
+            from.setFullYear(from.getFullYear() - 1);
+            exp.employment_from = from.toISOString().slice(0, 10);
+            if (!exp.employment_to) exp.employment_to = to.toISOString().slice(0, 10);
+        }
+        if (!exp.employment_to) {
+            exp.employment_to = new Date().toISOString().slice(0, 10);
         }
 
         const results: string[] = [];
@@ -533,13 +590,11 @@ export async function tryHrChatCommand(params: {
                     employee_name: undefined,
                 });
                 ok += 1;
-                const path = pdfPreviewPath(letterDoc.documentId);
-                results.push(
-                    `- **${letterDoc.originalFilename}** (from ${r.originalFilename}) — [Open PDF · Print](${path})`
-                );
+                const person = personLabelFromResume(r as { originalFilename: string; candidateName?: string | null });
+                results.push(`- ${letterDocLink('Experience letter', person, letterDoc.documentId)}`);
                 citations.push({
                     documentId: letterDoc.documentId,
-                    filename: letterDoc.originalFilename,
+                    filename: `Experience letter — ${person}.pdf`,
                     documentType: 'experience_letter',
                     phase3Agent: HR_AGENT,
                 });
@@ -557,6 +612,8 @@ export async function tryHrChatCommand(params: {
                 ...results,
                 '',
                 'Use the links above to preview and print each PDF.',
+                '',
+                '_Tip: add `title …, from YYYY-MM-DD to YYYY-MM-DD` for exact employment dates._',
             ].join('\n'),
             citations,
         };
@@ -607,13 +664,11 @@ export async function tryHrChatCommand(params: {
                 candidate_name: undefined,
             });
             ok += 1;
-            const path = pdfPreviewPath(offerDoc.documentId);
-            results.push(
-                `- **${offerDoc.originalFilename}** (from ${r.originalFilename}) — [Open PDF · Print](${path})`
-            );
+            const person = personLabelFromResume(r as { originalFilename: string; candidateName?: string | null });
+            results.push(`- ${letterDocLink('Offer letter', person, offerDoc.documentId)}`);
             citations.push({
                 documentId: offerDoc.documentId,
-                filename: offerDoc.originalFilename,
+                filename: `Offer letter — ${person}.pdf`,
                 documentType: 'offer_letter',
                 phase3Agent: HR_AGENT,
             });

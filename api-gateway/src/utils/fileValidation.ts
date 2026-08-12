@@ -9,12 +9,15 @@ const ALLOWED_EXTENSIONS = new Set([
     '.xlsx',
     '.pptx',
     '.txt',
+    '.html',
+    '.htm',
 ]);
 
 const ALLOWED_MIME_PREFIXES = [
     'application/pdf',
     'image/',
     'text/plain',
+    'text/html',
     'application/vnd.openxmlformats-officedocument',
     'application/msword',
     'application/vnd.ms-excel',

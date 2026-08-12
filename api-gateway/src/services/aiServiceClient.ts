@@ -578,6 +578,41 @@ export async function generateExtractionReportHtml(
     return { subject, html };
 }
 
+export async function generateComplianceReportPdf(params: {
+    html: string;
+    filename?: string;
+}): Promise<{
+    filename: string;
+    mime_type: string;
+    pdf_base64?: string;
+    size_bytes: number;
+}> {
+    if (!ENABLED || !params.html) {
+        throw new Error('AI service is disabled');
+    }
+
+    const res = await client().post(
+        '/api/v1/reports/compliance/pdf',
+        {
+            html: params.html,
+            filename: params.filename || 'Compliance_Report.pdf',
+        },
+        { timeout: 120_000 }
+    );
+
+    if (res.status >= 400) {
+        const detail = res.data?.detail || res.data?.message || JSON.stringify(res.data);
+        throw new Error(typeof detail === 'string' ? detail : 'Compliance report PDF generation failed');
+    }
+
+    return res.data as {
+        filename: string;
+        mime_type: string;
+        pdf_base64?: string;
+        size_bytes: number;
+    };
+}
+
 export type AiSimilarDocument = {
     document_id: string;
     document_title?: string;

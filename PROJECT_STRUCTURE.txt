@@ -1,0 +1,986 @@
+Visibility Docs AI — Project Structure
+Generated: 2026-08-12
+Repository: visbility-docs
+
+Excluded from this listing:
+  node_modules, .git, .next, dist, build, __pycache__, .venv, tsconfig.tsbuildinfo
+
+Regenerate:
+  tree -a -I 'node_modules|.git|.next|dist|build|__pycache__|*.pyc|.venv|venv' --dirsfirst > PROJECT_STRUCTURE.txt
+
+================================================================================
+
+.
+├── .cursor
+│   └── rules
+│       └── visibility-bots-colors.mdc
+├── .github
+│   └── workflows
+│       ├── api-gateway-tests.yml
+│       └── deploy.yml
+├── .vscode
+│   ├── settings.json
+│   └── tailwind.css-data.json
+├── ai-backend
+│   ├── .cache_home
+│   │   ├── .cache
+│   │   │   ├── fontconfig
+│   │   │   │   ├── CACHEDIR.TAG
+│   │   │   │   └── fe44ad603488fb7acf454c76fab8a727-le64.cache-12
+│   │   │   └── huggingface
+│   │   │       ├── hub
+│   │   │       │   ├── models--PaddlePaddle--PP-LCNet_x1_0_doc_ori
+│   │   │       │   │   └── refs
+│   │   │       │   │       └── main
+│   │   │       │   └── models--PaddlePaddle--UVDoc
+│   │   │       │       └── refs
+│   │   │       │           └── main
+│   │   │       └── xet
+│   │   │           └── logs
+│   │   │               ├── xet_20260730T120200463+0500_80429.log
+│   │   │               └── xet_20260730T120459085+0500_80480.log
+│   │   ├── .matplotlib
+│   │   │   └── fontlist-v390.json
+│   │   ├── .paddlex
+│   │   │   ├── locks
+│   │   │   │   └── official_models
+│   │   │   │       ├── 6189899d9f003a3d18a433ba7a96e3e062b7d5ab5b7fc66f025373c0192891d5.lock
+│   │   │   │       └── e2c757a08e4140631e57e5edb9ec14fecda44f839e6b20908f4384e79b63b105.lock
+│   │   │   └── official_models
+│   │   │       ├── PP-LCNet_x1_0_doc_ori
+│   │   │       │   ├── .cache
+│   │   │       │   │   └── huggingface
+│   │   │       │   │       ├── download
+│   │   │       │   │       │   ├── .gitattributes.lock
+│   │   │       │   │       │   ├── .gitattributes.metadata
+│   │   │       │   │       │   ├── README.md.lock
+│   │   │       │   │       │   ├── README.md.metadata
+│   │   │       │   │       │   ├── config.json.lock
+│   │   │       │   │       │   ├── config.json.metadata
+│   │   │       │   │       │   ├── inference.json.lock
+│   │   │       │   │       │   ├── inference.json.metadata
+│   │   │       │   │       │   ├── inference.pdiparams.lock
+│   │   │       │   │       │   ├── inference.pdiparams.metadata
+│   │   │       │   │       │   ├── inference.yml.lock
+│   │   │       │   │       │   └── inference.yml.metadata
+│   │   │       │   │       └── .gitignore
+│   │   │       │   ├── .gitattributes
+│   │   │       │   ├── README.md
+│   │   │       │   ├── config.json
+│   │   │       │   ├── inference.json
+│   │   │       │   ├── inference.pdiparams
+│   │   │       │   └── inference.yml
+│   │   │       ├── PP-LCNet_x1_0_textline_ori
+│   │   │       │   └── .cache
+│   │   │       │       └── huggingface
+│   │   │       │           ├── download
+│   │   │       │           │   ├── .gitattributes.lock
+│   │   │       │           │   ├── .gitattributes.metadata
+│   │   │       │           │   ├── README.md.lock
+│   │   │       │           │   ├── README.md.metadata
+│   │   │       │           │   ├── config.json.lock
+│   │   │       │           │   ├── config.json.metadata
+│   │   │       │           │   ├── inference.json.lock
+│   │   │       │           │   ├── inference.json.metadata
+│   │   │       │           │   ├── inference.pdiparams.lock
+│   │   │       │           │   ├── inference.pdiparams.metadata
+│   │   │       │           │   ├── inference.yml.lock
+│   │   │       │           │   └── inference.yml.metadata
+│   │   │       │           └── .gitignore
+│   │   │       ├── PP-OCRv6_medium_det
+│   │   │       │   └── .cache
+│   │   │       │       └── huggingface
+│   │   │       │           ├── download
+│   │   │       │           │   ├── .gitattributes.lock
+│   │   │       │           │   ├── .gitattributes.metadata
+│   │   │       │           │   ├── README.md.lock
+│   │   │       │           │   ├── README.md.metadata
+│   │   │       │           │   ├── inference.json.lock
+│   │   │       │           │   ├── inference.json.metadata
+│   │   │       │           │   ├── inference.pdiparams.lock
+│   │   │       │           │   ├── inference.pdiparams.metadata
+│   │   │       │           │   ├── inference.yml.lock
+│   │   │       │           │   └── inference.yml.metadata
+│   │   │       │           └── .gitignore
+│   │   │       ├── PP-OCRv6_medium_rec
+│   │   │       │   └── .cache
+│   │   │       │       └── huggingface
+│   │   │       │           ├── download
+│   │   │       │           │   ├── .gitattributes.lock
+│   │   │       │           │   ├── .gitattributes.metadata
+│   │   │       │           │   ├── README.md.lock
+│   │   │       │           │   ├── README.md.metadata
+│   │   │       │           │   ├── inference.json.lock
+│   │   │       │           │   ├── inference.json.metadata
+│   │   │       │           │   ├── inference.pdiparams.lock
+│   │   │       │           │   ├── inference.pdiparams.metadata
+│   │   │       │           │   ├── inference.yml.lock
+│   │   │       │           │   └── inference.yml.metadata
+│   │   │       │           └── .gitignore
+│   │   │       └── UVDoc
+│   │   │           ├── .cache
+│   │   │           │   └── huggingface
+│   │   │           │       ├── download
+│   │   │           │       │   ├── .gitattributes.lock
+│   │   │           │       │   ├── .gitattributes.metadata
+│   │   │           │       │   ├── README.md.lock
+│   │   │           │       │   ├── README.md.metadata
+│   │   │           │       │   ├── config.json.lock
+│   │   │           │       │   ├── config.json.metadata
+│   │   │           │       │   ├── inference.json.lock
+│   │   │           │       │   ├── inference.json.metadata
+│   │   │           │       │   ├── inference.pdiparams.lock
+│   │   │           │       │   ├── inference.pdiparams.metadata
+│   │   │           │       │   ├── inference.yml.lock
+│   │   │           │       │   └── inference.yml.metadata
+│   │   │           │       └── .gitignore
+│   │   │           ├── .gitattributes
+│   │   │           ├── README.md
+│   │   │           ├── config.json
+│   │   │           ├── inference.json
+│   │   │           ├── inference.pdiparams
+│   │   │           └── inference.yml
+│   │   ├── matplotlib
+│   │   │   └── fontlist-v390.json
+│   │   ├── tess_highres_page1.png
+│   │   ├── tess_page_1.png
+│   │   └── tess_page_2.png
+│   ├── app
+│   │   ├── auth
+│   │   │   ├── __init__.py
+│   │   │   └── service.py
+│   │   ├── data
+│   │   │   └── local_models
+│   │   │       ├── BAAI_bge_large_en_v1.5
+│   │   │       │   ├── 1_Pooling
+│   │   │       │   │   └── config.json
+│   │   │       │   ├── README.md
+│   │   │       │   ├── config.json
+│   │   │       │   ├── config_sentence_transformers.json
+│   │   │       │   ├── model.safetensors
+│   │   │       │   ├── modules.json
+│   │   │       │   ├── sentence_bert_config.json
+│   │   │       │   ├── special_tokens_map.json
+│   │   │       │   ├── tokenizer.json
+│   │   │       │   ├── tokenizer_config.json
+│   │   │       │   └── vocab.txt
+│   │   │       └── cross_encoder_ms_marco_MiniLM_L_6_v2
+│   │   │           ├── README.md
+│   │   │           ├── config.json
+│   │   │           ├── model.safetensors
+│   │   │           ├── special_tokens_map.json
+│   │   │           ├── tokenizer.json
+│   │   │           ├── tokenizer_config.json
+│   │   │           └── vocab.txt
+│   │   ├── models
+│   │   │   ├── __init__.py
+│   │   │   └── schemas.py
+│   │   ├── prompts
+│   │   │   ├── phase3
+│   │   │   │   ├── compliance
+│   │   │   │   │   ├── audit_evidence_collection
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── audit_report
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── certificate
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── compliance_form
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── engineering_drawing
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── expired_certificate_tracking
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── inspection_report
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── iso_document
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── maintenance_report
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── missing_document_detection
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── quality_report
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── regulatory_document
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── safety_manual
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   └── sop
+│   │   │   │   │       └── skill.md
+│   │   │   │   ├── finance
+│   │   │   │   │   ├── bank_statement
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── budget
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── duplicate_invoice_detection
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── expense_report
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── expense_summary
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── financial_statement
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── invoice
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── invoice_search
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── payment_receipt
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── payment_term_extraction
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   └── tax_document
+│   │   │   │   │       └── skill.md
+│   │   │   │   ├── hr
+│   │   │   │   │   ├── attendance
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── certificate_expiry_tracking
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── contract_search
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── employee_document_completeness
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── employee_record
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── employment_contract
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── leave_application
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── offer_letter
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── payroll
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── performance_review
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── resume
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── training_certificate
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   └── transcript
+│   │   │   │   │       └── skill.md
+│   │   │   │   ├── legal
+│   │   │   │   │   ├── agreement
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── clause_extraction
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── contract
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── contract_summary
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── employment_contract
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── lease_agreement
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── nda
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── risk_detection
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── service_agreement
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── vendor_contract
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   └── version_comparison
+│   │   │   │   │       └── skill.md
+│   │   │   │   ├── other
+│   │   │   │   │   ├── company_policy_or_memo
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── general_correspondence
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── meeting_minutes
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   └── project_proposal
+│   │   │   │   │       └── skill.md
+│   │   │   │   ├── procurement
+│   │   │   │   │   ├── delivery_note
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── po_and_invoice_validation
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── procurement_request
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── purchase_order
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── quotation
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── quotation_comparison
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── rfq
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── supplier_agreement
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   ├── supplier_document_search
+│   │   │   │   │   │   └── skill.md
+│   │   │   │   │   └── vendor_list
+│   │   │   │   │       └── skill.md
+│   │   │   │   ├── compliance_agent.md
+│   │   │   │   ├── finance_agent.md
+│   │   │   │   ├── hr_agent.md
+│   │   │   │   ├── legal_agent.md
+│   │   │   │   ├── other.md
+│   │   │   │   ├── procurement_agent.md
+│   │   │   │   └── super_other_agent.md
+│   │   │   └── classification_agent.md
+│   │   ├── routers
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── chat.py
+│   │   │   ├── documents.py
+│   │   │   ├── groq_config.py
+│   │   │   ├── hr.py
+│   │   │   ├── reports.py
+│   │   │   ├── search.py
+│   │   │   └── settings.py
+│   │   ├── services
+│   │   │   ├── __init__.py
+│   │   │   ├── agent_orchestrator.py
+│   │   │   ├── chat_service.py
+│   │   │   ├── classification_service.py
+│   │   │   ├── conversation_service.py
+│   │   │   ├── document_service.py
+│   │   │   ├── email_service.py
+│   │   │   ├── embedding_service.py
+│   │   │   ├── experience_letter_service.py
+│   │   │   ├── groq_limit_state.py
+│   │   │   ├── groq_service.py
+│   │   │   ├── hf_storage.py
+│   │   │   ├── image_extraction_service.py
+│   │   │   ├── invoice_line_item_repair.py
+│   │   │   ├── ocr_service.py
+│   │   │   ├── offer_letter_service.py
+│   │   │   ├── orchestration_logger.py
+│   │   │   ├── orchestrator_service.py
+│   │   │   ├── pinecone_service.py
+│   │   │   ├── preprocessing_service.py
+│   │   │   ├── provider_manager.py
+│   │   │   ├── rag_service.py
+│   │   │   ├── report_service.py
+│   │   │   ├── resume_transcript_disambiguation.py
+│   │   │   ├── spreadsheet_qa.py
+│   │   │   ├── table_service.py
+│   │   │   ├── validation_service.py
+│   │   │   ├── vector_org.py
+│   │   │   ├── vision_provider.py
+│   │   │   └── workflow_service.py
+│   │   ├── utils
+│   │   │   ├── __init__.py
+│   │   │   ├── agent_allowlist.py
+│   │   │   └── file_utils.py
+│   │   ├── __init__.py
+│   │   ├── auth_deps.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── init_supabase.py
+│   │   └── main.py
+│   ├── data
+│   │   ├── groq_rate_limit.json
+│   │   └── providers_config.json
+│   ├── uploads
+│   │   └── images
+│   │       ├── 4bee0315f4224031b7c434abc4195c34
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   ├── page0002_img001.jpg
+│   │       │   ├── page0002_img005.jpg
+│   │       │   ├── page0002_img007.jpg
+│   │       │   ├── page0002_img009.jpg
+│   │       │   ├── page0002_img011.jpg
+│   │       │   ├── page0002_img013.jpg
+│   │       │   ├── page0002_img015.jpg
+│   │       │   ├── page0002_img017.jpg
+│   │       │   ├── page0002_img019.jpg
+│   │       │   └── page0002_img021.jpg
+│   │       ├── 518ad0b1cd7242b7ae37de2c958a0875
+│   │       │   └── page0001_img000.jpg
+│   │       ├── 6f77e48f4a6a47a497e5d6249c44c335
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   └── page0001_img001.jpg
+│   │       ├── 7003618287ab4382ac694f49fb4f8108
+│   │       │   ├── page0001_img000.jpg
+│   │       │   └── page0001_img001.jpg
+│   │       ├── 87779cc030544a12ade7ddaa4c0c24cf
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   └── page0001_img001.jpg
+│   │       ├── a441fc8a48bb42cf8a85c5c843714798
+│   │       │   └── page0003_img000.jpg
+│   │       ├── c6423f321b15456da2fe2617dff40d4f
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   └── page0001_img001.jpg
+│   │       ├── ce033fb944de42729f1b6f8e4c7acdcf
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   ├── page0002_img001.jpg
+│   │       │   ├── page0002_img005.jpg
+│   │       │   ├── page0002_img007.jpg
+│   │       │   ├── page0002_img009.jpg
+│   │       │   ├── page0002_img011.jpg
+│   │       │   ├── page0002_img013.jpg
+│   │       │   ├── page0002_img015.jpg
+│   │       │   ├── page0002_img017.jpg
+│   │       │   ├── page0002_img019.jpg
+│   │       │   └── page0002_img021.jpg
+│   │       ├── cedb333f75c74fe2a707bbdfb2e2dbac
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   └── page0001_img001.jpg
+│   │       ├── db17c704cda6453290c095db9a12c314
+│   │       │   ├── descriptions.txt
+│   │       │   ├── page0001_img000.jpg
+│   │       │   └── page0001_img001.jpg
+│   │       ├── doc_5c90e10b-73aa-4008-adbf-54081035dc2c
+│   │       │   └── img_p1_0_b6a50e542cac.jpg
+│   │       ├── doc_test_123
+│   │       │   ├── descriptions.txt
+│   │       │   └── page0001_img000.jpg
+│   │       └── f8fc30b8f40f4e7ea2aef6c05c76f47d
+│   │           ├── page0001_img000.jpg
+│   │           └── page0001_img001.jpg
+│   ├── .DS_Store
+│   ├── .env
+│   ├── Dockerfile
+│   ├── clean_orphans.py
+│   ├── docs_ai.db
+│   ├── reindex_all.py
+│   ├── requirements.txt
+│   ├── run.py
+│   ├── test_invoice.txt
+│   └── test_results.txt
+├── api-gateway
+│   ├── src
+│   │   ├── config
+│   │   │   └── db.ts
+│   │   ├── constants
+│   │   │   └── integrations.ts
+│   │   ├── controllers
+│   │   │   ├── activityController.ts
+│   │   │   ├── authController.ts
+│   │   │   ├── chatController.ts
+│   │   │   ├── departmentController.ts
+│   │   │   ├── documentsController.ts
+│   │   │   ├── emailReportsController.ts
+│   │   │   ├── experienceLetterController.ts
+│   │   │   ├── groqController.ts
+│   │   │   ├── integrationsController.ts
+│   │   │   ├── offerLetterController.ts
+│   │   │   ├── plansController.ts
+│   │   │   ├── searchController.ts
+│   │   │   ├── settingsController.ts
+│   │   │   ├── superAdminController.ts
+│   │   │   └── teamController.ts
+│   │   ├── middleware
+│   │   │   ├── auth.ts
+│   │   │   └── errorHandler.ts
+│   │   ├── models
+│   │   │   ├── ActivityLog.ts
+│   │   │   ├── AgentStoragePricing.ts
+│   │   │   ├── ApiKey.ts
+│   │   │   ├── ChatSessionFocus.ts
+│   │   │   ├── Department.ts
+│   │   │   ├── DepartmentMember.ts
+│   │   │   ├── Document.ts
+│   │   │   ├── DocumentChunk.ts
+│   │   │   ├── DocumentShare.ts
+│   │   │   ├── EmailReportConfig.ts
+│   │   │   ├── IntegrationConnection.ts
+│   │   │   ├── MessageFeedback.ts
+│   │   │   ├── OrgRole.ts
+│   │   │   ├── OrgSubscription.ts
+│   │   │   ├── Organization.ts
+│   │   │   ├── Plan.ts
+│   │   │   ├── PlanRequest.ts
+│   │   │   └── User.ts
+│   │   ├── routes
+│   │   │   ├── activity.ts
+│   │   │   ├── auth.ts
+│   │   │   ├── chat.ts
+│   │   │   ├── departments.ts
+│   │   │   ├── documents.ts
+│   │   │   ├── emailReports.ts
+│   │   │   ├── groq.ts
+│   │   │   ├── health.ts
+│   │   │   ├── integrations.ts
+│   │   │   ├── plans.ts
+│   │   │   ├── search.ts
+│   │   │   ├── settings.ts
+│   │   │   ├── superAdmin.ts
+│   │   │   └── team.ts
+│   │   ├── scripts
+│   │   │   ├── seedAdmin.ts
+│   │   │   ├── seedOrgRoles.ts
+│   │   │   ├── seedPlans.ts
+│   │   │   ├── testAgentEntitlements.ts
+│   │   │   ├── testAnalyticsIntent.ts
+│   │   │   ├── testComplianceGolden.ts
+│   │   │   ├── testDocumentNameMatch.ts
+│   │   │   ├── testFinanceGolden.ts
+│   │   │   ├── testHrGolden.ts
+│   │   │   ├── testIntegrationDuplicates.ts
+│   │   │   ├── testRolePermissions.ts
+│   │   │   └── testSupervision.ts
+│   │   ├── services
+│   │   │   ├── accessScope.ts
+│   │   │   ├── activityLog.ts
+│   │   │   ├── agentChatVisualService.ts
+│   │   │   ├── aiServiceClient.ts
+│   │   │   ├── analyticsObservability.ts
+│   │   │   ├── chatFocusStore.ts
+│   │   │   ├── complianceAnalyticsService.ts
+│   │   │   ├── complianceChatActionService.ts
+│   │   │   ├── complianceChatVisualService.ts
+│   │   │   ├── complianceIntentRouter.ts
+│   │   │   ├── documentStorage.ts
+│   │   │   ├── documentVisibility.ts
+│   │   │   ├── duplicateDetection.ts
+│   │   │   ├── dynamicAnalyticsEngine.ts
+│   │   │   ├── emailReportService.ts
+│   │   │   ├── emailService.ts
+│   │   │   ├── experienceLetterGenerationService.ts
+│   │   │   ├── financeAnalyticsService.ts
+│   │   │   ├── financeChatActionService.ts
+│   │   │   ├── financeChatVisualService.ts
+│   │   │   ├── financeIntent.ts
+│   │   │   ├── financePartyNormalize.ts
+│   │   │   ├── financeQuestionNormalize.ts
+│   │   │   ├── googleDriveService.ts
+│   │   │   ├── hrAnalyticsService.ts
+│   │   │   ├── hrChatActionService.ts
+│   │   │   ├── hrChatReportService.ts
+│   │   │   ├── hrIntentRouter.ts
+│   │   │   ├── integrationSendService.ts
+│   │   │   ├── integrationSyncService.ts
+│   │   │   ├── offerLetterGenerationService.ts
+│   │   │   ├── openRemoteService.ts
+│   │   │   ├── orgComplianceSettingsService.ts
+│   │   │   ├── orgFinanceSettingsService.ts
+│   │   │   ├── orgRoleSeed.ts
+│   │   │   ├── planSeed.ts
+│   │   │   ├── planService.ts
+│   │   │   └── vectorOrgId.ts
+│   │   ├── types
+│   │   │   ├── chatVisuals.ts
+│   │   │   └── permissions.ts
+│   │   ├── utils
+│   │   │   ├── fileValidation.ts
+│   │   │   ├── jwt.ts
+│   │   │   ├── logger.ts
+│   │   │   └── permissionsUtil.ts
+│   │   ├── app.ts
+│   │   └── server.ts
+│   ├── uploads
+│   │   └── _tmp
+│   ├── .env
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── .zip
+│   ├── Dockerfile
+│   ├── nodemon.json
+│   ├── package-lock.json
+│   ├── package.json
+│   └── tsconfig.json
+├── deploy
+│   └── deploy.sh
+├── frontend
+│   ├── .vscode
+│   │   └── settings.json
+│   ├── public
+│   │   └── favicon.ico
+│   ├── scripts
+│   ├── src
+│   │   ├── app
+│   │   │   ├── (workspace)
+│   │   │   │   ├── activity
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── admin
+│   │   │   │   │   ├── admins
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── departments
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── documents
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── email-reports
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── integrations
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── plans
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   └── settings
+│   │   │   │   │       └── page.tsx
+│   │   │   │   ├── chat
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── dashboard
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── departments
+│   │   │   │   │   └── [id]
+│   │   │   │   │       ├── members
+│   │   │   │   │       │   └── [userId]
+│   │   │   │   │       │       └── page.tsx
+│   │   │   │   │       └── page.tsx
+│   │   │   │   ├── documents
+│   │   │   │   │   ├── [id]
+│   │   │   │   │   │   ├── details
+│   │   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   │   ├── experience-letter
+│   │   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   │   ├── offer-letter
+│   │   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── details
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── plans
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── profile
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── search
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── team
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── layout.tsx
+│   │   │   │   └── loading.tsx
+│   │   │   ├── api
+│   │   │   │   └── login
+│   │   │   │       └── route.ts
+│   │   │   ├── login
+│   │   │   │   └── page.tsx
+│   │   │   ├── globals.css
+│   │   │   ├── layout.tsx
+│   │   │   └── page.tsx
+│   │   ├── assets
+│   │   │   ├── Logo
+│   │   │   │   ├── Visibility-Docs-dark-bg.png
+│   │   │   │   ├── Visibility-Docs-light-bg.png
+│   │   │   │   ├── visibility docs dark bg.png
+│   │   │   │   ├── visibility docs dark bg.svg
+│   │   │   │   └── visibility docs light bg.png
+│   │   │   └── .DS_Store
+│   │   ├── components
+│   │   │   ├── ui
+│   │   │   │   ├── Badge.tsx
+│   │   │   │   ├── Button.tsx
+│   │   │   │   ├── Card.tsx
+│   │   │   │   ├── DataTable.tsx
+│   │   │   │   ├── Input.tsx
+│   │   │   │   ├── PageHeader.tsx
+│   │   │   │   ├── StatStrip.tsx
+│   │   │   │   └── index.ts
+│   │   │   ├── AgentAccessBlockedNotice.tsx
+│   │   │   ├── AuthLayout.tsx
+│   │   │   ├── ChatAgentVisuals.tsx
+│   │   │   ├── ChatAnalyticsSidePanel.tsx
+│   │   │   ├── ChatComposer.tsx
+│   │   │   ├── ChatGraphRenderer.tsx
+│   │   │   ├── ChatScopePanel.tsx
+│   │   │   ├── ChatWithDocumentLink.tsx
+│   │   │   ├── ClassifyAgentPopup.tsx
+│   │   │   ├── ClientLayout.tsx
+│   │   │   ├── DashboardCharts.tsx
+│   │   │   ├── DashboardInsights.tsx
+│   │   │   ├── DashboardStats.tsx
+│   │   │   ├── DocumentDetailPanel.tsx
+│   │   │   ├── DocumentFolderTree.tsx
+│   │   │   ├── DriveSyncInbox.tsx
+│   │   │   ├── ExperienceLetterModal.tsx
+│   │   │   ├── FilterSelect.tsx
+│   │   │   ├── GroqLimitModal.tsx
+│   │   │   ├── LibraryPagination.tsx
+│   │   │   ├── OfferLetterModal.tsx
+│   │   │   ├── SendToIntegrationModal.tsx
+│   │   │   ├── ShareModal.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   └── Toast.tsx
+│   │   ├── context
+│   │   │   ├── ColorContext.tsx
+│   │   │   └── PermissionsContext.tsx
+│   │   ├── hooks
+│   │   │   └── usePlanAgents.ts
+│   │   ├── lib
+│   │   │   ├── analyticsExport.ts
+│   │   │   ├── analyticsScope.ts
+│   │   │   ├── apiClient.ts
+│   │   │   ├── apiErrors.ts
+│   │   │   ├── auth.ts
+│   │   │   ├── authSession.ts
+│   │   │   ├── complianceAnalyticsScope.ts
+│   │   │   ├── dashboardExport.ts
+│   │   │   ├── documentAgents.ts
+│   │   │   ├── documents.ts
+│   │   │   ├── fileValidation.ts
+│   │   │   ├── financeAnalyticsScope.ts
+│   │   │   ├── generatedDocuments.ts
+│   │   │   ├── integrationCatalog.ts
+│   │   │   ├── permissions.ts
+│   │   │   ├── serverApiBase.ts
+│   │   │   └── utils.ts
+│   │   ├── types
+│   │   │   └── chatVisuals.ts
+│   │   └── .DS_Store
+│   ├── .DS_Store
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── Dockerfile
+│   ├── eslint.config.mjs
+│   ├── frontend.zip
+│   ├── next-env.d.ts
+│   ├── next.config.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   └── tsconfig.json
+├── shared-storage
+│   ├── orgs
+│   │   ├── org_seed_1784789957333
+│   │   │   └── by-type
+│   │   │       ├── engineering_drawing
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       │           └── doc_e1117d4c-df92-449d-b54c-0c3228f0b4d5
+│   │   │       │               └── b86d0512-6607-4e4b-94d6-f58894008975.jpeg
+│   │   │       ├── invoice
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       │           └── doc_b33c38e2-6eaf-47a3-856f-938d5776b604
+│   │   │       ├── maintenance_report
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       │           └── doc_b4e720a5-eb33-45fa-89d7-e4e47f2a7695
+│   │   │       │               └── ca05e4dc-91f8-4734-af58-d602798660d2.jpeg
+│   │   │       ├── offer_letter
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       │           └── doc_fe70f409-b881-469a-a209-ac1aa99b4013
+│   │   │       │               └── flyrank.png
+│   │   │       ├── other
+│   │   │       │   ├── 2026
+│   │   │       │   │   └── 07
+│   │   │       │   │       ├── doc_2c933736-511e-43e1-813c-61083d9c5b20
+│   │   │       │   │       ├── doc_ad4b4e6e-5ef2-4ae5-a70c-522c87017ae3
+│   │   │       │   │       │   └── Joining_Letter.pdf
+│   │   │       │   │       └── doc_d2148bac-f433-4d70-87b1-f1c9b7003635
+│   │   │       │   └── inbox
+│   │   │       ├── purchase_order
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       │           └── doc_520ecc95-9b6c-437a-bbe1-62a1cbcb3d58
+│   │   │       ├── resume
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       │           ├── doc_1561d347-69ce-4d00-8d31-c1f35fe8add3
+│   │   │       │           │   └── Muhammad-Haris-Abbas.pdf
+│   │   │       │           ├── doc_1f48e700-ddfb-4798-bb50-67e61a605ff1
+│   │   │       │           ├── doc_224d24fc-7c0c-4b9f-8037-1445100abfb0
+│   │   │       │           ├── doc_2d84baed-fc19-4e3e-b4b0-6f7ee71df653
+│   │   │       │           ├── doc_32f1fb4f-ea5b-420c-9cb3-1269db734ac6
+│   │   │       │           ├── doc_337bbad9-241d-4381-ba13-7150fb8b535c
+│   │   │       │           │   └── Haroon_Shahid_AI_Engineering_Midterm_CV_Final.pdf.png
+│   │   │       │           ├── doc_4b9c5b5c-3078-451f-ba87-d2880e3498dc
+│   │   │       │           └── doc_b14af766-59a4-4760-870e-1d35d9cfd889
+│   │   │       ├── safety_manual
+│   │   │       │   └── 2026
+│   │   │       │       └── 07
+│   │   │       └── transcript
+│   │   │           └── 2026
+│   │   │               └── 07
+│   │   │                   └── doc_f553102f-e7f4-45a5-bab9-fe65248ec9d3
+│   │   │                       └── EERD.pptx
+│   │   ├── org_seed_1784792689287
+│   │   │   └── by-type
+│   │   │       ├── certificate
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_e91fc124-bc74-419c-aa4b-f0e602ffd4fa
+│   │   │       │               └── Experience_Letter_Haroon_Shahid.pdf
+│   │   │       ├── employee_record
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_beecf100-8204-4728-9f66-7de5b7c65c13
+│   │   │       │               └── Experience_Letter_SAIF_ULLAH__2_.pdf
+│   │   │       ├── experience_letter
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_f7109250-4380-41d8-b7c0-f48174906b86
+│   │   │       │               └── Experience_Letter_SAIF_ULLAH.pdf
+│   │   │       ├── invoice
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           ├── doc_13996fb1-f38a-4f3b-98e3-7bfa72bf060a
+│   │   │       │           │   └── Invoice-239375.pdf
+│   │   │       │           ├── doc_7d5f6a24-a139-4a50-b864-64ffe0f9ec97
+│   │   │       │           │   └── vendor_client_test_data.xlsx
+│   │   │       │           ├── doc_99f9bcd5-da84-4b02-ac17-cf4dc4ddaea3
+│   │   │       │           │   └── 236337_digilog_invoice.pdf
+│   │   │       │           └── doc_b9743116-8d8a-4763-9409-530e4054c93e
+│   │   │       │               └── 246910_digilog_invoice.pdf
+│   │   │       ├── offer_letter
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           ├── doc_07b89cb3-2764-41d1-ae65-e2df68c311d7
+│   │   │       │           │   └── Offer_Letter_SAIMA_MANZOOR.pdf
+│   │   │       │           ├── doc_474d4ef2-d02a-44de-9d2a-a1f917b0b2c7
+│   │   │       │           │   └── Offer_Letter_Muhammad_Usama_Anwar__2_.pdf
+│   │   │       │           ├── doc_5b0a0baf-29eb-4cdb-a6f2-d2b72de8daaf
+│   │   │       │           │   └── Offer_Letter_SAIF_ULLAH.pdf
+│   │   │       │           ├── doc_73b5d8fe-6b28-47b9-a176-d3656e118d24
+│   │   │       │           │   └── Offer_Letter_Haroon_Shahid__2_.pdf
+│   │   │       │           ├── doc_8b0fd7d2-4d1b-4a95-a3bd-88bca99fc5d0
+│   │   │       │           │   └── Offer_Letter_Muhammad_Faizan_Kazmi.pdf
+│   │   │       │           ├── doc_ca746d03-108b-4080-b94f-9c02b958401c
+│   │   │       │           │   └── Offer_Letter_Muhammad_Faizan_Kazmi__2_.pdf
+│   │   │       │           └── doc_cc29989e-76a4-46a1-b8df-7f126628689c
+│   │   │       │               └── Offer_Letter_Haroon_Shahid.pdf
+│   │   │       ├── other
+│   │   │       │   ├── 2026
+│   │   │       │   │   └── 08
+│   │   │       │   │       ├── doc_5368f87a-17a3-4343-aa86-e00803f4f658
+│   │   │       │   │       └── doc_8050918a-73bf-4ffa-b6a2-8256f84c8c39
+│   │   │       │   │           └── dummy_data.xlsx
+│   │   │       │   └── inbox
+│   │   │       │       └── doc_7481e445-9b30-4a5c-8835-a3107764d78d
+│   │   │       │           └── d6a1dc.pdf
+│   │   │       ├── quotation
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_5621a00f-cd22-473a-9c6c-0e83b08dea25
+│   │   │       │               └── Offer_Letter_Muhammad_Usama_Anwar.pdf
+│   │   │       ├── resume
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           ├── doc_0b9eed67-a5d6-4e41-8867-10f02dda131f
+│   │   │       │           │   └── umar_CV.pdf
+│   │   │       │           ├── doc_1ee88a20-b2b8-4ccf-8530-22212484f201
+│   │   │       │           │   └── cv.pdf
+│   │   │       │           ├── doc_2c6a1886-1a10-4884-8e8d-b40cafa1e41f
+│   │   │       │           │   └── M.Faizan_Kazmi_CV.pdf
+│   │   │       │           ├── doc_5c10b623-ea92-4943-aebd-be1adcd189ee
+│   │   │       │           │   └── MUHAMMAD_USAMA__CV_.pdf
+│   │   │       │           ├── doc_7af4f1ea-67b1-4df5-85e1-1605cb11d7d8
+│   │   │       │           │   └── Saif_Ullah.pdf
+│   │   │       │           ├── doc_929f64a0-f978-41b6-ac6f-ff3a1ff4dbf4
+│   │   │       │           │   └── Saima_Manzoor___Al_Engineer_Intern__Resume_-_2026.png
+│   │   │       │           └── doc_e0537321-1ae4-48ab-9667-62a3dbdc3470
+│   │   │       │               └── Muhammad-Haris-Abbas.pdf
+│   │   │       └── safety_manual
+│   │   │           └── 2026
+│   │   │               └── 08
+│   │   ├── org_seed_1786381747321
+│   │   │   └── by-type
+│   │   │       ├── audit_report
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           ├── doc_14befce0-84f6-44c9-acc6-7163c91a24b5
+│   │   │       │           │   └── Pressure_Vessel_Boiler_Inspection_Certificate.pdf
+│   │   │       │           └── doc_e05c4953-c8e7-4aa0-aaab-66a437f41dd6
+│   │   │       │               └── Heavy_Machinery_Compliance_Audit_Report.pdf
+│   │   │       ├── compliance_report
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           ├── doc_07bba0f0-c18b-4617-b6ec-95a165253ace
+│   │   │       │           │   └── Compliance_Report_2026-08-12.pdf
+│   │   │       │           ├── doc_c0260209-18db-4c20-be07-de1b639b9a7b
+│   │   │       │           │   └── Compliance_Report_2026-08-12.pdf
+│   │   │       │           └── doc_d4661d00-f484-48a6-9a24-e482d305bc73
+│   │   │       │               └── Compliance_Report_2026-08-11.pdf
+│   │   │       ├── contract
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_f6da462b-73b6-41f4-a19d-3330c84edb9f
+│   │   │       │               └── contract_summary.pdf__1_.pdf
+│   │   │       ├── finance_report
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_8a0c49f6-6174-4696-bbd8-f1a56d6fda2d
+│   │   │       │               └── Finance_Report_2026-08-12.pdf
+│   │   │       ├── financial_statement
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_100fe5eb-babd-4c7a-9527-74efbf94868b
+│   │   │       │               └── dummy_data.xlsx
+│   │   │       ├── hr_document
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_5b980ea8-c012-48da-b0ee-dd2b9c69eefd
+│   │   │       │               └── Joining_Letter.docx
+│   │   │       ├── inspection_report
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_ae1592b8-9259-4f79-ad72-752933284fa6
+│   │   │       │               └── Industrial_Robot_Safety_Validation_Report.pdf
+│   │   │       ├── invoice
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           ├── doc_23007ed9-c80f-490b-ac4e-dbe9333dc21a
+│   │   │       │           │   └── 236337_digilog_invoice.pdf
+│   │   │       │           ├── doc_99ccf14e-952b-4244-a3ee-ce598880e97e
+│   │   │       │           │   └── invoice_50_rows_pdf_ready.pdf
+│   │   │       │           ├── doc_accc29b2-b559-417f-8780-fb9d3fbfe3ff
+│   │   │       │           │   └── receipt_06eddf1f-068f-4833-a719-63f8c8eb3f44.pdf
+│   │   │       │           ├── doc_c0b95345-758c-47b4-afb7-97522b783436
+│   │   │       │           │   └── invoice.pdf
+│   │   │       │           ├── doc_d2c6072f-d840-49cc-815d-9d74c1261b79
+│   │   │       │           │   └── 246910_digilog_invoice.pdf
+│   │   │       │           ├── doc_da708006-9aa0-4d1c-9c32-5f2ebf1f38f3
+│   │   │       │           │   └── equipment_finance_and_invoice_pack.pdf
+│   │   │       │           └── doc_f1191812-dffd-4104-abe1-ef78c3512242
+│   │   │       │               └── vendor_client_test_data.xlsx
+│   │   │       ├── offer_letter
+│   │   │       │   └── 2026
+│   │   │       │       └── 08
+│   │   │       │           └── doc_9eaaa5d9-fa67-44ba-93b3-3aee33af0e3c
+│   │   │       │               └── Offer_Letter_Haroon_Shahid.pdf
+│   │   │       ├── other
+│   │   │       │   ├── 2026
+│   │   │       │   │   └── 08
+│   │   │       │   │       ├── doc_08b5a7d8-d5a1-46ad-a922-ee958d2bc9b2
+│   │   │       │   │       │   └── HR_Report_2026-08-12.pdf
+│   │   │       │   │       ├── doc_0f7a8e64-b6ab-43a8-9d96-0261530abcdd
+│   │   │       │   │       │   └── d6a1dc.pdf
+│   │   │       │   │       ├── doc_63c51f2c-29d6-4154-bbe6-e3b8229533e9
+│   │   │       │   │       │   └── Joining_letter_Sharjeel_Ahmed_2026-08-12.pdf
+│   │   │       │   │       ├── doc_7d941c9f-2088-415f-a8a6-b9bd5dcef8b8
+│   │   │       │   │       │   └── HR_Report_2026-08-12.pdf
+│   │   │       │   │       ├── doc_d406516a-a00f-4302-9772-911a8165cff6
+│   │   │       │   │       │   └── The_Anatomy_of_Professional_Documents.pdf
+│   │   │       │   │       └── doc_dfd548e3-0b3d-4046-a0c5-b80b62fbe76f
+│   │   │       │   │           └── HR_Workforce_Report_2026-08-12.pdf
+│   │   │       │   └── inbox
+│   │   │       └── resume
+│   │   │           └── 2026
+│   │   │               └── 08
+│   │   │                   ├── doc_2714c246-e3a1-4d9b-abf0-193e10b28a1d
+│   │   │                   │   └── Saima_Manzoor___Al_Engineer_Intern__Resume_-_2026.png
+│   │   │                   ├── doc_2bd7e430-9f81-4ce0-91ea-db1a67c841c6
+│   │   │                   │   └── M.Faizan_Kazmi_CV.pdf
+│   │   │                   ├── doc_5a6ae7d5-7424-4327-af1f-67b4309f208d
+│   │   │                   │   └── cv.pdf
+│   │   │                   ├── doc_95ee9dcd-0b31-46d3-b7f4-f2c54c50eaff
+│   │   │                   │   └── Sharjeel_Resume.pdf
+│   │   │                   ├── doc_9a8cd1bf-b5d7-483e-a53e-f814d0b4cc74
+│   │   │                   │   └── umar_CV.pdf
+│   │   │                   └── doc_fdda7096-1a39-4602-9458-192315ad702c
+│   │   │                       └── Saif_Ullah.pdf
+│   │   └── test_org
+│   │       └── incoming
+│   │           └── test_invoice.txt
+│   ├── .gitignore
+│   └── .gitkeep
+├── .DS_Store
+├── .dockerignore
+├── .gitattributes
+├── .gitignore
+├── AI_MERGE_CHECKLIST.md
+├── Dockerfile
+├── FETCH_HEAD
+├── PROJECT_STRUCTURE.txt
+├── README.md
+├── TASK_OWNERSHIP.md
+├── Visibility_Docs_AI_PRD.md
+├── Visibility_Docs_AI_Technical_Architecture.md
+├── deploy.sh
+├── docker-compose.yml
+├── favicon.ico
+├── package-lock.json
+├── package.json
+├── setup.py
+├── startup.sh
+├── supabase_schema.sql
+└── task.md
+
+372 directories, 600 files

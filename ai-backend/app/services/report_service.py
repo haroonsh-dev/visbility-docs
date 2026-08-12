@@ -1,7 +1,9 @@
 import json
 import logging
+from io import BytesIO
 from datetime import datetime
 from ..database import SupabaseDB
+import pymupdf as fitz
 
 logger = logging.getLogger("visibility-docs")
 
@@ -292,3 +294,34 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans
     subject = f"Visibility Docs AI Comprehensive Report — {organization_id}{agent_label}"
 
     return html, subject
+
+
+def generate_pdf_from_html(html: str) -> bytes:
+    """
+    Render HTML into a print-ready PDF using PyMuPDF.
+
+    Keep styling/layout fairly simple to avoid unsupported HTML constructs.
+    """
+    if not html or not isinstance(html, str):
+        raise ValueError("html is required")
+
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (42, 42, -42, -42)
+
+    buf = BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    story = fitz.Story(
+        html=html,
+        user_css="body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; line-height: 1.35; }",
+    )
+
+    while True:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+        if not more:
+            break
+
+    writer.close()
+    return buf.getvalue()

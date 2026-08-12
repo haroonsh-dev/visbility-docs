@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 type Props = {
     documentId: string;
     ready?: boolean;
+    /** Hide entirely for generated PDFs (reports/letters) that never get AI indexing. */
+    hidden?: boolean;
     compact?: boolean;
     className?: string;
 };
@@ -15,10 +17,12 @@ type Props = {
 export default function ChatWithDocumentLink({
     documentId,
     ready = true,
+    hidden = false,
     compact = false,
     className,
 }: Props) {
     const { canChat, canAccessPage } = usePermissions();
+    if (hidden) return null;
     if (!canChat() || !canAccessPage("chat")) return null;
 
     const baseClass = cn(

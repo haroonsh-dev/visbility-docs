@@ -6,6 +6,7 @@ import { Eye, RefreshCw, Search, FileText, Copy, Filter, Loader2, Info, X } from
 import FilterSelect from "@/components/FilterSelect";
 import LibraryPagination from "@/components/LibraryPagination";
 import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
+import { shouldShowChatWithDocument } from "@/lib/generatedDocuments";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -368,6 +369,7 @@ function AdminDocumentsContent() {
                                             <ChatWithDocumentLink
                                                 documentId={doc.documentId}
                                                 ready={!!doc.pythonDocumentId}
+                                                hidden={!shouldShowChatWithDocument(doc)}
                                             />
                                             <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1.5 flex-1 sm:flex-initial min-h-10">
                                                 <Eye size={14} /> Preview

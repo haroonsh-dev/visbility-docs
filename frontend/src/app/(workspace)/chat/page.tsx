@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import {
     Sparkles, ChevronLeft, ChevronRight, FileText,
     Plus, Trash2, Pencil, Check, X, MessageSquare, MessageCircle, Copy, Upload, Loader2,
-    ThumbsUp, ThumbsDown, Search, Download, RotateCcw, PanelLeft, PanelLeftClose, ChevronDown, MoreHorizontal,
+    ThumbsUp, ThumbsDown, Search, Download, RotateCcw, PanelLeft, PanelLeftClose, MoreHorizontal,
     BarChart3,
 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
@@ -40,6 +40,10 @@ import {
     isComplianceAnalyticsDoc,
 } from "@/lib/complianceAnalyticsScope";
 import { filterAnalyticsScopeDocIds } from "@/lib/analyticsScope";
+import {
+    generatedPreviewHref,
+    parseGeneratedPreviewDocumentId,
+} from "@/lib/generatedDocuments";
 import ChatGraphRenderer, { type ChartDataPayload } from "@/components/ChatGraphRenderer";
 
 type ChatMessage = {
@@ -56,6 +60,8 @@ type ChatMessage = {
         pageNumber?: number;
         snippet?: string;
         score?: number;
+        documentType?: string;
+        phase3Agent?: string;
     }>;
     visuals?: ChatVisualSpec[];
 };
@@ -166,7 +172,7 @@ function isChitchatMessage(text: string): boolean {
 }
 
 function dedupeCitations(
-    items: Array<{ documentId?: string; filename?: string; pageNumber?: number; snippet?: string; score?: number }>
+    items: Array<{ documentId?: string; filename?: string; pageNumber?: number; snippet?: string; score?: number; documentType?: string }>
 ) {
     const seen = new Set<string>();
     const out: typeof items = [];
@@ -209,6 +215,7 @@ function resolveCitations(
         pageNumber?: number;
         snippet?: string;
         score?: number;
+        documentType?: string;
     }>,
     libraryDocs: Array<{
         documentId: string;
@@ -241,6 +248,7 @@ function resolveCitations(
             pageNumber: c.pageNumber,
             snippet: c.snippet,
             score: c.score,
+            documentType: c.documentType || hit?.classification || undefined,
             agentId: agent,
         };
     });
@@ -350,7 +358,8 @@ function ChatContent() {
     const [input, setInput] = useState("");
     const [sending, setSending] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const [scopePanelOpen, setScopePanelOpen] = useState(false);
+    const [documentsPanelOpen, setDocumentsPanelOpen] = useState(false);
+    const [analyticsPanelOpen, setAnalyticsPanelOpen] = useState(false);
     const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
     const [isLg, setIsLg] = useState(false);
     const [chatScope, setChatScope] = useState<ChatScope>("all");
@@ -363,7 +372,6 @@ function ChatContent() {
     const [renameDraft, setRenameDraft] = useState("");
     const [renameSaving, setRenameSaving] = useState(false);
     const renameInputRef = useRef<HTMLInputElement>(null);
-    const scopeButtonRef = useRef<HTMLButtonElement>(null);
     const headerMenuRef = useRef<HTMLDivElement>(null);
     const [docSearch, setDocSearch] = useState("");
     const [docStatusFilter, setDocStatusFilter] = useState<DocStatusFilter>("");
@@ -382,7 +390,6 @@ function ChatContent() {
     const streamRevealRef = useRef<{ cancelled: boolean }>({ cancelled: false });
     const [analyticsVisuals, setAnalyticsVisuals] = useState<ChatVisualSpec[]>([]);
     const [analyticsAgentId, setAnalyticsAgentId] = useState<string | undefined>();
-    const [analyticsPanelOpen, setAnalyticsPanelOpen] = useState(false);
     const chatAnalyticsLockRef = useRef(false);
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
     const [analyticsView, setAnalyticsView] = useState<AnalyticsPanelView>("overview");
@@ -487,12 +494,34 @@ function ChatContent() {
     const searchParams = useSearchParams();
     const agentUrlParam = searchParams?.get("agent");
 
+    const showDocumentsRail = documentsPanelOpen;
     const showAnalyticsRail =
         analyticsPanelOpen &&
         (ANALYTICS_AGENT_IDS.has(analyticsAgentId || "") ||
             ANALYTICS_AGENT_IDS.has(agentUrlParam || ""));
 
     const chatColumnMax = showAnalyticsRail ? "max-w-none w-full" : "max-w-3xl";
+
+    const closeDocumentsPanel = useCallback(() => setDocumentsPanelOpen(false), []);
+
+    const toggleDocumentsRail = useCallback(() => {
+        setDocumentsPanelOpen((open) => {
+            const next = !open;
+            if (next) setAnalyticsPanelOpen(false);
+            if (next && typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) {
+                setSidebarOpen(false);
+            }
+            return next;
+        });
+    }, []);
+
+    const openDocumentsRail = useCallback(() => {
+        setDocumentsPanelOpen(true);
+        setAnalyticsPanelOpen(false);
+        if (typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) {
+            setSidebarOpen(false);
+        }
+    }, []);
 
     useEffect(() => {
         if (!agentUrlParam || !ANALYTICS_AGENT_IDS.has(agentUrlParam)) return;
@@ -562,6 +591,7 @@ function ChatContent() {
     const openAnalyticsPanel = useCallback(
         (fetchDashboard = false) => {
             setAnalyticsPanelOpen(true);
+            setDocumentsPanelOpen(false);
             if (fetchDashboard && !chatAnalyticsLockRef.current) {
                 const aid = analyticsAgentId || agentUrlParam;
                 if (aid && ANALYTICS_AGENT_IDS.has(aid)) {
@@ -600,19 +630,19 @@ function ChatContent() {
             id: "welcome",
             role: "assistant",
             content:
-                "I chart finance files in your Document scope — vendor/client spend, line items, aging, trends. Name a file in your message to chart **only that invoice**. Low-quality extractions show a data badge with Reprocess.",
+                "I analyze finance files in scope as **AP (vendors)** and **AR (clients)** — spend, aging, trends, line items. Ask me to **generate a finance report** for a printable PDF. Name a file to focus on one invoice. Configure aliases/FX in Admin → Settings → Finance analytics.",
         };
         const hrWelcome: ChatMessage = {
             id: "welcome",
             role: "assistant",
             content:
-                "I can chart CV scores in scope, or draft an offer/experience letter for one person you name. Payroll/attendance prompts still use document Q&A — charts cover ranking and score distribution today.",
+                "Ask me any **HR work** in plain language — leave, certificates, onboarding, payroll, attendance, performance, hiring/CVs, or letters (joining, internship, training certificate, offer, promotion). I’ll pick the right skill from your scoped documents.",
         };
         const complianceWelcome: ChatMessage = {
             id: "welcome",
             role: "assistant",
             content:
-                "I chart certificates and audits in scope — expiry, findings, status. Name a file in your message to focus on one document.",
+                "Ask any **compliance work** in plain language — expiry, findings, status, missing docs, or generate a **compliance report** / certificate report / NCR·CAPA letter. Upload files, wait until **ready**, select them in scope, then ask.",
         };
         const procurementWelcome: ChatMessage = {
             id: "welcome",
@@ -650,11 +680,28 @@ function ChatContent() {
                 : agentUrlParam === "compliance_agent"
                   ? matchingDocs.filter((d) => isComplianceAnalyticsDoc(d))
                   : agentUrlParam === "hr_agent"
-                    ? matchingDocs.filter(
-                          (d) =>
-                              String(d.classification || "").toLowerCase() === "resume" ||
-                              /\b(cv|resume)\b/i.test(d.originalFilename || "")
-                      )
+                    ? matchingDocs.filter((d) => {
+                          const c = String(d.classification || "").toLowerCase();
+                          if (
+                              [
+                                  "resume",
+                                  "employee_record",
+                                  "hr_document",
+                                  "leave_application",
+                                  "payroll",
+                                  "attendance",
+                                  "training_certificate",
+                                  "performance_review",
+                                  "employment_contract",
+                                  "transcript",
+                              ].includes(c)
+                          ) {
+                              return true;
+                          }
+                          return /\b(cv|resume|payroll|leave|attendance|employee|certificate)\b/i.test(
+                              d.originalFilename || ""
+                          );
+                      })
                     : matchingDocs;
         if (scoped.length > 0) {
             setSelectedDocIds(scoped.map((d) => d.documentId));
@@ -681,6 +728,15 @@ function ChatContent() {
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
     }, [sidebarOpen]);
+
+    useEffect(() => {
+        if (!showDocumentsRail) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") closeDocumentsPanel();
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [showDocumentsRail, closeDocumentsPanel]);
 
     useEffect(() => {
         const el = msgsContainerRef.current;
@@ -844,6 +900,11 @@ function ChatContent() {
 
     const clearSelection = () => setSelectedDocIds([]);
 
+    const focusScopeDoc = (id: string) => {
+        setChatScope("selected");
+        setSelectedDocIds([id]);
+    };
+
     const startNewChat = () => {
         setSessionId(undefined);
         setMessages([WELCOME_MSG]);
@@ -931,7 +992,7 @@ function ChatContent() {
             setSelectedDocIds([target.documentId]);
             setDocSearch("");
             setDocStatusFilter("");
-            setScopePanelOpen(false);
+            setDocumentsPanelOpen(false);
             showToast(`Chat is focused on "${target.originalFilename}".`, "success");
         };
 
@@ -1040,7 +1101,7 @@ function ChatContent() {
                     content: "Select at least one processed document in Document scope before chatting.",
                 },
             ]);
-            setScopePanelOpen(true);
+            openDocumentsRail();
             return;
         }
 
@@ -1165,12 +1226,14 @@ function ChatContent() {
             setAnalyticsLoading(false);
             if (data?.data?.model === "agent-analytics" && data?.data?.agentId && ANALYTICS_AGENT_IDS.has(data.data.agentId)) {
                 setAnalyticsPanelOpen(true);
+                setDocumentsPanelOpen(false);
                 setAnalyticsAgentId(data.data.agentId);
             }
             if (nextVisuals.length) {
                 chatAnalyticsLockRef.current = true;
                 setAnalyticsVisuals(nextVisuals);
                 setAnalyticsPanelOpen(true);
+                setDocumentsPanelOpen(false);
                 const vizAgent = data?.data?.agentId;
                 if (vizAgent && ANALYTICS_AGENT_IDS.has(vizAgent)) {
                     setAnalyticsAgentId(vizAgent);
@@ -1416,6 +1479,59 @@ function ChatContent() {
                 : `All documents (${selectableDocs.length})`
             : `Selected (${selectedDocIds.length} of ${agentUrlParam ? filteredDocs.length : selectableDocs.length})`;
 
+    const documentsBadge =
+        chatScope === "selected" ? selectedDocIds.length : selectableDocs.length;
+
+    const documentsHeaderButton = (
+        <button
+            type="button"
+            onClick={() => {
+                setHeaderMenuOpen(false);
+                toggleDocumentsRail();
+            }}
+            aria-expanded={showDocumentsRail}
+            aria-label="Documents"
+            title="Choose documents for this chat"
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs sm:text-sm transition-colors min-h-10 ${
+                showDocumentsRail
+                    ? "border-accent bg-accent-muted"
+                    : "border-border bg-surface hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
+            }`}
+        >
+            <FileText size={14} className="text-accent shrink-0" />
+            <span className={`hidden sm:inline font-medium ${colors.textPrimary}`}>Documents</span>
+            <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-accent/15 text-[10px] font-bold text-accent tabular-nums">
+                {documentsBadge}
+            </span>
+        </button>
+    );
+
+    const documentsScopePanelProps = {
+        open: true as const,
+        onClose: closeDocumentsPanel,
+        chatScope,
+        onChatScopeChange: setChatScope,
+        filteredDocs,
+        selectedDocIds,
+        onToggleDoc: toggleDoc,
+        onToggleFolder: toggleFolder,
+        onSelectAll: selectAllFiltered,
+        onClearSelection: clearSelection,
+        onFocusDoc: focusScopeDoc,
+        docSearch,
+        onDocSearchChange: setDocSearch,
+        docStatusFilter,
+        onDocStatusFilterChange: setDocStatusFilter,
+        unprocessedCount,
+        libraryCount: selectableDocs.length,
+        selectableCount: selectableDocs.length,
+        offPlanCount,
+        textPrimary: colors.textPrimary,
+        textMuted: colors.textMuted,
+        textSecondary: colors.textSecondary,
+        bgHover: colors.bgHover,
+    };
+
     const isWelcomeOnly = messages.length === 1 && messages[0].id === "welcome";
     const canUploadChat = !isWelcomeOnly && messages.some((m) => m.id !== "welcome");
     const uploadingBusy = uploadingTxtId !== null;
@@ -1634,7 +1750,7 @@ function ChatContent() {
             </aside>
 
             <div
-                className={`flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-linear-to-br from-transparent via-[rgba(56,182,255,0.02)] to-blue-600/4`}
+                className={`flex-1 min-w-0 min-h-0 h-full flex flex-col overflow-hidden bg-linear-to-br from-transparent via-[rgba(56,182,255,0.02)] to-blue-600/4`}
             >
             {showAnalyticsRail && (
                 <div className={`${WORKSPACE_SPLIT_HEADER} justify-between`}>
@@ -1685,30 +1801,7 @@ function ChatContent() {
                                 : "Ask for a chart to open analytics"}
                         </p>
                     </div>
-                    <button
-                        ref={scopeButtonRef}
-                        type="button"
-                        onClick={() => {
-                            setHeaderMenuOpen(false);
-                            setScopePanelOpen((o) => !o);
-                        }}
-                        aria-expanded={scopePanelOpen}
-                        aria-haspopup="dialog"
-                        className={`inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-xs sm:text-sm transition-colors min-h-10 ${
-                            scopePanelOpen
-                                ? "border-accent bg-accent-muted"
-                                : "border-border hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
-                        }`}
-                    >
-                        <FileText size={14} className="text-accent shrink-0" />
-                        <span className={`${colors.textPrimary} font-medium truncate max-w-25 sm:max-w-55`}>
-                            {scopeLabel}
-                        </span>
-                        <ChevronDown
-                            size={14}
-                            className={`text-accent shrink-0 transition-transform ${scopePanelOpen ? "rotate-180" : ""}`}
-                        />
-                    </button>
+                    {documentsHeaderButton}
                     <button
                         type="button"
                         onClick={() => setAnalyticsPanelOpen(false)}
@@ -1722,7 +1815,7 @@ function ChatContent() {
                         type="button"
                         onClick={() => {
                             setHeaderMenuOpen(false);
-                            setScopePanelOpen(false);
+                            setDocumentsPanelOpen(false);
                             startNewChat();
                         }}
                         className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
@@ -1734,7 +1827,7 @@ function ChatContent() {
                         <button
                             type="button"
                             onClick={() => {
-                                setScopePanelOpen(false);
+                                setDocumentsPanelOpen(false);
                                 setHeaderMenuOpen((o) => !o);
                             }}
                             aria-expanded={headerMenuOpen}
@@ -1842,30 +1935,7 @@ function ChatContent() {
                             {agentUrlParam ? `Chatting with ${agentLabel(agentUrlParam)} documents` : "Ask questions across your document library"}
                         </p>
                     </div>
-                    <button
-                        ref={scopeButtonRef}
-                        type="button"
-                        onClick={() => {
-                            setHeaderMenuOpen(false);
-                            setScopePanelOpen((o) => !o);
-                        }}
-                        aria-expanded={scopePanelOpen}
-                        aria-haspopup="dialog"
-                        className={`inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-xs sm:text-sm transition-colors min-h-10 ${
-                            scopePanelOpen
-                                ? "border-accent bg-accent-muted"
-                                : "border-border hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
-                        }`}
-                    >
-                        <FileText size={14} className="text-accent shrink-0" />
-                        <span className={`${colors.textPrimary} font-medium truncate max-w-25 sm:max-w-55`}>
-                            {scopeLabel}
-                        </span>
-                        <ChevronDown
-                            size={14}
-                            className={`text-accent shrink-0 transition-transform ${scopePanelOpen ? "rotate-180" : ""}`}
-                        />
-                    </button>
+                    {documentsHeaderButton}
                     {(ANALYTICS_AGENT_IDS.has(agentUrlParam || "") || analyticsVisuals.length > 0) && (
                         <button
                             type="button"
@@ -1888,7 +1958,7 @@ function ChatContent() {
                         type="button"
                         onClick={() => {
                             setHeaderMenuOpen(false);
-                            setScopePanelOpen(false);
+                            setDocumentsPanelOpen(false);
                             startNewChat();
                         }}
                         className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-2 text-xs sm:text-sm shrink-0 min-h-10 transition-colors hover:border-[rgba(56,182,255,0.4)] hover:bg-accent-muted"
@@ -1900,7 +1970,7 @@ function ChatContent() {
                         <button
                             type="button"
                             onClick={() => {
-                                setScopePanelOpen(false);
+                                setDocumentsPanelOpen(false);
                                 setHeaderMenuOpen((o) => !o);
                             }}
                             aria-expanded={headerMenuOpen}
@@ -1958,6 +2028,8 @@ function ChatContent() {
                 </div>
                 )}
 
+                <div className="flex-1 min-h-0 flex overflow-hidden min-w-0 relative">
+                    <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
                 <div
                     className="flex-1 min-h-0 overflow-y-auto"
                     ref={msgsContainerRef}
@@ -1977,18 +2049,18 @@ function ChatContent() {
                                 </p>
                                 <button
                                     type="button"
-                                    onClick={() => setScopePanelOpen(true)}
+                                    onClick={openDocumentsRail}
                                     className="mt-5 btn-secondary rounded-full px-4 py-2 text-sm inline-flex items-center gap-2"
                                 >
                                     <FileText size={14} className="text-accent" />
-                                    {scopeLabel}
+                                    Choose documents · {documentsBadge}
                                 </button>
                                 {agentUrlParam === "finance_agent" && !showAnalyticsRail && (
                                     <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-lg">
                                         {[
-                                            "Show items list and chart",
-                                            "Vendor totals for scoped invoices",
+                                            "Show AP vendor spend",
                                             "Chart invoice trend by month",
+                                            "Generate finance report",
                                         ].map((prompt) => (
                                             <button
                                                 key={prompt}
@@ -2007,9 +2079,12 @@ function ChatContent() {
                                 {agentUrlParam === "hr_agent" && !showAnalyticsRail && (
                                     <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-lg">
                                         {[
-                                            "Chart top CV scores",
-                                            "Show top resumes by CV score",
-                                            "Generate experience letter for [name]. Company Visibility Bots, title Software Engineer, from 2024-01-01 to 2026-08-01",
+                                            "Score CVs in scope",
+                                            "Generate HR report",
+                                            "Generate certificate report",
+                                            "Generate transcript report",
+                                            "Any certificates expiring soon?",
+                                            "Who's on leave?",
                                         ].map((prompt) => (
                                             <button
                                                 key={prompt}
@@ -2034,6 +2109,7 @@ function ChatContent() {
                                             ? [
                                                   "Chart certificate expiry",
                                                   "Show audit findings by severity",
+                                                  "Generate compliance report",
                                               ]
                                             : agentUrlParam === "procurement_agent"
                                               ? ["Chart spend by supplier", "Document type mix in scope"]
@@ -2176,6 +2252,43 @@ function ChatContent() {
                                                                 {children}
                                                             </pre>
                                                         ),
+                                                        a: ({ href, children }) => {
+                                                            const previewDocId = parseGeneratedPreviewDocumentId(href);
+                                                            if (previewDocId) {
+                                                                const previewUrl = generatedPreviewHref(previewDocId);
+                                                                return (
+                                                                    <a
+                                                                        href={previewUrl}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className={`underline underline-offset-2 font-semibold ${
+                                                                            isDark
+                                                                                ? "text-(--vb-blue-bright) hover:text-white"
+                                                                                : "text-(--vb-blue-dark) hover:text-(--vb-blue)"
+                                                                        }`}
+                                                                        title="Open PDF in new tab"
+                                                                    >
+                                                                        {children}
+                                                                    </a>
+                                                                );
+                                                            }
+                                                            const isInternal = Boolean(href && href.startsWith("/"));
+                                                            return (
+                                                                <a
+                                                                    href={href}
+                                                                    className={`underline underline-offset-2 font-semibold ${
+                                                                        isDark
+                                                                            ? "text-(--vb-blue-bright) hover:text-white"
+                                                                            : "text-(--vb-blue-dark) hover:text-(--vb-blue)"
+                                                                    }`}
+                                                                    {...(isInternal
+                                                                        ? {}
+                                                                        : { target: "_blank", rel: "noopener noreferrer" })}
+                                                                >
+                                                                    {children}
+                                                                </a>
+                                                            );
+                                                        },
                                                     }}
                                                 >
                                                     {formatAssistantMarkdown(msg.content)}
@@ -2206,8 +2319,36 @@ function ChatContent() {
                                                                 const label = shortFileLabel(c.filename || "Document");
                                                                 const fullName = c.filename || "Document";
                                                                 const meta = citationMeta(c);
+                                                                const generatedType = String(c.documentType || "").toLowerCase();
+                                                                const generatedName = String(c.filename || "").toLowerCase();
+                                                                const isGeneratedPdf =
+                                                                    [
+                                                                        "compliance_report",
+                                                                        "finance_report",
+                                                                        "hr_report",
+                                                                        "hr_shortlist",
+                                                                        "offer_letter",
+                                                                        "experience_letter",
+                                                                        "joining_letter",
+                                                                        "internship_letter",
+                                                                        "training_certificate",
+                                                                        "promotion_letter",
+                                                                        "warning_letter",
+                                                                        "relieving_letter",
+                                                                        "ncr_letter",
+                                                                        "capa_letter",
+                                                                        "certificate_of_compliance",
+                                                                    ].includes(generatedType) ||
+                                                                    /compliance[\s_-]?report/i.test(generatedName) ||
+                                                                    /finance[\s_-]?report/i.test(generatedName) ||
+                                                                    /offer[\s_-]?letter/i.test(generatedName) ||
+                                                                    /experience[\s_-]?letter/i.test(generatedName) ||
+                                                                    /joining[\s_-]?letter/i.test(generatedName) ||
+                                                                    /internship[\s_-]?letter/i.test(generatedName);
                                                                 const href = c.documentId
-                                                                    ? `/documents/details?doc=${encodeURIComponent(c.documentId)}`
+                                                                    ? isGeneratedPdf
+                                                                        ? generatedPreviewHref(c.documentId)
+                                                                        : `/documents/details?doc=${encodeURIComponent(c.documentId)}`
                                                                     : null;
                                                                 const citeKey = `${msg.id}-${i}`;
                                                                 const expanded = expandedCitation === citeKey;
@@ -2234,13 +2375,25 @@ function ChatContent() {
                                                                 return (
                                                                     <div key={citeKey} className="flex flex-col max-w-full">
                                                                         {href ? (
-                                                                            <Link
-                                                                                href={href}
-                                                                                className={`${chipClass} cursor-pointer`}
-                                                                                title={`Open ${fullName}`}
-                                                                            >
-                                                                                {inner}
-                                                                            </Link>
+                                                                            isGeneratedPdf ? (
+                                                                                <a
+                                                                                    href={href}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className={`${chipClass} cursor-pointer`}
+                                                                                    title={`Open ${fullName} in new tab`}
+                                                                                >
+                                                                                    {inner}
+                                                                                </a>
+                                                                            ) : (
+                                                                                <Link
+                                                                                    href={href}
+                                                                                    className={`${chipClass} cursor-pointer`}
+                                                                                    title={`Open ${fullName}`}
+                                                                                >
+                                                                                    {inner}
+                                                                                </Link>
+                                                                            )
                                                                         ) : (
                                                                             <span className={chipClass} title={fullName}>
                                                                                 {inner}
@@ -2481,7 +2634,7 @@ function ChatContent() {
                         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
                             <button
                                 type="button"
-                                onClick={() => setScopePanelOpen(true)}
+                                onClick={toggleDocumentsRail}
                                 className={`text-[11px] ${colors.textMuted} hover:text-accent inline-flex items-center gap-1.5 transition-colors`}
                             >
                                 <FileText size={11} />
@@ -2536,6 +2689,34 @@ function ChatContent() {
                         />
                     </div>
                 </div>
+                    </div>
+
+                    {showDocumentsRail && (
+                        <>
+                            <button
+                                type="button"
+                                className={`lg:hidden absolute inset-0 z-20 bg-black/40 backdrop-blur-[1px] transition-opacity ${
+                                    !isLg ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                                }`}
+                                aria-label="Close documents"
+                                onClick={closeDocumentsPanel}
+                                tabIndex={!isLg ? 0 : -1}
+                            />
+                            <aside
+                                className="hidden lg:flex flex-col min-h-0 h-full w-[280px] max-w-[30vw] shrink-0 overflow-hidden bg-surface border-l border-border"
+                                aria-label="Documents"
+                            >
+                                <ChatScopePanel {...documentsScopePanelProps} />
+                            </aside>
+                            <aside
+                                className="lg:hidden absolute inset-y-0 right-0 z-30 flex flex-col min-h-0 h-full w-[min(280px,85vw)] max-w-full overflow-hidden bg-surface border-l border-border shadow-xl"
+                                aria-label="Documents"
+                            >
+                                <ChatScopePanel {...documentsScopePanelProps} />
+                            </aside>
+                        </>
+                    )}
+                </div>
             </div>
 
             <ChatAnalyticsSidePanel
@@ -2570,7 +2751,7 @@ function ChatContent() {
                     setChatScope("selected");
                     setSelectedDocIds(ids);
                     setChatContextDocIds(ids);
-                    setScopePanelOpen(false);
+                    setDocumentsPanelOpen(false);
                 }}
                 onVisualAction={async (action) => {
                     if (action.kind === "open_document" && action.documentId) {
@@ -2598,32 +2779,6 @@ function ChatContent() {
             />
             </div>
             </div>
-
-            <ChatScopePanel
-                open={scopePanelOpen}
-                onClose={() => setScopePanelOpen(false)}
-                anchorRef={scopeButtonRef}
-                chatScope={chatScope}
-                onChatScopeChange={setChatScope}
-                filteredDocs={filteredDocs}
-                selectedDocIds={selectedDocIds}
-                onToggleDoc={toggleDoc}
-                onToggleFolder={toggleFolder}
-                onSelectAll={selectAllFiltered}
-                onClearSelection={clearSelection}
-                docSearch={docSearch}
-                onDocSearchChange={setDocSearch}
-                docStatusFilter={docStatusFilter}
-                onDocStatusFilterChange={setDocStatusFilter}
-                unprocessedCount={unprocessedCount}
-                libraryCount={selectableDocs.length}
-                selectableCount={selectableDocs.length}
-                offPlanCount={offPlanCount}
-                textPrimary={colors.textPrimary}
-                textMuted={colors.textMuted}
-                textSecondary={colors.textSecondary}
-                bgHover={colors.bgHover}
-            />
         </div>
     );
 }

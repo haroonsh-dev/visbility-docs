@@ -280,7 +280,9 @@ export default function OfferLetterModal({
                 className="btn-gradient inline-flex rounded-xl px-4 py-2 text-sm"
                 onClick={onClose}
             >
-                Open PDF · Print
+                {form.candidate_name.trim()
+                    ? `Offer letter — ${form.candidate_name.trim()}`
+                    : "Open offer letter"}
             </Link>
         </div>
     ) : (

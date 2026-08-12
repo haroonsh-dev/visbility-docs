@@ -30,6 +30,7 @@ import {
     convertRecordsToBase,
     type FinanceRecord,
     resolveFinancePortfolioDocumentIds,
+    applyPaymentsToInvoices,
 } from './financeAnalyticsService';
 import Document from '../models/Document';
 import { buildDocumentFilter } from './accessScope';
@@ -376,7 +377,9 @@ export async function executeFinanceAnalytics(
     const rawRecords = fxResult.records;
     // Dedupe BEFORE aggregation so totals reflect one real invoice per group.
     const dedupe = dedupeFinanceRecords(rawRecords);
-    const records = dedupe.records;
+    // Match payment receipts → invoices; charts use outstanding balances.
+    const settlement = applyPaymentsToInvoices(dedupe.records);
+    const records = settlement.records;
     const docsInScope = await countFinanceDocumentsInScope(user, finOpts.documentIds);
     const scopedNote = finOpts.documentIds?.length
         ? ` (scoped to **${finOpts.documentIds.length}** selected file(s))`
@@ -484,10 +487,11 @@ export async function executeFinanceAnalytics(
         .sort((a, b) => b[1] - a[1])
         .map(([cur, amt]) => `**${cur}** ${Math.round(amt * 100) / 100}`)
         .join(' · ');
-    const docIds = new Set(records.map((r) => r.documentId));
-    const fileReport = await buildFinanceFileCoverage(user, records, finOpts);
-    const dupWarnings = findDuplicateInvoiceWarnings(rawRecords);
-    const coverage = computeFinanceCoverage(records, docsInScope, fileReport, dupWarnings);
+    const coverageRecords = [...records, ...settlement.payments];
+    const docIds = new Set(coverageRecords.map((r) => r.documentId));
+    const fileReport = await buildFinanceFileCoverage(user, coverageRecords, finOpts);
+    const dupWarnings = findDuplicateInvoiceWarnings(rawRecords.filter((r) => r.recordKind !== 'payment'));
+    const coverage = computeFinanceCoverage(coverageRecords, docsInScope, fileReport, dupWarnings);
 
     const vendorTable =
         intent === 'vendor_spend' || intent === 'overview'
@@ -542,6 +546,13 @@ export async function executeFinanceAnalytics(
         ? `\n**${dedupe.droppedFilenames.length} duplicate invoice(s) excluded from totals:** ${dedupe.droppedFilenames.slice(0, 5).map((n) => `\`${n}\``).join(', ')}${dedupe.droppedFilenames.length > 5 ? '…' : ''}`
         : '';
 
+    const settlementNote =
+        settlement.appliedPayments > 0
+            ? `\n> 💳 Applied **${settlement.appliedPayments}** payment receipt(s) (**${Math.round(settlement.totalPaidApplied * 100) / 100}** paid). Outstanding **${Math.round(settlement.totalOutstanding * 100) / 100}** of gross **${Math.round(settlement.totalGross * 100) / 100}**.${settlement.unmatchedPayments ? ` **${settlement.unmatchedPayments}** payment(s) unmatched (missing/wrong invoice #).` : ''}`
+            : settlement.payments.length
+              ? `\n> 💳 Found **${settlement.payments.length}** payment receipt(s) but none matched an invoice number in scope. Ensure \`payment_for\` / \`invoice_number\` references the invoice.`
+              : '';
+
     const fxNote =
         fxResult.converted > 0
             ? `\n> 💱 Converted **${fxResult.converted}** amount(s) into **${orgFin.baseCurrency}** using org FX rates.${fxResult.unconvertedCurrencies.length ? ` Unconverted: ${fxResult.unconvertedCurrencies.join(', ')} (add rates in Settings).` : ''}`
@@ -558,6 +569,7 @@ export async function executeFinanceAnalytics(
             `I used **${docIds.size}** of **${docsInScope}** scoped document(s) with extracted amounts${scopedNote}.`,
             skippedBlock,
             fxNote,
+            settlementNote,
             '',
             `- Totals: ${totalLines || '—'}`,
             `- Charts: ${uniqueVisuals.map((v) => v.title).join(' · ') || 'none'}`,
@@ -569,7 +581,9 @@ export async function executeFinanceAnalytics(
             coverageNotes,
             dupWarnings.length ? `\n**Duplicate check:**\n${dupWarnings.map((w) => `- ${w}`).join('\n')}` : '',
             '',
-            'Numbers are summed from invoice extractions (one total per invoice). Duplicates are removed from totals; PO amounts are shown separately.',
+            settlement.appliedPayments > 0
+                ? 'AP/AR and aging use **outstanding** (invoice total − matched payments). Monthly trend stays gross billed volume.'
+                : 'Numbers are summed from invoice extractions (one total per invoice). Add payment receipts that reference invoice numbers to net outstanding.',
         ]
             .filter(Boolean)
             .join('\n'),

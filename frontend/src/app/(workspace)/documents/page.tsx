@@ -16,6 +16,7 @@ import DocumentFolderTree from "@/components/DocumentFolderTree";
 import LibraryPagination from "@/components/LibraryPagination";
 import ShareModal from "@/components/ShareModal";
 import ChatWithDocumentLink from "@/components/ChatWithDocumentLink";
+import { shouldShowChatWithDocument, isGeneratedArtifactDoc } from "@/lib/generatedDocuments";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
 import { apiRequest } from "@/lib/apiClient";
@@ -31,7 +32,14 @@ type DocItem = {
     departmentId?: string | null; uploaderIsLeader?: boolean; uploadedBy?: string; createdAt: string;
     duplicateCount?: number; isDuplicate?: boolean; pythonDocumentId?: string | null;
     aiProcessingStatus?: string | null; aiErrorMessage?: string | null;
-    metadata?: { phase3Agent?: string; naturalAgent?: string; agentClamped?: boolean; cvScore?: number } | null;
+    metadata?: {
+        phase3Agent?: string;
+        naturalAgent?: string;
+        agentClamped?: boolean;
+        cvScore?: number;
+        generatedVia?: string;
+        source?: string;
+    } | null;
 };
 
 type Pagination = { page: number; limit: number; total: number; totalPages: number };
@@ -920,8 +928,20 @@ function DocumentsContent() {
                                         <ChatWithDocumentLink
                                             documentId={doc.documentId}
                                             ready={!!doc.pythonDocumentId}
+                                            hidden={!shouldShowChatWithDocument(doc)}
                                         />
-                                        {allowView && <Link href={`/documents/details?doc=${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"><Info size={13} /> Details</Link>}
+                                        {allowView && (
+                                            <Link
+                                                href={
+                                                    isGeneratedArtifactDoc(doc)
+                                                        ? `/documents/${doc.documentId}`
+                                                        : `/documents/details?doc=${doc.documentId}`
+                                                }
+                                                className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"
+                                            >
+                                                <Info size={13} /> {isGeneratedArtifactDoc(doc) ? "Open PDF" : "Details"}
+                                            </Link>
+                                        )}
                                         {allowView && <Link href={`/documents/${doc.documentId}`} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"><Eye size={13} /> Preview</Link>}
                                         {allowDelete && <button type="button" onClick={() => remove(doc.documentId, doc.originalFilename)} className="btn-ghost rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 text-rose-500 min-h-9 hover:bg-rose-50"><Trash2 size={13} /></button>}
                                         {allowView && doc.uploadedBy === me?.userId && <button type="button" onClick={() => setSharingDoc({ documentId: doc.documentId, filename: doc.originalFilename })} className="btn-secondary rounded-lg px-3 py-2 text-xs flex items-center justify-center gap-1.5 min-h-9"><Share2 size={13} /></button>}

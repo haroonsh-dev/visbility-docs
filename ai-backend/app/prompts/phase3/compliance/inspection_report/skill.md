@@ -35,7 +35,20 @@ The output will be a single JSON object strictly conforming to the following sch
     "inspector_name": {"type": "string"},
     "inspection_date": {"type": "string"},
     "overall_rating": {"type": "string"},
+    "overall_compliance_status": {"type": "string", "description": "Mirror overall_rating into compliant | non_compliant | partially_compliant | not_assessed when possible"},
+    "compliance_status": {"type": "string", "description": "Same normalized vocabulary as overall_compliance_status"},
     "violations_found_count": {"type": "integer"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      },
+      "description": "One finding per FAIL / non-conforming inspected_items row"
+    },
     "inspected_items": {
       "type": "array",
       "items": {

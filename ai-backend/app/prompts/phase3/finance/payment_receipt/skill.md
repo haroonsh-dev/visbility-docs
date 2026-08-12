@@ -40,6 +40,10 @@ The output must be a single JSON object strictly conforming to the following sch
     "amount_paid": {"type": "number"},
     "currency": {"type": "string"},
     "payment_for": {"type": "string"},
+    "invoice_number": {
+      "type": ["string", "null"],
+      "description": "Invoice number being paid when explicitly stated (e.g. INV-2024-102). Also capture this in payment_for when narrative only."
+    },
     "additional_information": {
       "type": "object",
       "description": "Any document data not captured by the defined fields above — includes ALL extra information found in headers, footers, stamps, signatures, notes, terms, conditions, tables, and any other section; use key-value pairs",

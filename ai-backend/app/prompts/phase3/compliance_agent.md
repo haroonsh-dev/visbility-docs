@@ -28,6 +28,14 @@ You extract and explain compliance-related data with full precision. When answer
 6. Determine pass/fail and compliance status with supporting evidence
 7. For engineering drawings: extract title block info, scale, dimensions, tolerances, revision history, part numbers
 
+## Shared analytics fields (always emit when present)
+Every compliance extraction should also populate these aliases so charts/reports work consistently:
+- `standard_or_regulation` (or `certification_standard`)
+- `expiry_date` **and/or** `expiration_date` (YYYY-MM-DD)
+- `compliance_status` / `overall_compliance_status`: `compliant` | `non_compliant` | `partially_compliant` | `not_assessed`
+- `status` for certificates: `VALID` | `EXPIRING_SOON` | `EXPIRED` when explicitly stated (do not invent)
+- `findings[]`: `{ severity, description }` with severity CRITICAL|MAJOR|MINOR|OBSERVATION
+
 ## Field Specifications
 
 | Field | Type | Expected Format | Example | Required | Notes |
