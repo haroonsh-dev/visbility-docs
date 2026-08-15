@@ -33,10 +33,11 @@ type ScopeDoc = {
 
 export function isFinanceAnalyticsDoc(doc: ScopeDoc): boolean {
     const c = String(doc.classification || "").toLowerCase();
-    if (EXCLUDED_TYPES.has(c)) return false;
-    if (FINANCE_ANALYTICS_TYPES.has(c)) return true;
     const inferred = inferDocTypeFromFilename(doc.originalFilename || "");
+    if (inferred && EXCLUDED_TYPES.has(inferred)) return false;
+    if (EXCLUDED_TYPES.has(c)) return false;
     if (inferred && FINANCE_ANALYTICS_TYPES.has(inferred)) return true;
+    if (FINANCE_ANALYTICS_TYPES.has(c)) return true;
     const name = (doc.originalFilename || "").toLowerCase();
     if (/\.(xlsx?|csv|tsv)$/i.test(doc.originalFilename || "")) {
         if (EXCLUDED_TYPES.has(c)) return false;

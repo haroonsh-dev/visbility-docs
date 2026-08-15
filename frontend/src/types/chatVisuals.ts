@@ -65,3 +65,20 @@ export type ComplianceAnalyticsCoverage = {
         detail?: string;
     }>;
 };
+
+export type AgentAnalyticsCoverage = {
+    documentsInScope: number;
+    documentsCharted?: number;
+    documentsWithAmount?: number;
+    documentsWithVendor?: number;
+    documentsWithClient?: number;
+    documentsWithExpiry?: number;
+    documentsWithFindings?: number;
+    warnings?: string[];
+    files?: Array<{
+        documentId: string;
+        filename: string;
+        status: "in_charts" | "no_extraction" | "not_linked" | "missing_amount" | "unsupported_format";
+        detail?: string;
+    }>;
+};

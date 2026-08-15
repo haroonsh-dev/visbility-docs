@@ -1,4 +1,4 @@
-import type { ChatVisualSpec, AgentChatVisualResult, FinanceAnalyticsCoverage } from '../types/chatVisuals';
+import type { ChatVisualSpec, AgentChatVisualResult, FinanceAnalyticsCoverage, AgentAnalyticsCoverage } from '../types/chatVisuals';
 import { AuthUser } from './accessScope';
 import { requireAllowedAgent } from './planService';
 import { listTopResumesForUser } from './hrChatActionService';
@@ -20,7 +20,12 @@ import {
     type ComplianceVisualIntent,
     tryComplianceChatVisual,
 } from './complianceChatVisualService';
-import { runDynamicAnalytics, runDynamicDashboard } from './dynamicAnalyticsEngine';
+import {
+    filterDocumentIdsForAgent,
+    runDynamicAnalytics,
+    runDynamicDashboard,
+} from './dynamicAnalyticsEngine';
+import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual } from './agentAnalyticsPolicy';
 
 export type HrVisualIntent = 'ranking' | 'distribution' | HrPortfolioIntent;
 
@@ -119,6 +124,11 @@ export async function executeHrAnalytics(
         };
     }
 
+    const rankingLines = data.map(
+        (row, i) => `${i + 1}. **${row.candidate}** — **${row.score}/100**`
+    );
+    const lead = `Here’s how your scoped candidates **rank by CV score** (${data.length} with scores):`;
+
     return {
         visuals: [
             {
@@ -135,7 +145,7 @@ export async function executeHrAnalytics(
         ],
         documentCount: top.length,
         citations,
-        answer: `Here’s how your scoped candidates rank by CV score (${data.length} with scores). Charts are in the analytics panel.`,
+        answer: [lead, '', ...rankingLines, '', 'See the bar chart in the **Analytics** panel.'].join('\n'),
     };
 }
 
@@ -145,6 +155,14 @@ async function tryHrChatVisual(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<AgentChatVisualResult> {
+    if (params.phase3Agent && params.phase3Agent !== HR_AGENT) {
+        return { handled: false };
+    }
+
+    if (!wantsAgentAnalyticsVisual(params.question, params.phase3Agent || HR_AGENT)) {
+        return { handled: false };
+    }
+
     const intent = detectHrVisualIntentLegacy(params.question, params.phase3Agent);
     if (!intent) return { handled: false };
 
@@ -160,16 +178,17 @@ async function tryHrChatVisual(params: {
 
     if (intent === 'ranking' || intent === 'distribution') {
         const result = await executeHrAnalytics(params.user, limit, params.documentIds, intent);
-        if (!result.visuals.length) {
-            return { handled: true, agentId: HR_AGENT, answer: result.answer };
-        }
-        return {
-            handled: true,
-            agentId: HR_AGENT,
-            visuals: result.visuals,
-            citations: result.citations,
-            answer: result.answer,
-        };
+        return applyAgentVisualPolicy(
+            {
+                handled: true,
+                agentId: HR_AGENT,
+                visuals: result.visuals,
+                citations: result.citations,
+                answer: result.answer,
+            },
+            params.question,
+            HR_AGENT
+        );
     }
 
     const result = await executeHrPortfolioAnalytics(
@@ -181,13 +200,17 @@ async function tryHrChatVisual(params: {
     if (!result.visuals.length && !result.answer) {
         return { handled: true, agentId: HR_AGENT, answer: result.answer };
     }
-    return {
-        handled: true,
-        agentId: HR_AGENT,
-        visuals: result.visuals,
-        citations: result.citations,
-        answer: result.answer,
-    };
+    return applyAgentVisualPolicy(
+        {
+            handled: true,
+            agentId: HR_AGENT,
+            visuals: result.visuals,
+            citations: result.citations,
+            answer: result.answer,
+        },
+        params.question,
+        HR_AGENT
+    );
 }
 
 function mapHrView(view?: string): HrVisualIntent {
@@ -206,7 +229,7 @@ export async function getAgentAnalyticsDashboard(params: {
     citations: AgentChatVisualResult['citations'];
     summary: string;
     documentCount: number;
-    coverage?: FinanceAnalyticsCoverage | import('../types/chatVisuals').ComplianceAnalyticsCoverage;
+    coverage?: FinanceAnalyticsCoverage | import('../types/chatVisuals').ComplianceAnalyticsCoverage | AgentAnalyticsCoverage;
     scopeMode?: 'all' | 'selected';
 }> {
     const { user, agentId } = params;
@@ -224,17 +247,21 @@ export async function getAgentAnalyticsDashboard(params: {
         }
     }
 
-    const scopeMode = params.documentIds?.length ? 'selected' : 'all';
+    let scopedDocIds = params.documentIds;
+    if (scopedDocIds?.length) {
+        scopedDocIds = await filterDocumentIdsForAgent(user, scopedDocIds, agentId);
+    }
+    const scopeMode = scopedDocIds?.length ? 'selected' : 'all';
 
-    if (params.documentIds?.length) {
+    if (scopedDocIds?.length) {
         const dyn = await runDynamicDashboard({
             user,
             agentId,
             view: params.view,
-            documentIds: params.documentIds,
+            documentIds: scopedDocIds,
         });
         return {
-            agentId: dyn.agentId || agentId,
+            agentId,
             visuals: dyn.visuals || [],
             citations: dyn.citations || [],
             summary: dyn.answer || '',
@@ -274,6 +301,10 @@ export async function getAgentAnalyticsDashboard(params: {
                 citations: result.citations,
                 summary: result.answer,
                 documentCount: result.documentCount,
+                coverage: {
+                    documentsInScope: result.documentCount,
+                    documentsCharted: result.visuals?.length ? result.documentCount : 0,
+                },
                 scopeMode,
             };
         }
@@ -284,6 +315,10 @@ export async function getAgentAnalyticsDashboard(params: {
             citations: result.citations,
             summary: result.answer,
             documentCount: result.documentCount,
+            coverage: {
+                documentsInScope: result.documentCount,
+                documentsCharted: result.visuals?.length ? result.documentCount : 0,
+            },
             scopeMode,
         };
     }
@@ -325,8 +360,8 @@ export async function tryAgentChatVisual(params: {
     focusDocumentIds?: string[];
     sessionId?: string;
 }): Promise<AgentChatVisualResult> {
-    // Single router: dynamic engine is the only chart path when scope/focus exists
-    if (params.documentIds?.length || params.focusDocumentIds?.length || wantsVisualization(params.question)) {
+    // Charts only when the question is analytics-related — not explain/overview asks
+    if (wantsAgentAnalyticsVisual(params.question, params.phase3Agent)) {
         const dyn = await runDynamicAnalytics({
             ...params,
             sessionId: params.sessionId,
@@ -334,7 +369,7 @@ export async function tryAgentChatVisual(params: {
         if (dyn.handled) {
             return {
                 handled: true,
-                agentId: dyn.agentId || params.phase3Agent,
+                agentId: params.phase3Agent || dyn.agentId,
                 answer: dyn.answer,
                 visuals: dyn.visuals,
                 citations: dyn.citations,
@@ -344,17 +379,33 @@ export async function tryAgentChatVisual(params: {
         }
     }
 
-    // Legacy fallbacks only when dynamic engine declines (no chart keywords / no docs)
-    const finance = await tryFinanceChatVisual({ ...params, sessionId: params.sessionId });
-    if (finance.handled) return finance;
+    // Legacy fallbacks only when dynamic engine declines — never cross agents
+    if (!params.phase3Agent || params.phase3Agent === FINANCE_AGENT) {
+        const finance = await tryFinanceChatVisual({ ...params, sessionId: params.sessionId });
+        if (finance.handled) {
+            return applyAgentVisualPolicy(finance, params.question, params.phase3Agent || finance.agentId);
+        }
+    }
 
-    const compliance = await tryComplianceChatVisual(params);
-    if (compliance.handled) return compliance;
+    if (!params.phase3Agent || params.phase3Agent === COMPLIANCE_AGENT) {
+        const compliance = await tryComplianceChatVisual(params);
+        if (compliance.handled) {
+            return applyAgentVisualPolicy(
+                compliance,
+                params.question,
+                params.phase3Agent || compliance.agentId
+            );
+        }
+    }
 
-    const hr = await tryHrChatVisual(params);
-    if (hr.handled) return hr;
+    if (!params.phase3Agent || params.phase3Agent === HR_AGENT) {
+        const hr = await tryHrChatVisual(params);
+        if (hr.handled) {
+            return applyAgentVisualPolicy(hr, params.question, params.phase3Agent || hr.agentId);
+        }
+    }
 
-    if (wantsVisualization(params.question)) {
+    if (wantsAgentAnalyticsVisual(params.question, params.phase3Agent)) {
         return {
             handled: true,
             agentId: params.phase3Agent || 'other_agent',

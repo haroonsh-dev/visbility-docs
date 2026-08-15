@@ -20,7 +20,6 @@ _AGGREGATE_KEYWORDS = [r"\bsum\b", r"\btotal\b", r"\baggregate\b", r"\bcombine\b
                        r"\btotal\b.*\ball\b", r"\badd up\b", r"\bsum up\b",
                        r"\baccumulated\b", r"\bcombined\b", r"\btogether\b"]
 
-# Short conversational messages that should not hit document search / DB
 _CHITCHAT_PATTERNS = [
     r"^(hi|hii+|hello|hey|hy|helo|hola|salam|assalam.?o.?alaikum|aoa|slm)\b",
     r"^(good\s*(morning|afternoon|evening|night)|gm|gn)\b",
@@ -62,6 +61,30 @@ _LANGUAGE_RULE = (
 _TONE_RULE = (
     "TONE: Be professional and concise. Do NOT use emojis, emoticons, or decorative symbols in any reply."
 )
+
+
+def _wants_rag_inline_chart(question: str) -> bool:
+    """Only embed LLM json:chart blocks when the user asked for analytics/charts."""
+    q = (question or "").lower().strip()
+    if not q:
+        return False
+    text_explain = re.search(
+        r"\b(explain|overview|summary|summarize|describe|profile|tell me about|what is|what are|break down)\b",
+        q,
+    )
+    chart_words = re.search(
+        r"\b(chart|graph|graphs|visuali[sz]e|visual|plot|analytics|dashboard|breakdown|ranking|scores)\b",
+        q,
+    )
+    if text_explain and not chart_words:
+        return False
+    if chart_words:
+        return True
+    if re.search(r"\b(show me|give me|show a)\b.*\b(chart|graph|visual|analytics|ranking|scores)\b", q):
+        return True
+    if re.search(r"\b(rank|ranking|top \d+|score|scores|distribution|histogram)\b", q):
+        return True
+    return False
 
 
 class ChatService:
@@ -1022,9 +1045,8 @@ class ChatService:
             chat_log.info("[SEARCH-FIRST ROUTING] No document types in results — will use fallback")
 
         q_lower = question.lower()
-        import re as _re
         is_resume_query = any(
-            _re.search(kw, q_lower) for kw in _RESUME_KEYWORDS
+            re.search(kw, q_lower) for kw in _RESUME_KEYWORDS
         )
 
         if not search_results and not is_resume_query and document_type:
@@ -1037,7 +1059,6 @@ class ChatService:
             if is_resume_query:
                 try:
                     import json
-                    import re
                     resumes = document_service.list_documents(organization_id, limit=200)
                     if resolved_ids:
                         resolved_set = set(resolved_ids)
@@ -1492,7 +1513,8 @@ class ChatService:
                     "Rules:\n"
                     f"0. {_LANGUAGE_RULE} {_TONE_RULE}\n"
                     "1. Be exact about amounts, dates, and names.\n"
-                    "2. Keep currency symbols and percentages intact.\n"
+                    "2. If the user asks for PKR, report every amount as PKR (code PKR). Never use ₹ or INR. Never mix USD into a PKR answer unless you also convert it to PKR and label the rate.\n"
+                    "3. Keep percentages intact. Do not guess rounded totals like ~10,000,000.\n"
                     "3. If the answer is missing, say you cannot find it in the documents.\n"
                     "4. Do not hallucinate or infer unsupported numbers.\n"
                     "5. Do not output JSON, unless the user explicitly requests JSON format.\n"
@@ -1561,13 +1583,14 @@ class ChatService:
         self._save_exchange(sid, question, answer, sources, is_first)
 
         chart_data = None
-        chart_match = re.search(r"```json:chart\s*({[\s\S]*?})\s*```", answer)
-        if chart_match:
-            try:
-                chart_data = json.loads(chart_match.group(1))
-                answer = re.sub(r"```json:chart\s*{[\s\S]*?}\s*```", "", answer).strip()
-            except Exception:
-                chart_data = None
+        if _wants_rag_inline_chart(question):
+            chart_match = re.search(r"```json:chart\s*({[\s\S]*?})\s*```", answer)
+            if chart_match:
+                try:
+                    chart_data = json.loads(chart_match.group(1))
+                    answer = re.sub(r"```json:chart\s*{[\s\S]*?}\s*```", "", answer).strip()
+                except Exception:
+                    chart_data = None
 
         total = time.time() - t_start
         chat_log.chat_end(total, len(sources))

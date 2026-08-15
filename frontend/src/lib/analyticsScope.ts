@@ -1,4 +1,6 @@
 import { resolveDocAgent, inferDocTypeFromFilename } from "@/lib/documentAgents";
+import { isFinanceAnalyticsDoc } from "@/lib/financeAnalyticsScope";
+import { isComplianceAnalyticsDoc } from "@/lib/complianceAnalyticsScope";
 
 /** Any library doc that can drive dynamic / agent analytics charts. */
 type ScopeDoc = {
@@ -20,7 +22,8 @@ export function isAnalyticsScopeDoc(doc: ScopeDoc): boolean {
         agent === "hr_agent" ||
         agent === "compliance_agent" ||
         agent === "procurement_agent" ||
-        agent === "legal_agent"
+        agent === "legal_agent" ||
+        agent === "other_agent"
     ) {
         return true;
     }
@@ -34,4 +37,18 @@ export function isAnalyticsScopeDoc(doc: ScopeDoc): boolean {
 export function filterAnalyticsScopeDocIds(docs: ScopeDoc[], ids: string[]): string[] {
     const set = new Set(ids);
     return docs.filter((d) => set.has(d.documentId) && isAnalyticsScopeDoc(d)).map((d) => d.documentId);
+}
+
+/** Restrict analytics/chat scope to the agent the user selected. */
+export function filterDocIdsForAgent(docs: ScopeDoc[], ids: string[], agentId: string): string[] {
+    const set = new Set(ids);
+    return docs
+        .filter((d) => {
+            if (!set.has(d.documentId) || !isAnalyticsScopeDoc(d)) return false;
+            if (resolveDocAgent(d as Parameters<typeof resolveDocAgent>[0]) !== agentId) return false;
+            if (agentId === "finance_agent" && !isFinanceAnalyticsDoc(d)) return false;
+            if (agentId === "compliance_agent" && !isComplianceAnalyticsDoc(d)) return false;
+            return true;
+        })
+        .map((d) => d.documentId);
 }

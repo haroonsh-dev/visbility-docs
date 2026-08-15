@@ -12,9 +12,13 @@ import {
     applyPaymentsToInvoices,
     buildAgingVisual,
     extractInvoiceRefFromText,
+    matchDocumentIdsByNameTokens,
+    matchDocumentsByExplicitFilename,
     type FinanceRecord,
 } from '../services/financeAnalyticsService';
 import { canonicalizePartyName, partyRollupKey } from '../services/financePartyNormalize';
+import { detectFinanceSpreadsheetTotalAsk } from '../services/financeChatActionService';
+import { cleanAgentMarkdown } from '../services/agentResponseFormat';
 
 function assert(cond: boolean, msg: string) {
     if (!cond) throw new Error(msg);
@@ -205,6 +209,87 @@ check('PO pairing: matched when PO and invoice share po_number', () => {
     assert(pairs.length === 1, `pairs=${pairs.length}`);
     assert(pairs[0].status === 'matched', `status=${pairs[0].status}`);
     assert(pairs[0].variance === 0, `variance=${pairs[0].variance}`);
+});
+
+check('name match: explicit xlsx wins over "all clients" portfolio phrase', () => {
+    const docs = [
+        { documentId: 'sheet3', originalFilename: 'vendor_client_test_data.xlsx' },
+        { documentId: 'inv1', originalFilename: 'invoice_50_rows_pdf_ready.pdf' },
+    ];
+    const q =
+        'in pkr vendor_client_test_data.xlsx only that file total sum of all clients';
+    const hit = matchDocumentIdsByNameTokens(docs, q);
+    assert(hit.length === 1 && hit[0] === 'sheet3', `hit=${hit.join(',')}`);
+    const explicit = matchDocumentsByExplicitFilename(docs, q);
+    assert(explicit.length === 1 && explicit[0] === 'sheet3', `explicit=${explicit.join(',')}`);
+});
+
+check('spreadsheet: Total Amount (PKR) column stays PKR not USD', () => {
+    const rows = buildFinanceRecordsFromExtraction(
+        { documentId: 'sheet-pkr', originalFilename: 'vendor_client_test_data.xlsx' },
+        {
+            rows: [
+                { 'Vendor Name': 'Bata Pakistan', 'Total Amount (PKR)': 230051.86, Status: 'Cancelled' },
+                { 'Vendor Name': 'Nishat Mills Ltd', 'Total Amount (PKR)': 785833.22, Status: 'Pending' },
+            ],
+        }
+    );
+    assert(rows.length === 2, `rows=${rows.length}`);
+    assert(rows.every((r) => r.currency === 'PKR'), `currency=${rows.map((r) => r.currency).join(',')}`);
+    const visual = buildVendorSpendVisual(rows, { baseCurrency: 'USD' });
+    assert(visual.currency === 'PKR', `visual.currency=${visual.currency}`);
+    const total = visual.data.reduce((s, row) => s + Number(row.amount || 0), 0);
+    assert(Math.abs(total - 1015885.08) < 0.02, `chartTotal=${total}`);
+});
+
+check('spreadsheet: PKR amount column used when USD column also exists', () => {
+    const rows = buildFinanceRecordsFromExtraction(
+        { documentId: 'sheet-both', originalFilename: 'vendor_client_test_data.xlsx' },
+        {
+            rows: [
+                {
+                    'Vendor Name': 'CLECTRONICS',
+                    'Total Amount (USD)': 150850,
+                    'Total Amount (PKR)': 41916300,
+                },
+                {
+                    'Vendor Name': 'Lahore Electronics Co',
+                    'Total Amount (USD)': 18543.66,
+                    'Total Amount (PKR)': 5155137.8,
+                },
+            ],
+        }
+    );
+    assert(rows.length === 2, `rows=${rows.length}`);
+    assert(rows.every((r) => r.currency === 'PKR'), `currency=${rows.map((r) => r.currency).join(',')}`);
+    const clectronics = rows.find((r) => r.vendor === 'CLECTRONICS');
+    assert(clectronics != null && Math.abs(clectronics.total - 41916300) < 0.02, `clectronics=${clectronics?.total}`);
+    const visual = buildVendorSpendVisual(rows);
+    assert(visual.currency === 'PKR', `visual.currency=${visual.currency}`);
+    const top = visual.data[0];
+    assert(String(top.vendor).includes('CLECTRONICS'), `top=${top.vendor}`);
+    assert(Number(top.amount) > 1_000_000, `topAmount=${top.amount} (must be PKR not USD)`);
+});
+
+check('convert USD invoice to PKR instead of relabeling', () => {
+    const visual = buildVendorSpendVisual(
+        [
+            {
+                documentId: 'd1',
+                filename: 'clectronics.pdf',
+                vendor: 'CLECTRONICS',
+                client: 'Digilog',
+                total: 150850,
+                currency: 'USD',
+                invoiceDate: null,
+                dueDate: null,
+            },
+        ],
+        { preferredCurrency: 'PKR', fxRates: { USD: 1, PKR: 278 } }
+    );
+    assert(visual.currency === 'PKR', `currency=${visual.currency}`);
+    const amt = Number(visual.data[0]?.amount || 0);
+    assert(Math.abs(amt - 150850 * 278) < 1, `converted=${amt}`);
 });
 
 check('spreadsheet: client name + spend amount columns', () => {
@@ -412,6 +497,20 @@ check('extractInvoiceRefFromText: Invoice # INV-2024-102', () => {
         /INV-2024-102/i.test(extractInvoiceRefFromText('Payment against Invoice # INV-2024-102')),
         'ref'
     );
+});
+
+check('gran total typo uses computed totals path', () => {
+    assert(detectFinanceSpreadsheetTotalAsk('give me only gran total', 'finance_agent'), 'gran total');
+    assert(detectFinanceSpreadsheetTotalAsk('grand total', 'finance_agent'), 'grand total');
+    assert(detectFinanceSpreadsheetTotalAsk('now that file total amount with clients', 'finance_agent'), 'total amount');
+});
+
+check('cleanAgentMarkdown keeps headings and tables on separate lines', () => {
+    const md = cleanAgentMarkdown(
+        '**Grand total:** PKR 32,482,872.59\n\n### By status\n| Status | Total |\n| --- | --- |\n| Paid | PKR 1 |\n'
+    );
+    assert(md.includes('\n### By status\n'), `headings collapsed: ${JSON.stringify(md)}`);
+    assert(!/\*\*Grand total:[^*]+\*\* ### By status/.test(md), 'heading must not sit on the grand-total line');
 });
 
 console.log(`\n${passed} checks passed`);

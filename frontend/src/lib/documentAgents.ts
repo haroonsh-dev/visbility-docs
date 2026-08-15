@@ -250,16 +250,27 @@ export function agentLabel(agent: string): string {
 }
 
 export function resolveDocAgent(doc: {
+    originalFilename?: string | null;
     phase3_agent?: string | null;
     document_type?: string | null;
     classification?: string | null;
-    metadata?: { phase3Agent?: string } | null;
+    metadata?: { phase3Agent?: string; naturalAgent?: string } | null;
 }): string {
-    const metaAgent = doc.metadata?.phase3Agent;
-    if (metaAgent) return metaAgent;
+    const fromName = inferDocTypeFromFilename(doc.originalFilename || "");
+    if (fromName && DOC_TYPE_TO_AGENT[fromName] && DOC_TYPE_TO_AGENT[fromName] !== "other_agent") {
+        return DOC_TYPE_TO_AGENT[fromName];
+    }
+    const docType = String(doc.document_type || doc.classification || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_");
+    const cls = docType === "cv" || docType === "curriculum_vitae" ? "resume" : docType;
+    if (cls && cls !== "other" && DOC_TYPE_TO_AGENT[cls]) return DOC_TYPE_TO_AGENT[cls];
+    if (doc.metadata?.naturalAgent) return doc.metadata.naturalAgent;
+    if (doc.metadata?.phase3Agent) return doc.metadata.phase3Agent;
     if (doc.phase3_agent) return doc.phase3_agent;
-    const docType = doc.document_type || doc.classification || "";
-    return DOC_TYPE_TO_AGENT[docType] || "other_agent";
+    if (/\.(xlsx?|csv|tsv|ods)$/i.test(doc.originalFilename || "")) return "finance_agent";
+    return "other_agent";
 }
 
 export function inferDocTypeFromFilename(filename: string): string | null {

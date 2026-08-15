@@ -137,6 +137,48 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     other: 'other_agent',
 };
 
+/**
+ * Agent that owns a file for chat/analytics scope.
+ * Filename + classification win over metadata.phase3Agent so a CV processed
+ * with Finance Agent is still an HR file (and vice versa).
+ */
+export function resolveCanonicalAgent(doc: {
+    originalFilename?: string | null;
+    classification?: string | null;
+    metadata?: { phase3Agent?: string; naturalAgent?: string } | null;
+    phase3Agent?: string | null;
+}): string {
+    const fromName = inferDocumentTypeFromFilename(doc.originalFilename || '');
+    if (fromName && DOC_TYPE_TO_AGENT[fromName] && DOC_TYPE_TO_AGENT[fromName] !== 'other_agent') {
+        return DOC_TYPE_TO_AGENT[fromName];
+    }
+    const raw = String(doc.classification || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_');
+    const cls = raw === 'cv' || raw === 'curriculum_vitae' ? 'resume' : raw;
+    if (cls && cls !== 'other' && DOC_TYPE_TO_AGENT[cls]) return DOC_TYPE_TO_AGENT[cls];
+    if (doc.metadata?.naturalAgent) return String(doc.metadata.naturalAgent);
+    if (doc.metadata?.phase3Agent) return String(doc.metadata.phase3Agent);
+    if (doc.phase3Agent) return String(doc.phase3Agent);
+    if (/\.(xlsx?|csv|tsv|ods)$/i.test(doc.originalFilename || '')) return 'finance_agent';
+    return 'other_agent';
+}
+
+export function docBelongsToAgent(
+    doc: Parameters<typeof resolveCanonicalAgent>[0],
+    agentId: string
+): boolean {
+    return resolveCanonicalAgent(doc) === agentId;
+}
+
+export function filterDocsByAgent<T extends Parameters<typeof resolveCanonicalAgent>[0]>(
+    docs: T[],
+    agentId: string
+): T[] {
+    return docs.filter((d) => docBelongsToAgent(d, agentId));
+}
+
 /** Doc types an org may assign to departments, limited to agents on their plan. */
 export function documentTypesForAgents(agentIds: string[]): string[] {
     const allowed = new Set(agentIds);
@@ -190,12 +232,20 @@ export function inferDocumentTypeFromFilename(filename: string): string | null {
     const name = filename.toLowerCase();
     if (/\b(cv|cvs|resume|curriculum|biodata|bio[\s_-]?data)\b/.test(name)) return 'resume';
     if (name.includes('invoice')) return 'invoice';
-    if (name.includes('contract')) return 'contract';
+    if (name.includes('nda') || name.includes('non-disclosure') || name.includes('non_disclosure')) return 'nda';
+    if (name.includes('service') && name.includes('agreement')) return 'service_agreement';
+    if (name.includes('lease') && name.includes('agreement')) return 'lease_agreement';
+    if (name.includes('vendor') && name.includes('contract')) return 'vendor_contract';
+    if (name.includes('contract') || name.includes('agreement')) return 'contract';
     if (name.includes('quotation') || name.includes('quote')) return 'quotation';
     if (name.includes('purchase') || /\bpo\b/.test(name)) return 'purchase_order';
+    if (name.includes('rfq')) return 'rfq';
+    if (name.includes('audit')) return 'audit_report';
     if (name.includes('certificate')) return 'certificate';
     if (name.includes('transcript')) return 'transcript';
     if (name.includes('sop')) return 'sop';
+    if (name.includes('payroll')) return 'payroll';
+    if (name.includes('offer') && name.includes('letter')) return 'offer_letter';
     return null;
 }
 

@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { Download, FileText, LineChart, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import ChatAgentVisuals, { type VisualDataPointClick } from "@/components/ChatAgentVisuals";
-import type { ChatVisualSpec, FinanceAnalyticsCoverage, ComplianceAnalyticsCoverage } from "@/types/chatVisuals";
+import type { ChatVisualSpec, FinanceAnalyticsCoverage, ComplianceAnalyticsCoverage, AgentAnalyticsCoverage } from "@/types/chatVisuals";
 import { agentLabel } from "@/lib/documentAgents";
 import { downloadVisualsCsv } from "@/lib/analyticsExport";
 
@@ -31,7 +31,14 @@ export type AnalyticsPanelView =
     | "attendance"
     | "directory"
     | "performance"
-    | "transcript";
+    | "transcript"
+    | "risk"
+    | "clauses"
+    | "obligations"
+    | "po_spend"
+    | "po_status"
+    | "doc_mix"
+    | "missing";
 
 type Props = {
     open: boolean;
@@ -47,7 +54,7 @@ type Props = {
     documentCount?: number;
     unifiedHeader?: boolean;
     scopeMode?: "all" | "selected";
-    coverage?: FinanceAnalyticsCoverage | ComplianceAnalyticsCoverage | null;
+    coverage?: FinanceAnalyticsCoverage | ComplianceAnalyticsCoverage | AgentAnalyticsCoverage | null;
     resolveFilename?: (documentId: string) => string;
     onApplyChatScope?: (documentIds: string[]) => void;
     scopeDocCount?: number;
@@ -82,14 +89,19 @@ const PROMPTS: Record<string, string[]> = {
         "Visual graph for compliance status",
     ],
     legal_agent: [
+        "Show chart all missing data",
         "Chart risk flags by document",
         "Show clause type mix",
-        "Chart contract values by party",
     ],
     procurement_agent: [
-        "Chart PO vs invoice amounts",
         "Chart spend by supplier",
-        "Show amounts by document",
+        "Chart PO vs invoice amounts",
+        "Show procurement summary",
+    ],
+    other_agent: [
+        "Show document type mix",
+        "List files in scope",
+        "Compare these documents",
     ],
 };
 
@@ -116,12 +128,23 @@ const HR_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
     { id: "transcript", label: "Transcripts" },
 ];
 
-const COMPLIANCE_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
+const LEGAL_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
     { id: "overview", label: "Overview" },
+    { id: "missing", label: "Missing" },
+    { id: "risk", label: "Risk" },
     { id: "expiry", label: "Expiry" },
-    { id: "findings", label: "Findings" },
-    { id: "cert_status", label: "Certs" },
-    { id: "status_mix", label: "Status" },
+    { id: "clauses", label: "Clauses" },
+];
+
+const PROCUREMENT_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "po_spend", label: "Spend" },
+    { id: "po_status", label: "Status" },
+];
+
+const OTHER_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "doc_mix", label: "Type mix" },
 ];
 
 function deriveKpis(visuals: ChatVisualSpec[]) {
@@ -225,7 +248,13 @@ export default function ChatAnalyticsSidePanel({
           ? COMPLIANCE_VIEWS
           : showHrViews
             ? HR_VIEWS
-            : [];
+            : agentId === "legal_agent" && onViewChange
+              ? LEGAL_VIEWS
+              : agentId === "procurement_agent" && onViewChange
+                ? PROCUREMENT_VIEWS
+                : agentId === "other_agent" && onViewChange
+                  ? OTHER_VIEWS
+                  : [];
 
     const effectiveScopeCount =
         chartedFileIds.length > 0 ? chartedFileIds.length : scopeDocCount;
@@ -460,6 +489,60 @@ export default function ChatAnalyticsSidePanel({
                                                 {f.detail && f.status !== "in_charts" ? (
                                                     <p className="pl-0 text-[10px] leading-snug">{f.detail}</p>
                                                 ) : null}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+                        {coverage &&
+                            coverage.documentsInScope != null &&
+                            agentId !== "finance_agent" &&
+                            agentId !== "compliance_agent" && (
+                            <div className="rounded-xl border border-border bg-surface-2/40 px-3 py-2.5 text-[11px] text-foreground-muted leading-relaxed space-y-2">
+                                <p className="text-foreground">
+                                    <span className="font-semibold">Chat scope: </span>
+                                    <span className="tabular-nums font-semibold">{coverage.documentsInScope}</span>{" "}
+                                    file(s)
+                                    {"documentsCharted" in coverage && coverage.documentsCharted != null ? (
+                                        <>
+                                            ;{" "}
+                                            <span className="tabular-nums font-semibold">
+                                                {coverage.documentsCharted}
+                                            </span>{" "}
+                                            in charts
+                                        </>
+                                    ) : null}
+                                    .
+                                </p>
+                                {coverage.warnings && coverage.warnings.length > 0 && (
+                                    <ul className="space-y-1 border-t border-border pt-2 mt-1">
+                                        {coverage.warnings.map((w, i) => (
+                                            <li key={i} className="text-[10px] text-amber-800 dark:text-amber-300/90">
+                                                {w.replace(/\*\*/g, "")}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                {coverage.files && coverage.files.length > 0 && (
+                                    <ul className="space-y-1.5 max-h-40 overflow-y-auto border-t border-border pt-2 mt-1">
+                                        {coverage.files.map((f) => (
+                                            <li key={f.documentId} className="flex items-center gap-2">
+                                                <span
+                                                    className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                                                        f.status === "in_charts"
+                                                            ? "bg-emerald-500/15 text-emerald-600"
+                                                            : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                                                    }`}
+                                                >
+                                                    {f.status === "in_charts" ? "In charts" : "Skipped"}
+                                                </span>
+                                                <Link
+                                                    href={`/documents/${f.documentId}/details`}
+                                                    className="text-accent hover:underline truncate font-medium"
+                                                >
+                                                    {f.filename}
+                                                </Link>
                                             </li>
                                         ))}
                                     </ul>

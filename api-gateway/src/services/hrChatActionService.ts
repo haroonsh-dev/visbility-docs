@@ -6,6 +6,436 @@ import { createExperienceLetterFromResume } from './experienceLetterGenerationSe
 import { createOfferLetterFromResume, HR_AGENT, OfferPayload } from './offerLetterGenerationService';
 import { getOfferLetterPrefill, getAiDocument, resolveAiOrganizationId } from './aiServiceClient';
 import { requireAllowedAgent } from './planService';
+import {
+    extractDocumentNameTokens,
+    matchDocumentIdsByNameTokens,
+} from './financeAnalyticsService';
+import {
+    wantsAgentAnalyticsVisual,
+    wantsAgentTextOnlyExplain,
+} from './agentAnalyticsPolicy';
+
+export function wantsHrAnalyticsVisual(question: string): boolean {
+    return wantsAgentAnalyticsVisual(question, HR_AGENT);
+}
+
+/** @deprecated use wantsHrAnalyticsVisual */
+export function wantsHrChartQuestion(question: string): boolean {
+    return wantsHrAnalyticsVisual(question);
+}
+
+export function wantsHrTextOnlyExplain(question: string): boolean {
+    return wantsAgentTextOnlyExplain(question, HR_AGENT);
+}
+
+export function wantsHrCandidateDeepDive(question: string): boolean {
+    const q = question.toLowerCase();
+    return (
+        /\b(best|top|pick|find|select|choose)\b/.test(q) &&
+        /\b(cv|resume|candidate)\b/.test(q) &&
+        (/\b(overview|summary|profile|detail|full|deep dive)\b/.test(q) ||
+            /\b(only|not others|don't show|do not show|single candidate)\b/.test(q) ||
+            /\b(for|role|position|data science|engineer|developer|analyst)\b/.test(q))
+    );
+}
+
+export function detectHrCvTableAsk(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== HR_AGENT) return false;
+    if (wantsHrAnalyticsVisual(question)) return false;
+    const q = question.toLowerCase();
+    return (
+        /\btable\b/.test(q) &&
+        (/\b(cv|resume|candidate|candidates|comparison|compare)\b/.test(q) ||
+            /\b(comparison|compare)\b/.test(q))
+    );
+}
+
+export function detectHrCvOverviewAsk(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== HR_AGENT) return false;
+    if (detectHrCvTableAsk(question, phase3Agent)) return false;
+    if (wantsHrAnalyticsVisual(question)) return false;
+    return wantsHrTextOnlyExplain(question) && /\b(cv|resume|candidate|candidates|hiring)\b/.test(question.toLowerCase());
+}
+
+export type CvProfile = {
+    documentId: string;
+    filename: string;
+    candidateName: string;
+    title: string;
+    cvScore: number;
+    summary: string;
+    skills: string[];
+    recommendation: string;
+};
+
+async function loadCvProfile(
+    user: AuthUser,
+    row: { documentId: string; originalFilename: string; pythonDocumentId?: string | null; cvScore: number }
+): Promise<CvProfile> {
+    let candidateName = '';
+    let title = '';
+    let summary = '';
+    let skills: string[] = [];
+    let recommendation = '';
+
+    if (row.pythonDocumentId) {
+        const orgId = resolveAiOrganizationId(user);
+        try {
+            const pre = await getOfferLetterPrefill(row.pythonDocumentId, orgId);
+            candidateName = pre?.prefill?.candidate_name?.trim() || '';
+            title = String(pre?.prefill?.job_title || '').trim();
+        } catch {
+            /* optional */
+        }
+        try {
+            const { getDocumentExtractions } = await import('./aiServiceClient');
+            let extractions = await getDocumentExtractions(row.pythonDocumentId, orgId);
+            if (!extractions?.length) extractions = await getDocumentExtractions(row.pythonDocumentId, '');
+            for (const ext of extractions || []) {
+                const data = (ext.extracted_data || {}) as Record<string, unknown>;
+                if (!candidateName && typeof data.candidate_name === 'string') {
+                    candidateName = data.candidate_name;
+                }
+                if (!title && typeof data.current_title === 'string') title = data.current_title;
+                if (typeof data.evaluation_summary === 'string' && data.evaluation_summary.trim()) {
+                    summary = data.evaluation_summary.trim();
+                }
+                if (typeof data.recommendation === 'string' && data.recommendation.trim()) {
+                    recommendation = data.recommendation.trim();
+                }
+                if (Array.isArray(data.skills)) {
+                    skills = data.skills.map(String).filter(Boolean);
+                } else if (typeof data.key_skills === 'string') {
+                    skills = data.key_skills
+                        .split(/[,;|]/)
+                        .map((s) => s.trim())
+                        .filter(Boolean);
+                }
+            }
+        } catch {
+            /* optional */
+        }
+    }
+
+    if (!candidateName) {
+        candidateName = row.originalFilename
+            .replace(/\.(pdf|png|jpg|jpeg|webp)$/i, '')
+            .replace(/[_-]+/g, ' ')
+            .trim();
+    }
+
+    return {
+        documentId: row.documentId,
+        filename: row.originalFilename,
+        candidateName,
+        title: title || 'Not specified',
+        cvScore: Number.isFinite(row.cvScore) ? row.cvScore : NaN,
+        summary: summary || 'No evaluation summary extracted yet — open the CV and wait until processing finishes.',
+        skills,
+        recommendation,
+    };
+}
+
+function extractRoleNeedles(question: string): string[] {
+    const q = question.toLowerCase();
+    const known = [
+        'data science',
+        'data scientist',
+        'machine learning',
+        'ai engineer',
+        'software engineer',
+        'full stack',
+        'backend',
+        'frontend',
+        'developer',
+        'analyst',
+    ];
+    return known.filter((r) => q.includes(r));
+}
+
+function roleFitScore(profile: CvProfile, roleNeedles: string[]): number {
+    if (!roleNeedles.length) return 0;
+    const hay = [
+        profile.title,
+        profile.summary,
+        profile.skills.join(' '),
+        profile.candidateName,
+    ]
+        .join(' ')
+        .toLowerCase();
+    return roleNeedles.reduce((acc, needle) => acc + (hay.includes(needle) ? 2 : 0), 0);
+}
+
+function parseSkillBullets(skills: string[]): string[] {
+    if (!skills.length) return [];
+    const flat = skills.join(', ').trim();
+    if (!flat) return [];
+
+    // Split "Category: items, NextCategory: items" into separate bullets
+    const categorized = flat.split(/,\s*(?=[A-Za-z][A-Za-z0-9\s/&-]{0,36}:)/).map((s) => s.trim());
+    if (categorized.length > 1) return categorized.slice(0, 10);
+
+    if (skills.length > 1) return skills.slice(0, 12);
+
+    // Long comma list — one bullet per major segment
+    if (flat.length > 120) {
+        return flat
+            .split(/,\s+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 8);
+    }
+
+    return [flat];
+}
+
+function formatSkillBullet(raw: string): string {
+    const trimmed = raw.trim();
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx > 0 && colonIdx < 48) {
+        const label = trimmed.slice(0, colonIdx).trim();
+        const detail = trimmed.slice(colonIdx + 1).trim();
+        if (detail) return `- **${label}:** ${detail}`;
+    }
+    return `- ${trimmed}`;
+}
+
+function formatSkillsBlock(profile: CvProfile): string {
+    const bullets = parseSkillBullets(profile.skills);
+    if (!bullets.length) return '';
+    return ['**Key skills**', '', ...bullets.map(formatSkillBullet)].join('\n');
+}
+
+function formatCvProfileSection(profile: CvProfile, index?: number): string {
+    const heading =
+        index != null ? `### ${index + 1}. ${profile.candidateName}` : `### ${profile.candidateName}`;
+
+    const scoreLine = Number.isFinite(profile.cvScore)
+        ? `- **CV score:** ${profile.cvScore}/100`
+        : '- **CV score:** pending (still processing)';
+
+    const metaLines = [scoreLine, `- **File:** ${profile.filename}`];
+    if (profile.title && profile.title !== 'Not specified') {
+        metaLines.push(`- **Current title:** ${profile.title}`);
+    }
+
+    const blocks: string[] = [heading, '', ...metaLines];
+
+    if (profile.summary && !/No evaluation summary extracted yet/i.test(profile.summary)) {
+        blocks.push('', '**Summary**', '', profile.summary.trim());
+    }
+
+    const skillsBlock = formatSkillsBlock(profile);
+    if (skillsBlock) {
+        blocks.push('', skillsBlock);
+    }
+
+    if (profile.recommendation) {
+        blocks.push('', '**Recommendation**', '', profile.recommendation.trim());
+    }
+
+    return blocks.join('\n').trim();
+}
+
+function formatRoleFocusLabel(roleNeedles: string[]): string {
+    if (!roleNeedles.length) return '';
+    const label = roleNeedles
+        .map((r) => r.replace(/\b\w/g, (c) => c.toUpperCase()))
+        .join(' / ');
+    return `**Role focus:** ${label}`;
+}
+
+export async function tryHrCvOverviewCommand(opts: {
+    user: AuthUser;
+    question: string;
+    phase3Agent?: string;
+    documentIds?: string[];
+}): Promise<HrChatActionResult> {
+    if (!detectHrCvOverviewAsk(opts.question, opts.phase3Agent)) {
+        return { handled: false };
+    }
+
+    const scopedIds = opts.documentIds?.filter(Boolean);
+    const pool = await listTopResumesForUser(
+        opts.user,
+        scopedIds?.length ? Math.max(scopedIds.length, 50) : 50,
+        scopedIds
+    );
+    if (!pool.length) {
+        return {
+            handled: true,
+            answer:
+                'No processed resumes in scope. Select CVs in Document scope, wait until they are **ready**, then ask for an overview again.',
+        };
+    }
+
+    let targets = pool;
+    const nameTokens = extractDocumentNameTokens(opts.question);
+    if (nameTokens.length) {
+        const matchedIds = matchDocumentIdsByNameTokens(
+            pool.map((r) => ({
+                documentId: r.documentId,
+                originalFilename: r.originalFilename,
+            })),
+            opts.question
+        );
+        if (matchedIds.length) {
+            const idSet = new Set(matchedIds);
+            targets = pool.filter((r) => idSet.has(r.documentId));
+        }
+    }
+
+    const profiles = await Promise.all(targets.slice(0, 6).map((r) => loadCvProfile(opts.user, r)));
+    const roleNeedles = extractRoleNeedles(opts.question);
+    const singleCandidateAsk =
+        wantsHrCandidateDeepDive(opts.question) ||
+        /\b(only|not others|single candidate|don't show others|do not show others)\b/i.test(opts.question);
+
+    let chosen = profiles;
+    if (singleCandidateAsk && profiles.length > 1) {
+        const ranked = [...profiles].sort((a, b) => {
+            const roleA = roleFitScore(a, roleNeedles);
+            const roleB = roleFitScore(b, roleNeedles);
+            if (roleB !== roleA) return roleB - roleA;
+            const sa = Number.isFinite(a.cvScore) ? a.cvScore : -1;
+            const sb = Number.isFinite(b.cvScore) ? b.cvScore : -1;
+            return sb - sa;
+        });
+        chosen = [ranked[0]];
+    }
+
+    const q = opts.question.toLowerCase();
+    const comparing = profiles.length >= 2 && /\b(compare|comparison|versus|\bvs\.?\b|and)\b/.test(q);
+
+    let md = comparing ? `## CV overview & comparison\n\n` : `## Candidate overview\n\n`;
+
+    if (singleCandidateAsk && roleNeedles.length) {
+        md += `${formatRoleFocusLabel(roleNeedles)}\n\n`;
+        md += `**Selected candidate:** ${chosen[0].candidateName} — best match in your scoped CVs for this role based on extracted skills, title, and evaluation.\n\n`;
+        md += `---\n\n`;
+    } else if (roleNeedles.length) {
+        md += `${formatRoleFocusLabel(roleNeedles)}\n\n`;
+    } else if (singleCandidateAsk) {
+        md += `Here is the candidate overview from your scoped CVs:\n\n---\n\n`;
+    }
+
+    chosen.forEach((p, i) => {
+        md += `${formatCvProfileSection(p, chosen.length > 1 ? i : undefined)}\n\n`;
+        if (i < chosen.length - 1) {
+            md += `---\n\n`;
+        }
+    });
+
+    if (comparing && chosen.length >= 2) {
+        const scored = chosen.filter((p) => Number.isFinite(p.cvScore));
+        if (scored.length >= 2) {
+            const sorted = [...scored].sort((a, b) => b.cvScore - a.cvScore);
+            md += `---\n\n**Quick score comparison**\n\n`;
+            md += `- **${sorted[0].candidateName}** — ${sorted[0].cvScore}/100\n`;
+            md += `- **${sorted[1].candidateName}** — ${sorted[1].cvScore}/100\n\n`;
+        }
+        md += `_Want a side-by-side table? Ask: “comparison table of these CVs”. For a chart: “show CV ranking chart”._\n`;
+    } else if (!singleCandidateAsk && profiles.length > 1) {
+        md += `_Ask about a specific name, or say “best CV for data science — full overview only” to focus on one candidate._\n`;
+    }
+
+    return {
+        handled: true,
+        answer: md.trim(),
+        citations: chosen.map((p) => ({
+            documentId: p.documentId,
+            filename: p.filename,
+            score: Number.isFinite(p.cvScore) ? p.cvScore / 100 : undefined,
+            documentType: 'resume',
+            phase3Agent: HR_AGENT,
+        })),
+    };
+}
+
+export async function tryHrCvComparisonTable(opts: {
+    user: AuthUser;
+    question: string;
+    phase3Agent?: string;
+    documentIds?: string[];
+}): Promise<HrChatActionResult> {
+    if (!detectHrCvTableAsk(opts.question, opts.phase3Agent)) {
+        return { handled: false };
+    }
+
+    const scopedIds = opts.documentIds?.filter(Boolean);
+    const pool = await listTopResumesForUser(
+        opts.user,
+        scopedIds?.length ? Math.max(scopedIds.length, 50) : 50,
+        scopedIds
+    );
+    if (!pool.length) {
+        return {
+            handled: true,
+            answer:
+                'No processed resumes in scope. Select CVs in Document scope, wait until they are **ready**, then ask for a comparison table again.',
+        };
+    }
+
+    let rows = pool;
+    const nameTokens = extractDocumentNameTokens(opts.question);
+    if (nameTokens.length) {
+        const matchedIds = matchDocumentIdsByNameTokens(
+            pool.map((r) => ({
+                documentId: r.documentId,
+                originalFilename: r.originalFilename,
+            })),
+            opts.question
+        );
+        if (matchedIds.length >= 2) {
+            const idSet = new Set(matchedIds);
+            rows = pool.filter((r) => idSet.has(r.documentId));
+        } else if (matchedIds.length === 1) {
+            rows = pool.filter((r) => matchedIds.includes(r.documentId));
+        }
+    }
+
+    if (rows.length > 12) rows = rows.slice(0, 12);
+
+    const profiles = await Promise.all(rows.map((r) => loadCvProfile(opts.user, r)));
+    const scored = rows.filter((r) => Number.isFinite(r.cvScore));
+
+    let md = `### CV comparison\n\n`;
+    if (profiles.length >= 2) {
+        md += `Here is a side-by-side comparison of **${profiles.length}** candidate(s) from your scoped CVs:\n\n`;
+        profiles.slice(0, 4).forEach((p, i) => {
+            const score = Number.isFinite(p.cvScore) ? `${p.cvScore}/100` : 'pending';
+            md += `${i + 1}. **${p.candidateName}** — ${score}`;
+            if (p.title && p.title !== 'Not specified') md += ` · ${p.title}`;
+            md += `\n`;
+            if (p.summary && !/No evaluation summary/.test(p.summary)) {
+                md += `   ${p.summary.slice(0, 220)}${p.summary.length > 220 ? '…' : ''}\n`;
+            }
+        });
+        md += `\n`;
+    }
+
+    md += `| # | Candidate | CV score | Title | File |\n| ---: | --- | ---: | --- | --- |\n`;
+    profiles.forEach((p, i) => {
+        const score = Number.isFinite(p.cvScore) ? `${p.cvScore}/100` : 'pending';
+        md += `| ${i + 1} | ${p.candidateName.slice(0, 32)} | ${score} | ${p.title.slice(0, 24)} | ${p.filename.slice(0, 28)} |\n`;
+    });
+    if (scored.length >= 2) {
+        const best = [...scored].sort((a, b) => b.cvScore - a.cvScore)[0];
+        md += `\n**Highest score in this comparison:** ${best.originalFilename.replace(/_/g, ' ')} (${best.cvScore}/100).\n`;
+    }
+
+    return {
+        handled: true,
+        answer: md,
+        citations: rows.map((r) => ({
+            documentId: r.documentId,
+            filename: r.originalFilename,
+            score: Number.isFinite(r.cvScore) ? r.cvScore / 100 : undefined,
+            documentType: 'resume',
+            phase3Agent: HR_AGENT,
+        })),
+    };
+}
 
 type ResumeRow = Awaited<ReturnType<typeof listTopResumesForUser>>[number];
 
@@ -240,11 +670,12 @@ async function resolveLetterTargets(params: {
 }
 
 function isResumeLike(doc: { classification?: string | null; originalFilename?: string }): boolean {
-    const c = String(doc.classification || '').toLowerCase();
-    if (c === 'resume' || c === 'cv') return true;
-    if (c === 'offer_letter' || c === 'experience_letter' || c === 'transcript') return false;
     const inferred = inferDocumentTypeFromFilename(doc.originalFilename || '');
+    if (inferred && inferred !== 'resume') return false;
     if (inferred === 'resume') return true;
+    const c = String(doc.classification || '').toLowerCase();
+    if (c === 'offer_letter' || c === 'experience_letter' || c === 'transcript') return false;
+    if (c === 'resume' || c === 'cv') return true;
     return /\b(cv|cvs|resume|curriculum|biodata)\b/i.test(doc.originalFilename || '');
 }
 
@@ -462,6 +893,10 @@ export async function tryHrChatCommand(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<HrChatActionResult> {
+    if (params.phase3Agent && params.phase3Agent !== HR_AGENT) {
+        return { handled: false };
+    }
+
     const cmd = detectHrCommand(params.question, params.phase3Agent);
     if (!cmd) return { handled: false };
 

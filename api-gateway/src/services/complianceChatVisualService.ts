@@ -2,6 +2,7 @@ import { AuthUser } from './accessScope';
 import { requireAllowedAgent } from './planService';
 import type { AgentChatVisualResult, ComplianceAnalyticsCoverage } from '../types/chatVisuals';
 import { wantsVisualization } from './financeChatVisualService';
+import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual, wantsAgentTextOnlyExplain } from './agentAnalyticsPolicy';
 import {
     COMPLIANCE_AGENT,
     buildCertStatusVisual,
@@ -173,6 +174,17 @@ export async function tryComplianceChatVisual(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<AgentChatVisualResult> {
+    if (params.phase3Agent && params.phase3Agent !== COMPLIANCE_AGENT) {
+        return { handled: false };
+    }
+
+    if (wantsAgentTextOnlyExplain(params.question, params.phase3Agent || COMPLIANCE_AGENT)) {
+        return { handled: false };
+    }
+    if (!wantsAgentAnalyticsVisual(params.question, params.phase3Agent || COMPLIANCE_AGENT)) {
+        return { handled: false };
+    }
+
     let resolvedIds = params.documentIds?.length ? params.documentIds : undefined;
 
     if (!resolvedIds?.length && params.phase3Agent === COMPLIANCE_AGENT && wantsVisualization(params.question)) {
@@ -203,11 +215,15 @@ export async function tryComplianceChatVisual(params: {
         documentIds: resolvedIds,
     });
 
-    return {
-        handled: true,
-        agentId: COMPLIANCE_AGENT,
-        visuals: result.visuals,
-        citations: result.citations,
-        answer: result.answer,
-    };
+    return applyAgentVisualPolicy(
+        {
+            handled: true,
+            agentId: COMPLIANCE_AGENT,
+            visuals: result.visuals,
+            citations: result.citations,
+            answer: result.answer,
+        },
+        params.question,
+        COMPLIANCE_AGENT
+    );
 }

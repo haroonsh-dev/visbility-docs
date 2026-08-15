@@ -10,6 +10,9 @@ export function normalizeFinanceUserQuestion(question: string): string {
 
 /** User wants a full list across the library — not one named file. */
 export function wantsFinanceListAllScope(question: string): boolean {
+    if (/\b[a-z0-9][a-z0-9._-]{1,120}\.(?:xlsx?|xls|csv|tsv|ods|pdf)\b/i.test(question)) {
+        return false;
+    }
     const q = normalizeFinanceUserQuestion(question);
     if (/\b(all|every|full|entire)\b/.test(q) && /\b(lists?|listings?)\b/.test(q)) {
         return true;

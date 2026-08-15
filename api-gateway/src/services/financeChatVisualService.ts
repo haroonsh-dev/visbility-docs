@@ -1,6 +1,7 @@
 import { AuthUser } from './accessScope';
 import { requireAllowedAgent } from './planService';
 import type { AgentChatVisualResult, FinanceAnalyticsCoverage, ChatVisualSpec } from '../types/chatVisuals';
+import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual, wantsAgentTextOnlyExplain } from './agentAnalyticsPolicy';
 import {
     buildAgingVisual,
     buildClientSpendVisual,
@@ -18,6 +19,7 @@ import {
     loadFinanceDocsForAnalytics,
     formatVendorSpendTable,
     formatClientSpendTable,
+    detectCurrencyPreference,
     createFinanceExtractionCache,
     type LoadFinanceOptions,
     narrowFinanceDocumentIds,
@@ -27,10 +29,11 @@ import {
     dedupeFinanceRecords,
     pairPurchaseOrdersWithInvoices,
     formatPoPairingTable,
-    convertRecordsToBase,
     type FinanceRecord,
     resolveFinancePortfolioDocumentIds,
     applyPaymentsToInvoices,
+    convertFinanceRecordsToCurrency,
+    DEFAULT_FX_RATES_TO_USD,
 } from './financeAnalyticsService';
 import Document from '../models/Document';
 import { buildDocumentFilter } from './accessScope';
@@ -182,6 +185,14 @@ export async function tryFinanceChatVisual(params: {
     focusDocumentIds?: string[];
     sessionId?: string;
 }): Promise<AgentChatVisualResult> {
+    if (params.phase3Agent && params.phase3Agent !== FINANCE_AGENT) {
+        return { handled: false };
+    }
+
+    if (wantsAgentTextOnlyExplain(params.question, params.phase3Agent || FINANCE_AGENT)) {
+        return { handled: false };
+    }
+
     if (params.user.role !== 'superAdmin') {
         const check = await requireAllowedAgent(params.user, FINANCE_AGENT);
         if (!check.ok) {
@@ -192,7 +203,14 @@ export async function tryFinanceChatVisual(params: {
         }
     }
 
-    if (params.documentIds?.length || params.focusDocumentIds?.length) {
+    const financeAgentSelected =
+        !params.phase3Agent || params.phase3Agent === FINANCE_AGENT;
+    const chartAsk = wantsAgentAnalyticsVisual(params.question, FINANCE_AGENT);
+    if (
+        financeAgentSelected &&
+        chartAsk &&
+        (params.documentIds?.length || params.focusDocumentIds?.length)
+    ) {
         const portfolioScope = wantsPortfolioFinanceScope(params.question);
         const documentIds = portfolioScope
             ? await resolveFinancePortfolioDocumentIds(params.user, params.documentIds)
@@ -208,15 +226,19 @@ export async function tryFinanceChatVisual(params: {
             force: true,
         });
         if (dyn.handled) {
-            return {
-                handled: true,
-                agentId: dyn.agentId || FINANCE_AGENT,
-                answer: dyn.answer,
-                visuals: dyn.visuals,
-                citations: dyn.citations,
-                coverage: dyn.coverage,
-                analyticsView: dyn.analyticsView,
-            };
+            return applyAgentVisualPolicy(
+                {
+                    handled: true,
+                    agentId: dyn.agentId || FINANCE_AGENT,
+                    answer: dyn.answer,
+                    visuals: dyn.visuals,
+                    citations: dyn.citations,
+                    coverage: dyn.coverage,
+                    analyticsView: dyn.analyticsView,
+                },
+                params.question,
+                FINANCE_AGENT
+            );
         }
     }
 
@@ -290,17 +312,22 @@ export async function tryFinanceChatVisual(params: {
     const loadOpts: LoadFinanceOptions = {
         documentIds: resolvedIds?.length ? resolvedIds : undefined,
         extractionCache: createFinanceExtractionCache(),
+        preferredCurrency: detectCurrencyPreference(params.question),
     };
     const result = await executeFinanceAnalytics(params.user, intent, loadOpts);
-    return {
-        handled: true,
-        agentId: FINANCE_AGENT,
-        visuals: result.visuals,
-        citations: result.citations,
-        answer: result.answer,
-        coverage: result.coverage,
-        analyticsView: mapFinanceIntentToPanelView(intent),
-    };
+    return applyAgentVisualPolicy(
+        {
+            handled: true,
+            agentId: FINANCE_AGENT,
+            visuals: result.visuals,
+            citations: result.citations,
+            answer: result.answer,
+            coverage: result.coverage,
+            analyticsView: mapFinanceIntentToPanelView(intent),
+        },
+        params.question,
+        FINANCE_AGENT
+    );
 }
 
 // P2.15 — short-TTL memoization: identical portfolio calls within ~30s return the
@@ -334,7 +361,7 @@ function financeCacheKey(
     loadOpts: LoadFinanceOptions,
 ): string {
     const ids = [...(loadOpts.documentIds || [])].sort().join(',');
-    return `${user.organizationId || 'noorg'}|${user.userId || 'nouser'}|${intent}|${ids}`;
+    return `${user.organizationId || 'noorg'}|${user.userId || 'nouser'}|${intent}|${ids}|${loadOpts.preferredCurrency || ''}`;
 }
 
 export async function executeFinanceAnalytics(
@@ -369,14 +396,27 @@ export async function executeFinanceAnalytics(
               return mapped ? { ...r, client: mapped } : r;
           })
         : loadedRecords;
-    // FX conversion: move rows into the org's base currency where a rate exists.
-    const fxResult = convertRecordsToBase(aliasedRecords, {
-        baseCurrency: orgFin.baseCurrency,
-        fxRates: orgFin.fxRates,
-    });
-    const rawRecords = fxResult.records;
+    // Charts keep native file currency unless the user asked for PKR/USD.
+    const preferred = finOpts.preferredCurrency?.toUpperCase();
+    let rawRecords = aliasedRecords;
+    let convertedCount = 0;
+    if (preferred) {
+        const conv = convertFinanceRecordsToCurrency(
+            aliasedRecords,
+            preferred,
+            DEFAULT_FX_RATES_TO_USD
+        );
+        convertedCount = conv.converted;
+        rawRecords = conv.records.filter((r) => (r.currency || '').toUpperCase() === preferred);
+        if (!rawRecords.length) rawRecords = conv.records;
+    }
+    const fxResult = {
+        records: rawRecords,
+        converted: convertedCount,
+        unconvertedCurrencies: [] as string[],
+    };
     // Dedupe BEFORE aggregation so totals reflect one real invoice per group.
-    const dedupe = dedupeFinanceRecords(rawRecords);
+    const dedupe = dedupeFinanceRecords(fxResult.records);
     // Match payment receipts → invoices; charts use outstanding balances.
     const settlement = applyPaymentsToInvoices(dedupe.records);
     const records = settlement.records;
@@ -433,14 +473,15 @@ export async function executeFinanceAnalytics(
 
     const chartOpts = {
         vendorAliases: finOpts.vendorAliases,
-        baseCurrency: finOpts.baseCurrency,
+        preferredCurrency: finOpts.preferredCurrency,
+        fxRates: DEFAULT_FX_RATES_TO_USD,
     };
 
     if (intent === 'vendor_spend' || intent === 'overview') {
         visuals.push(buildVendorSpendVisual(records, chartOpts));
     }
     if (intent === 'client_spend' || intent === 'overview') {
-        visuals.push(buildClientSpendVisual(records));
+        visuals.push(buildClientSpendVisual(records, chartOpts));
     }
     if (intent === 'monthly_trend' || intent === 'overview') {
         const trend = buildMonthlyTrendVisual(records);
@@ -493,13 +534,14 @@ export async function executeFinanceAnalytics(
     const dupWarnings = findDuplicateInvoiceWarnings(rawRecords.filter((r) => r.recordKind !== 'payment'));
     const coverage = computeFinanceCoverage(coverageRecords, docsInScope, fileReport, dupWarnings);
 
+    const prefCurrency = finOpts.preferredCurrency;
     const vendorTable =
         intent === 'vendor_spend' || intent === 'overview'
-            ? formatVendorSpendTable(records)
+            ? formatVendorSpendTable(records, 25, prefCurrency)
             : '';
     const clientTable =
         intent === 'client_spend' || intent === 'overview'
-            ? formatClientSpendTable(records)
+            ? formatClientSpendTable(records, 100, prefCurrency)
             : '';
     const coverageNotes = formatFinanceCoverageNotes(coverage);
 
@@ -535,11 +577,7 @@ export async function executeFinanceAnalytics(
     );
 
     const skippedBlock = skipped.length
-        ? [
-              '',
-              `> ⚠️ **${skipped.length} of ${docsInScope} scoped file(s) not in charts** — extraction is missing an amount. Use the **Reprocess** buttons on the chart cards below, then ask again.`,
-              ...skipped.slice(0, 5).map((f) => `> • **${f.filename}** — ${f.detail || 'no amount fields'}`),
-          ].join('\n')
+        ? `\n> ℹ️ *Note: ${skipped.length} of ${docsInScope} document(s) in scope are currently processing or pending extraction.*`
         : '';
 
     const dropped = dedupe.droppedFilenames.length
@@ -548,17 +586,21 @@ export async function executeFinanceAnalytics(
 
     const settlementNote =
         settlement.appliedPayments > 0
-            ? `\n> 💳 Applied **${settlement.appliedPayments}** payment receipt(s) (**${Math.round(settlement.totalPaidApplied * 100) / 100}** paid). Outstanding **${Math.round(settlement.totalOutstanding * 100) / 100}** of gross **${Math.round(settlement.totalGross * 100) / 100}**.${settlement.unmatchedPayments ? ` **${settlement.unmatchedPayments}** payment(s) unmatched (missing/wrong invoice #).` : ''}`
-            : settlement.payments.length
-              ? `\n> 💳 Found **${settlement.payments.length}** payment receipt(s) but none matched an invoice number in scope. Ensure \`payment_for\` / \`invoice_number\` references the invoice.`
-              : '';
+            ? `\n> 💳 Applied **${settlement.appliedPayments}** payment receipt(s) (**${Math.round(settlement.totalPaidApplied * 100) / 100}** paid). Outstanding **${Math.round(settlement.totalOutstanding * 100) / 100}** of gross **${Math.round(settlement.totalGross * 100) / 100}**.`
+            : '';
 
+    const nativeCurrencies = [...new Set(aliasedRecords.map((r) => r.currency).filter(Boolean))];
+    const chartCurrency = uniqueVisuals.find((v) => v.currency)?.currency;
     const fxNote =
-        fxResult.converted > 0
-            ? `\n> 💱 Converted **${fxResult.converted}** amount(s) into **${orgFin.baseCurrency}** using org FX rates.${fxResult.unconvertedCurrencies.length ? ` Unconverted: ${fxResult.unconvertedCurrencies.join(', ')} (add rates in Settings).` : ''}`
-            : fxResult.unconvertedCurrencies.length
-              ? `\n> ⚠️ Multiple currencies detected (${fxResult.unconvertedCurrencies.join(', ')}); totals shown per-currency. Add FX rates in **Settings** to see a unified total.`
-              : '';
+        preferred === 'PKR'
+            ? `\n> Amounts shown in **PKR** only (USD converted at 1 USD = ${DEFAULT_FX_RATES_TO_USD.PKR} PKR). INR/₹ is not used.`
+            : preferred
+              ? `\n> Amounts shown in **${preferred}** as requested.`
+              : nativeCurrencies.length > 1 && chartCurrency
+                ? `\n> Charts use native file currency (**${chartCurrency}**). Other currencies (${nativeCurrencies.filter((c) => c !== chartCurrency).join(', ')}) are excluded, not converted.`
+                : nativeCurrencies.length === 1
+                  ? `\n> Amounts shown in **${nativeCurrencies[0]}** as recorded in the file.`
+                  : '';
 
     const result: FinanceAnalyticsResult = {
         visuals: uniqueVisuals,
@@ -566,20 +608,16 @@ export async function executeFinanceAnalytics(
         documentCount: docIds.size,
         coverage,
         answer: [
-            `I used **${docIds.size}** of **${docsInScope}** scoped document(s) with extracted amounts${scopedNote}.`,
+            `Analyzed **${docIds.size}** document(s) with extracted financial amounts${scopedNote}:`,
             skippedBlock,
             fxNote,
             settlementNote,
-            '',
-            `- Totals: ${totalLines || '—'}`,
-            `- Charts: ${uniqueVisuals.map((v) => v.title).join(' · ') || 'none'}`,
-            dropped,
             '',
             vendorTable ? `### Vendor totals\n\n${vendorTable}` : '',
             clientTable ? `### Client totals\n\n${clientTable}` : '',
             poBlock,
             coverageNotes,
-            dupWarnings.length ? `\n**Duplicate check:**\n${dupWarnings.map((w) => `- ${w}`).join('\n')}` : '',
+            dupWarnings.length ? `\n**Duplicate Check Warnings:**\n${dupWarnings.map((w) => `- ${w}`).join('\n')}` : '',
             '',
             settlement.appliedPayments > 0
                 ? 'AP/AR and aging use **outstanding** (invoice total − matched payments). Monthly trend stays gross billed volume.'

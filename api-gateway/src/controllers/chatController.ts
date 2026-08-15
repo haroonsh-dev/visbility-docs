@@ -21,7 +21,7 @@ import {
 import { PERMISSIONS } from '../types/permissions';
 import logger from '../utils/logger';
 import { recordActivityFromReq } from '../services/activityLog';
-import { DOC_TYPE_TO_AGENT } from '../services/documentStorage';
+import { DOC_TYPE_TO_AGENT, resolveCanonicalAgent } from '../services/documentStorage';
 import { requireAllowedAgent } from '../services/planService';
 import { tryHrDynamicAgent } from '../services/hrIntentRouter';
 import { tryHrChatCommand } from '../services/hrChatActionService';
@@ -29,7 +29,12 @@ import { tryHrExtendedChatCommand } from '../services/hrChatReportService';
 import { tryComplianceDynamicAgent } from '../services/complianceIntentRouter';
 import { tryComplianceReportCommand } from '../services/complianceChatActionService';
 import { tryFinanceReportCommand } from '../services/financeChatActionService';
+import { tryFinanceDynamicAgent } from '../services/financeIntentRouter';
+import { tryLegalDynamicAgent } from '../services/legalIntentRouter';
+import { tryProcurementDynamicAgent } from '../services/procurementIntentRouter';
+import { tryOtherDynamicAgent } from '../services/otherIntentRouter';
 import { getAgentAnalyticsDashboard, tryAgentChatVisual } from '../services/agentChatVisualService';
+import { filterDocumentIdsForAgent } from '../services/dynamicAnalyticsEngine';
 import { wantsPortfolioFinanceScope } from '../services/financeIntent';
 import { wantsFinanceListAllScope } from '../services/financeQuestionNormalize';
 import { FINANCE_AGENT, resolveFinancePortfolioDocumentIds } from '../services/financeAnalyticsService';
@@ -242,10 +247,17 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
 
                 const portfolioAsk =
                     wantsPortfolioFinanceScope(message) || wantsFinanceListAllScope(message);
-                const scopedAnalyticsDocIds =
+                let scopedAnalyticsDocIds =
                     portfolioAsk && (phase3Agent === FINANCE_AGENT || !phase3Agent)
                         ? await resolveFinancePortfolioDocumentIds(req.user, scopedAnalyticsDocIdsRaw)
                         : scopedAnalyticsDocIdsRaw;
+                if (phase3Agent) {
+                    scopedAnalyticsDocIds = await filterDocumentIdsForAgent(
+                        req.user,
+                        scopedAnalyticsDocIds,
+                        phase3Agent
+                    );
+                }
 
                 const focusFromClient = Array.isArray(req.body.focusDocumentIds)
                     ? (req.body.focusDocumentIds as string[]).filter(Boolean)
@@ -260,11 +272,16 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 const sessionFocus = portfolioAsk
                     ? []
                     : await getSessionFocusDocumentIds(sessionId);
-                const focusDocumentIds = (
+                let focusDocumentIds = (
                     portfolioAsk
                         ? focusFromClient
                         : [...new Set([...focusFromClient, ...sessionFocus])]
                 ).slice(0, 5);
+                if (phase3Agent && focusDocumentIds.length) {
+                    focusDocumentIds =
+                        (await filterDocumentIdsForAgent(req.user, focusDocumentIds, phase3Agent)) ||
+                        [];
+                }
 
                 const hrDynamic = await tryHrDynamicAgent({
                     user: req.user,
@@ -539,22 +556,22 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     });
                 }
 
-                const financeReportAction = await tryFinanceReportCommand({
+                const financeDynamic = await tryFinanceDynamicAgent({
                     user: req.user,
                     question: message,
                     phase3Agent,
                     documentIds: scopedAnalyticsDocIds,
                 });
-                if (financeReportAction.handled && financeReportAction.answer) {
+                if (financeDynamic.handled && financeDynamic.answer) {
                     let persistedSessionId = sessionId;
                     try {
                         const appended = await appendChatExchange({
                             organizationId: orgIdEarly,
                             question: message,
-                            answer: financeReportAction.answer,
+                            answer: financeDynamic.answer,
                             sessionId,
                             userId: req.user.userId,
-                            sources: (financeReportAction.citations || []).map((c) => ({
+                            sources: (financeDynamic.citations || []).map((c) => ({
                                 document_id: c.documentId,
                                 document_title: c.filename,
                                 score: c.score,
@@ -565,14 +582,14 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                         persistedSessionId = appended.session_id || sessionId;
                     } catch (appendErr: any) {
                         logger.warn(
-                            `Finance report reply ok but append-exchange failed (restart ai-backend?): ${appendErr?.message || appendErr}`
+                            `Finance dynamic agent reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
                         );
                     }
-                    const reportFocus = (financeReportAction.citations || [])
+                    const financeFocus = (financeDynamic.citations || [])
                         .map((c) => c.documentId)
                         .filter(Boolean) as string[];
-                    if (reportFocus.length) {
-                        setSessionFocusDocumentIds(persistedSessionId, reportFocus, {
+                    if (financeFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, financeFocus, {
                             organizationId: orgIdEarly,
                             userId: req.user.userId,
                         });
@@ -580,12 +597,190 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     return res.json({
                         success: true,
                         data: {
-                            reply: financeReportAction.answer,
-                            citations: financeReportAction.citations || [],
+                            reply: financeDynamic.answer,
+                            citations: financeDynamic.citations || [],
+                            visuals: financeDynamic.visuals || [],
                             sessionId: persistedSessionId,
                             chatScope,
-                            model: 'finance-agent-report',
+                            model: 'finance-dynamic-agent',
                             agentId: phase3Agent || 'finance_agent',
+                        },
+                    });
+                }
+
+                const legalDynamic = await tryLegalDynamicAgent({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (legalDynamic.handled && legalDynamic.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: legalDynamic.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (legalDynamic.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `Legal dynamic agent reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const legalFocus = (legalDynamic.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (legalFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, legalFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: legalDynamic.answer,
+                            citations: legalDynamic.citations || [],
+                            visuals: legalDynamic.visuals || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'legal-dynamic-agent',
+                            agentId: phase3Agent || 'legal_agent',
+                            coverage: {
+                                documentsInScope: (legalDynamic.citations || []).length,
+                                documentsCharted: (legalDynamic.visuals || []).length
+                                    ? (legalDynamic.citations || []).length
+                                    : 0,
+                            },
+                            documentCount: (legalDynamic.citations || []).length,
+                        },
+                    });
+                }
+
+                const procurementDynamic = await tryProcurementDynamicAgent({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (procurementDynamic.handled && procurementDynamic.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: procurementDynamic.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (procurementDynamic.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `Procurement dynamic agent reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const procurementFocus = (procurementDynamic.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (procurementFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, procurementFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: procurementDynamic.answer,
+                            citations: procurementDynamic.citations || [],
+                            visuals: procurementDynamic.visuals || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'procurement-dynamic-agent',
+                            agentId: phase3Agent || 'procurement_agent',
+                            coverage: {
+                                documentsInScope: (procurementDynamic.citations || []).length,
+                                documentsCharted: (procurementDynamic.visuals || []).length
+                                    ? (procurementDynamic.citations || []).length
+                                    : 0,
+                            },
+                            documentCount: (procurementDynamic.citations || []).length,
+                        },
+                    });
+                }
+
+                const otherDynamic = await tryOtherDynamicAgent({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    documentIds: scopedAnalyticsDocIds,
+                });
+                if (otherDynamic.handled && otherDynamic.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: otherDynamic.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (otherDynamic.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                score: c.score,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: any) {
+                        logger.warn(
+                            `Other dynamic agent reply ok but append-exchange failed: ${appendErr?.message || appendErr}`
+                        );
+                    }
+                    const otherFocus = (otherDynamic.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (otherFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, otherFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: otherDynamic.answer,
+                            citations: otherDynamic.citations || [],
+                            visuals: otherDynamic.visuals || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'other-dynamic-agent',
+                            agentId: phase3Agent || 'other_agent',
+                            coverage: {
+                                documentsInScope: (otherDynamic.citations || []).length,
+                                documentsCharted: (otherDynamic.visuals || []).length
+                                    ? (otherDynamic.citations || []).length
+                                    : 0,
+                            },
+                            documentCount: (otherDynamic.citations || []).length,
                         },
                     });
                 }
@@ -648,7 +843,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                             sessionId: persistedSessionId,
                             chatScope,
                             model: 'agent-analytics',
-                            agentId: visualAction.agentId || phase3Agent,
+                            agentId: phase3Agent || visualAction.agentId,
                         },
                     });
                 }
@@ -656,10 +851,11 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
 
             const agentAllowed = (d: any) => {
                 if (!allowedAgents?.length) return true;
-                const agent =
-                    d?.metadata?.phase3Agent ||
-                    DOC_TYPE_TO_AGENT[String(d?.classification || '')] ||
-                    'other_agent';
+                const agent = resolveCanonicalAgent({
+                    originalFilename: d?.originalFilename,
+                    classification: d?.classification,
+                    metadata: d?.metadata,
+                });
                 return allowedAgents.includes(agent);
             };
 
@@ -673,7 +869,16 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                 })
                     .select('documentId pythonDocumentId originalFilename mimeType storagePath classification metadata')
                     .lean();
-                const planSelected = selectedMongo.filter(agentAllowed);
+                const planSelected = selectedMongo.filter(agentAllowed).filter((d) => {
+                    if (!phase3Agent) return true;
+                    return (
+                        resolveCanonicalAgent({
+                            originalFilename: d.originalFilename,
+                            classification: d.classification,
+                            metadata: d.metadata as { phase3Agent?: string; naturalAgent?: string } | undefined,
+                        }) === phase3Agent
+                    );
+                });
                 if (!planSelected.length) {
                     return res.status(403).json({
                         success: false,
@@ -703,13 +908,16 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     .lean();
                 let planLibrary = library.filter(agentAllowed);
                 if (phase3Agent) {
-                    planLibrary = planLibrary.filter((d) => {
-                        const agent =
-                            (d.metadata as { phase3Agent?: string } | undefined)?.phase3Agent ||
-                            DOC_TYPE_TO_AGENT[String(d.classification || '')] ||
-                            'other_agent';
-                        return agent === phase3Agent;
-                    });
+                    planLibrary = planLibrary.filter(
+                        (d) =>
+                            resolveCanonicalAgent({
+                                originalFilename: d.originalFilename,
+                                classification: d.classification,
+                                metadata: d.metadata as
+                                    | { phase3Agent?: string; naturalAgent?: string }
+                                    | undefined,
+                            }) === phase3Agent
+                    );
                 }
                 if (!planLibrary.length) {
                     return res.json({

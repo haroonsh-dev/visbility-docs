@@ -1132,6 +1132,10 @@ export async function tryHrExtendedChatCommand(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<HrReportActionResult> {
+    if (params.phase3Agent && params.phase3Agent !== HR_AGENT) {
+        return { handled: false };
+    }
+
     const report = await tryHrReportCommand(params);
     if (report.handled) return report;
     const section = await tryHrSectionPdfCommand(params);

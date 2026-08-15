@@ -18,12 +18,18 @@ import {
     detectComplianceLetter,
     detectComplianceExpiryAsk,
     detectComplianceMissingDocsAsk,
+    detectComplianceAuditEvidencePack,
+    detectComplianceDeptGapAnalysis,
     tryComplianceReportCommand,
     tryComplianceSectionPdfCommand,
     tryComplianceLetterCommand,
     tryComplianceExpiryAlertCommand,
     tryComplianceMissingDocsCommand,
+    tryComplianceAuditEvidencePackCommand,
+    tryComplianceDeptGapAnalysisCommand,
+    tryComplianceDocumentExplainCommand,
 } from './complianceChatActionService';
+import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual, wantsAgentTextOnlyExplain } from './agentAnalyticsPolicy';
 
 export type ComplianceWorkTool =
     | 'report'
@@ -34,9 +40,12 @@ export type ComplianceWorkTool =
     | 'status_mix'
     | 'overview'
     | 'missing_docs'
+    | 'audit_evidence_pack'
+    | 'dept_gap'
     | 'ncr_letter'
     | 'capa_letter'
     | 'certificate_of_compliance'
+    | 'document_explain'
     | 'qa';
 
 export type ComplianceWorkClassification = {
@@ -87,6 +96,10 @@ export function classifyComplianceWorkIntent(
         return { tool: 'qa', confidence: 0.9, reason: 'document_qa' };
     }
 
+    if (wantsAgentTextOnlyExplain(question, onCompliance ? COMPLIANCE_AGENT : phase3Agent)) {
+        return { tool: 'document_explain', confidence: 0.88, reason: 'text_explain' };
+    }
+
     const letter = detectComplianceLetter(question, onCompliance ? COMPLIANCE_AGENT : phase3Agent);
     if (letter === 'ncr') {
         return { tool: 'ncr_letter', confidence: 0.95, reason: 'ncr_letter' };
@@ -102,6 +115,12 @@ export function classifyComplianceWorkIntent(
         };
     }
 
+    if (detectComplianceAuditEvidencePack(question, onCompliance ? COMPLIANCE_AGENT : phase3Agent)) {
+        return { tool: 'audit_evidence_pack', confidence: 0.95, reason: 'audit_evidence_pack' };
+    }
+    if (detectComplianceDeptGapAnalysis(question, onCompliance ? COMPLIANCE_AGENT : phase3Agent)) {
+        return { tool: 'dept_gap', confidence: 0.95, reason: 'dept_gap' };
+    }
     if (detectComplianceReportCommand(question, onCompliance ? COMPLIANCE_AGENT : phase3Agent)) {
         return { tool: 'report', confidence: 0.95, reason: 'compliance_report' };
     }
@@ -116,31 +135,44 @@ export function classifyComplianceWorkIntent(
     }
 
     const viz = detectComplianceVisualIntent(question, onCompliance ? COMPLIANCE_AGENT : phase3Agent);
-    if (viz && ANALYTICS_TOOLS.has(viz as ComplianceWorkTool)) {
+    if (viz && ANALYTICS_TOOLS.has(viz as ComplianceWorkTool) && wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT)) {
         return { tool: viz as ComplianceWorkTool, confidence: 0.85, reason: `analytics:${viz}` };
     }
 
     if (onCompliance) {
         if (/\b(finding|findings|severity|ncr|non[- ]?conformance)\b/.test(q)) {
-            return { tool: 'findings', confidence: 0.8, reason: 'soft_findings' };
+            if (wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT)) {
+                return { tool: 'findings', confidence: 0.8, reason: 'soft_findings' };
+            }
         }
         if (/\b(expir|renewal|validity)\b/.test(q)) {
-            return { tool: 'expiry', confidence: 0.8, reason: 'soft_expiry' };
+            if (wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT)) {
+                return { tool: 'expiry', confidence: 0.8, reason: 'soft_expiry' };
+            }
+            return { tool: 'qa', confidence: 0.75, reason: 'expiry_text' };
         }
         if (/\b(certificate|cert\s+status|valid|expired)\b/.test(q)) {
-            return { tool: 'cert_status', confidence: 0.75, reason: 'soft_certs' };
+            if (wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT)) {
+                return { tool: 'cert_status', confidence: 0.75, reason: 'soft_certs' };
+            }
         }
         if (/\b(status|pass|fail|compliant)\b/.test(q)) {
-            return { tool: 'status_mix', confidence: 0.75, reason: 'soft_status' };
+            if (wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT)) {
+                return { tool: 'status_mix', confidence: 0.75, reason: 'soft_status' };
+            }
         }
         if (/\b(overview|dashboard|summary|what can you do)\b/.test(q)) {
-            return { tool: 'overview', confidence: 0.7, reason: 'soft_overview' };
+            if (wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT)) {
+                return { tool: 'overview', confidence: 0.7, reason: 'soft_overview' };
+            }
+            return { tool: 'qa', confidence: 0.65, reason: 'overview_text' };
         }
     }
 
     if (!onCompliance) return null;
 
     if (
+        wantsAgentAnalyticsVisual(question, COMPLIANCE_AGENT) &&
         /\b(compliance|audit|certificate|sop|inspection|iso|finding|regulatory)\b/.test(q)
     ) {
         return { tool: 'overview', confidence: 0.55, reason: 'compliance_fallback_overview' };
@@ -152,19 +184,24 @@ export function classifyComplianceWorkIntent(
 async function runAnalyticsTool(
     user: AuthUser,
     tool: ComplianceWorkTool,
-    documentIds?: string[]
+    documentIds?: string[],
+    question?: string
 ): Promise<ComplianceDynamicResult> {
     const intent = (tool === 'overview' ? 'overview' : tool) as ComplianceVisualIntent;
     const result = await executeComplianceAnalytics(user, intent, {
         documentIds: documentIds?.length ? documentIds : undefined,
     });
-    return {
-        handled: true,
-        tool,
-        answer: result.answer,
-        citations: result.citations,
-        visuals: result.visuals,
-    };
+    return applyAgentVisualPolicy(
+        {
+            handled: true,
+            tool,
+            answer: result.answer,
+            citations: result.citations,
+            visuals: result.visuals,
+        },
+        question || '',
+        COMPLIANCE_AGENT
+    );
 }
 
 /**
@@ -176,12 +213,13 @@ export async function tryComplianceDynamicAgent(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<ComplianceDynamicResult> {
-    const classified = classifyComplianceWorkIntent(params.question, params.phase3Agent);
-    if (!classified || classified.tool === 'qa') {
+    if (params.phase3Agent && params.phase3Agent !== COMPLIANCE_AGENT) {
         return { handled: false };
     }
 
-    if (params.phase3Agent !== COMPLIANCE_AGENT && classified.confidence < 0.8) {
+    const classified = classifyComplianceWorkIntent(params.question, params.phase3Agent);
+
+    if (!classified || classified.tool === 'qa') {
         return { handled: false };
     }
 
@@ -194,6 +232,10 @@ export async function tryComplianceDynamicAgent(params: {
 
     const tool = classified.tool;
 
+    if (tool === 'document_explain') {
+        const r = await tryComplianceDocumentExplainCommand({ ...params, phase3Agent: COMPLIANCE_AGENT });
+        if (r.handled) return { ...r, tool, visuals: [] };
+    }
     if (tool === 'report') {
         const r = await tryComplianceReportCommand({ ...params, phase3Agent: COMPLIANCE_AGENT });
         if (r.handled) return { ...r, tool };
@@ -207,6 +249,20 @@ export async function tryComplianceDynamicAgent(params: {
     }
     if (tool === 'ncr_letter' || tool === 'capa_letter' || tool === 'certificate_of_compliance') {
         const r = await tryComplianceLetterCommand({ ...params, phase3Agent: COMPLIANCE_AGENT });
+        if (r.handled) return { ...r, tool };
+    }
+    if (tool === 'audit_evidence_pack') {
+        const r = await tryComplianceAuditEvidencePackCommand({
+            ...params,
+            phase3Agent: COMPLIANCE_AGENT,
+        });
+        if (r.handled) return { ...r, tool };
+    }
+    if (tool === 'dept_gap') {
+        const r = await tryComplianceDeptGapAnalysisCommand({
+            ...params,
+            phase3Agent: COMPLIANCE_AGENT,
+        });
         if (r.handled) return { ...r, tool };
     }
     if (tool === 'missing_docs') {
@@ -234,7 +290,7 @@ export async function tryComplianceDynamicAgent(params: {
             });
             if (r.handled) return { ...r, tool };
         }
-        return runAnalyticsTool(params.user, tool, params.documentIds);
+        return runAnalyticsTool(params.user, tool, params.documentIds, params.question);
     }
 
     return { handled: false };

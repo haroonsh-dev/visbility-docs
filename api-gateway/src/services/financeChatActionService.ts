@@ -9,10 +9,18 @@ import {
     loadFinanceRecords,
     type FinanceRecord,
     applyPaymentsToInvoices,
+    convertFinanceRecordsToCurrency,
     convertRecordsToBase,
+    DEFAULT_FX_RATES_TO_USD,
     dedupeFinanceRecords,
     chartAmount,
     isPaymentRecord,
+    isSpreadsheetFilename,
+    extractDocumentNameTokens,
+    matchDocumentIdsByNameTokens,
+    resolveFinanceDocumentIdsFromQuestion,
+    extractExplicitFilenameFromQuestion,
+    detectCurrencyPreference,
 } from './financeAnalyticsService';
 import {
     applyDocumentTypeStorage,
@@ -25,6 +33,19 @@ import { requireAllowedAgent } from './planService';
 import logger from '../utils/logger';
 import { generateComplianceReportPdf } from './aiServiceClient';
 import { getOrgFinanceSettings } from './orgFinanceSettingsService';
+import { wantsAgentAnalyticsVisual, wantsAgentTextOnlyExplain } from './agentAnalyticsPolicy';
+import {
+    cleanAgentMarkdown,
+    formatAgentDivider,
+    formatAgentFooter,
+    formatAgentHeading,
+    formatAgentIntro,
+    formatDate,
+    formatLabeledBullets,
+    formatMoney,
+    formatSection,
+    formatStatusLabel,
+} from './agentResponseFormat';
 
 export type FinanceChatCitation = {
     documentId: string;
@@ -889,3 +910,576 @@ export async function tryFinanceReportCommand(params: {
         ],
     };
 }
+
+export function detectFinanceReconciliation(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== FINANCE_AGENT) return false;
+    const q = question.toLowerCase();
+    return (
+        q.includes('reconcil') ||
+        q.includes('duplicate invoice') ||
+        q.includes('duplicate') ||
+        q.includes('ap audit') ||
+        q.includes('audit invoice') ||
+        q.includes('discrepancy')
+    );
+}
+
+export function detectFinanceCashOutflow(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== FINANCE_AGENT) return false;
+    const q = question.toLowerCase();
+    return (
+        q.includes('cash outflow') ||
+        q.includes('outflow') ||
+        q.includes('cash forecast') ||
+        q.includes('upcoming payment') ||
+        q.includes('what do we owe') ||
+        q.includes('payable forecast')
+    );
+}
+
+export function detectFinanceSpreadsheetTotalAsk(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== FINANCE_AGENT) return false;
+    if (wantsAgentAnalyticsVisual(question, FINANCE_AGENT)) return false;
+    const q = question
+        .toLowerCase()
+        .replace(/\bgran\b/g, 'grand')
+        .replace(/\btotoals?\b/g, 'total');
+    if (/\bpkr\b/.test(q) && /\b(not|no)\b/.test(q) && /\b(inr|usd|rupee|dollar|₹)\b/.test(q)) {
+        return true;
+    }
+    if (
+        /\b(total sum|sum of all|grand totals?|exact sum|precise total|exact total|combined total|aggregate(?:d)? total|vendor.?related|financial exposure)\b/.test(
+            q
+        )
+    ) {
+        return true;
+    }
+    if (/\b(aggregat|grand totals?|vendor totals?|total.*vendors?|vendors?.*total)\b/.test(q)) {
+        return true;
+    }
+    if (/\bonly\s+(the\s+)?(grand\s+)?totals?\b/.test(q)) {
+        return true;
+    }
+    if (/\btotal\s+amounts?\b/.test(q)) {
+        return true;
+    }
+    if (/\b(total|sum)\b/.test(q) && /\b(all|every)\b/.test(q) && /\b(invoice|amount|pkr|usd|client|vendor)\b/.test(q)) {
+        return true;
+    }
+    if (/\b(how much|what is the total|what's the total)\b/.test(q) && /\b(invoice|spreadsheet|xlsx|csv)\b/.test(q)) {
+        return true;
+    }
+    if (/\b(total|sum)\b/.test(q) && /\b(clients?|customers?|vendors?|invoices?)\b/.test(q)) {
+        return true;
+    }
+    if (/\bin pkr\b/.test(q) && /\b(total|sum|amount|invoice|vendor|client)\b/.test(q)) {
+        return true;
+    }
+    return false;
+}
+
+export function detectFinanceDocumentExplain(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== FINANCE_AGENT) return false;
+    if (detectFinanceSpreadsheetTotalAsk(question, phase3Agent)) return false;
+    if (wantsAgentAnalyticsVisual(question, FINANCE_AGENT)) return false;
+    if (detectFinanceReconciliation(question, phase3Agent)) return false;
+    if (detectFinanceCashOutflow(question, phase3Agent)) return false;
+    if (!wantsAgentTextOnlyExplain(question, FINANCE_AGENT)) return false;
+    return /\b(invoice|vendor|client|payable|receivable|expense|finance|payment|bill|po)\b/i.test(
+        question
+    );
+}
+
+function formatFinanceRecordExplain(rec: FinanceRecord): string {
+    const out = rec.outstanding != null ? rec.outstanding : rec.total;
+    const paid = getRecordPaymentStatus(rec);
+    const statusLabel =
+        paid === 'PAID' ? 'Paid' : paid === 'PARTIAL' ? 'Partially paid' : 'Unpaid';
+
+    const meta = formatLabeledBullets([
+        { label: 'Vendor', value: rec.vendor || 'Not specified' },
+        { label: 'Client', value: rec.client || 'Not specified' },
+        { label: 'Total', value: formatMoney(rec.total, rec.currency) },
+        { label: 'Outstanding', value: formatMoney(out, rec.currency) },
+        { label: 'Invoice date', value: formatDate(rec.invoiceDate) },
+        { label: 'Due date', value: formatDate(rec.dueDate) },
+        { label: 'Payment status', value: statusLabel },
+        { label: 'Invoice number', value: rec.invoiceNumber || 'Not specified' },
+        { label: 'PO number', value: rec.poNumber || 'Not specified' },
+        { label: 'Document type', value: formatStatusLabel(rec.classification || 'invoice') },
+    ]);
+
+    let md = `${formatAgentHeading(rec.filename, 3)}\n\n${meta}`;
+
+    const summaryParts: string[] = [];
+    if (rec.paidApplied && rec.paidApplied > 0) {
+        summaryParts.push(
+            `${formatMoney(rec.paidApplied, rec.currency)} applied in matched payments.`
+        );
+    }
+    if (out > 0) {
+        summaryParts.push(`${formatMoney(out, rec.currency)} remains outstanding.`);
+    } else if (rec.total > 0) {
+        summaryParts.push('This record appears fully settled based on matched payments.');
+    }
+    if (summaryParts.length) {
+        md += `\n\n${formatSection('Summary', summaryParts.join(' '))}`;
+    }
+
+    return md;
+}
+
+function markdownMoneyTable(headers: [string, string], rows: Array<[string, string]>): string {
+    const head = `| ${headers[0]} | ${headers[1]} |`;
+    const sep = `| --- | ---: |`;
+    const body = rows.map(([name, amount]) => `| ${name.replace(/\|/g, '\\|')} | ${amount} |`);
+    return [head, sep, ...body].join('\n');
+}
+
+function totalsAskFocus(question: string): {
+    onlyTotal: boolean;
+    wantClients: boolean;
+    wantVendors: boolean;
+    wantStatus: boolean;
+} {
+    const q = question
+        .toLowerCase()
+        .replace(/\bgran\b/g, 'grand')
+        .replace(/\btotoals?\b/g, 'total');
+    const wantClients = /\b(clients?|customers?)\b/.test(q);
+    const wantVendors = /\b(vendors?|suppliers?)\b/.test(q);
+    const wantStatus = /\b(status|paid|pending|overdue|cancelled|canceled)\b/.test(q);
+    const onlyTotal =
+        /\bonly\b/.test(q) ||
+        (/^\s*(the\s+)?(grand\s+)?totals?\s*[.?!]*\s*$/.test(q) && !wantClients && !wantVendors);
+    return {
+        onlyTotal,
+        wantClients,
+        wantVendors,
+        wantStatus: wantStatus || (!onlyTotal && !wantClients && !wantVendors),
+    };
+}
+
+function buildComputedFinanceTotalsAnswer(
+    records: FinanceRecord[],
+    sourceLabel: string,
+    question = ''
+): string {
+    const { records: deduped } = dedupeFinanceRecords(records);
+    const rows = deduped.filter((r) => r.recordKind !== 'payment' && r.total > 0);
+    if (!rows.length) {
+        return `I couldn't find invoice amounts in ${sourceLabel}. Reprocess the file if extraction is still running.`;
+    }
+
+    const currency = rows[0]?.currency || 'PKR';
+    const grand = rows.reduce((s, r) => s + r.total, 0);
+    const grandLabel = formatMoney(grand, currency);
+    const focus = totalsAskFocus(question);
+
+    const byStatus = new Map<string, number>();
+    const byVendor = new Map<string, number>();
+    const byClient = new Map<string, number>();
+    for (const r of rows) {
+        const status = formatStatusLabel(r.paymentStatus || 'Unknown');
+        byStatus.set(status, (byStatus.get(status) || 0) + r.total);
+        const vendor = r.vendor.trim() || 'Unknown vendor';
+        byVendor.set(vendor, (byVendor.get(vendor) || 0) + r.total);
+        const client = r.client.trim() || 'Unknown client';
+        byClient.set(client, (byClient.get(client) || 0) + r.total);
+    }
+
+    const knownClients = [...byClient.keys()].filter((k) => !/^unknown/i.test(k));
+    const knownVendors = [...byVendor.keys()].filter((k) => !/^unknown/i.test(k));
+
+    const lead = `The grand total in ${sourceLabel} is **${grandLabel}** across **${rows.length}** invoice row(s).`;
+    if (focus.onlyTotal) {
+        return cleanAgentMarkdown(lead);
+    }
+
+    const parts: string[] = [lead];
+
+    const showClients = focus.wantClients && knownClients.length > 0;
+    const showVendors = focus.wantVendors && knownVendors.length > 0;
+    const showStatus = focus.wantStatus && byStatus.size > 0;
+
+    if (showStatus) {
+        const statusRows = [...byStatus.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([status, total]) => [status, formatMoney(total, currency)] as [string, string]);
+        parts.push('', '**By status**', '', markdownMoneyTable(['Status', 'Total'], statusRows));
+    }
+
+    if (showVendors) {
+        const vendorRows = [...byVendor.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 40)
+            .map(([vendor, total]) => [vendor, formatMoney(total, currency)] as [string, string]);
+        parts.push('', '**By vendor**', '', markdownMoneyTable(['Vendor', 'Total'], vendorRows));
+    }
+
+    if (showClients) {
+        const clientRows = [...byClient.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .filter(([name]) => !/^unknown/i.test(name) || knownClients.length === 0)
+            .slice(0, 50)
+            .map(([client, total]) => [client, formatMoney(total, currency)] as [string, string]);
+        parts.push('', '**By client**', '', markdownMoneyTable(['Client', 'Total'], clientRows));
+    }
+
+    if (showClients && knownClients.length === 0) {
+        parts.push('', '_No client names were extracted on these rows._');
+    }
+
+    return cleanAgentMarkdown(parts.join('\n'));
+}
+
+export async function tryFinanceSpreadsheetTotalCommand(params: {
+    user: AuthUser;
+    question: string;
+    phase3Agent?: string;
+    documentIds?: string[];
+}): Promise<FinanceChatActionResult> {
+    if (!detectFinanceSpreadsheetTotalAsk(params.question, params.phase3Agent)) {
+        return { handled: false };
+    }
+
+    let scopedDocIds = params.documentIds;
+    const explicitName = extractExplicitFilenameFromQuestion(params.question);
+    if (explicitName) {
+        const named = await resolveFinanceDocumentIdsFromQuestion(params.user, params.question, {
+            preferIds: params.documentIds,
+        });
+        if (named?.length) scopedDocIds = named.slice(0, 1);
+    }
+
+    let records = await loadFinanceRecords(params.user, { documentIds: scopedDocIds });
+    if (!records.length) {
+        return {
+            handled: true,
+            answer:
+                'No finance rows in scope. Select your spreadsheet or invoices in Document scope, then ask again for the total.',
+            citations: [],
+        };
+    }
+
+    const preferred = detectCurrencyPreference(params.question);
+    let convertNote = '';
+    if (preferred === 'PKR') {
+        const conv = convertFinanceRecordsToCurrency(records, 'PKR', DEFAULT_FX_RATES_TO_USD);
+        records = conv.records.filter((r) => (r.currency || '').toUpperCase() === 'PKR');
+        if (conv.converted > 0) {
+            convertNote = `USD amounts converted to PKR at 1 USD = ${DEFAULT_FX_RATES_TO_USD.PKR} PKR. INR/₹ is not used.`;
+        } else {
+            convertNote = 'All amounts shown in PKR as recorded in the files. INR/₹ is not used.';
+        }
+    } else if (preferred === 'USD') {
+        const conv = convertFinanceRecordsToCurrency(records, 'USD', DEFAULT_FX_RATES_TO_USD);
+        records = conv.records.filter((r) => (r.currency || '').toUpperCase() === 'USD');
+    }
+
+    const fileIds = [...new Set(records.map((r) => r.documentId))];
+    const sourceNames = [...new Set(records.map((r) => r.filename))];
+    const sourceLabel =
+        sourceNames.length === 1
+            ? `\`${sourceNames[0]}\``
+            : `**${fileIds.length}** scoped finance file(s)`;
+
+    let answer = buildComputedFinanceTotalsAnswer(records, sourceLabel, params.question);
+    if (convertNote) {
+        answer += `\n\n_${convertNote}_`;
+    }
+    answer = answer.replace(/₹/g, 'PKR ').replace(/\bINR\b/g, 'PKR');
+    const citations = [...new Map(records.map((r) => [r.documentId, r])).values()]
+        .slice(0, 12)
+        .map((r) => ({
+            documentId: r.documentId,
+            filename: r.filename,
+            documentType: r.classification,
+            phase3Agent: FINANCE_AGENT,
+        }));
+
+    return { handled: true, answer, citations };
+}
+
+export async function tryFinanceDocumentExplainCommand(params: {
+    user: AuthUser;
+    question: string;
+    phase3Agent?: string;
+    documentIds?: string[];
+}): Promise<FinanceChatActionResult> {
+    if (!detectFinanceDocumentExplain(params.question, params.phase3Agent)) {
+        return { handled: false };
+    }
+
+    const records = await loadFinanceRecords(params.user, { documentIds: params.documentIds });
+    if (!records.length) {
+        return {
+            handled: true,
+            answer:
+                'No finance documents in scope. Select invoices or financial files in Document scope, then ask again.',
+            citations: [],
+        };
+    }
+
+    let targets = records;
+    const nameTokens = extractDocumentNameTokens(params.question);
+    if (nameTokens.length) {
+        const matchedIds = matchDocumentIdsByNameTokens(
+            records.map((r) => ({ documentId: r.documentId, originalFilename: r.filename })),
+            params.question
+        );
+        if (matchedIds.length) {
+            const idSet = new Set(matchedIds);
+            targets = records.filter((r) => idSet.has(r.documentId));
+        }
+    }
+
+    const q = params.question.toLowerCase();
+    const vendorNeedle = targets.length > 1 ? q.match(/\bvendor\s+([a-z0-9\s.-]{2,40})/i)?.[1]?.trim() : '';
+    if (vendorNeedle) {
+        const filtered = targets.filter((r) => r.vendor.toLowerCase().includes(vendorNeedle));
+        if (filtered.length) targets = filtered;
+    }
+
+    if (targets.length > 1 && nameTokens.length === 0 && !vendorNeedle) {
+        const preview = targets.slice(0, 5).map((r, i) => {
+            const out = r.outstanding != null ? r.outstanding : r.total;
+            return `${i + 1}. **${r.filename}** — ${r.vendor || 'Unknown vendor'} · ${formatMoney(out, r.currency)} outstanding`;
+        });
+        return {
+            handled: true,
+            answer: cleanAgentMarkdown(
+                [
+                    formatAgentHeading('Finance overview', 2),
+                    '',
+                    `You have **${targets.length}** finance record(s) in scope. Name a file or vendor to focus on one record.`,
+                    '',
+                    ...preview,
+                    formatAgentFooter(
+                        'Example: “explain invoice for Acme Corp” or “overview of vendor spend for TechSupply”.'
+                    ),
+                ].join('\n')
+            ),
+            citations: targets.slice(0, 5).map((r) => ({
+                documentId: r.documentId,
+                filename: r.filename,
+                documentType: r.classification,
+                phase3Agent: FINANCE_AGENT,
+            })),
+        };
+    }
+
+    const chosen = targets.slice(0, 3);
+    let md = formatAgentIntro([
+        formatAgentHeading('Finance overview', 2),
+        chosen.length === 1
+            ? 'Here is an overview of the finance record in your scope:'
+            : `Here is an overview of **${chosen.length}** finance record(s) in your scope:`,
+        formatAgentDivider(),
+    ]);
+
+    chosen.forEach((rec, i) => {
+        md += `\n\n${formatFinanceRecordExplain(rec)}`;
+        if (i < chosen.length - 1) md += `\n\n${formatAgentDivider()}`;
+    });
+
+    md += formatAgentFooter(
+        'Ask for a chart (vendor spend, aging, monthly trend) or say “reconciliation audit” for a full AP review.'
+    );
+
+    return {
+        handled: true,
+        answer: cleanAgentMarkdown(md),
+        citations: chosen.map((r) => ({
+            documentId: r.documentId,
+            filename: r.filename,
+            documentType: r.classification,
+            phase3Agent: FINANCE_AGENT,
+        })),
+    };
+}
+
+function getRecordPaymentStatus(r: FinanceRecord): 'PAID' | 'PARTIAL' | 'UNPAID' {
+    const out = r.outstanding != null ? r.outstanding : r.total;
+    if (out <= 0) return 'PAID';
+    if (r.paidApplied && r.paidApplied > 0) return 'PARTIAL';
+    return 'UNPAID';
+}
+
+export async function tryFinanceReconciliationCommand(params: {
+    user: AuthUser;
+    question: string;
+    phase3Agent?: string;
+    documentIds?: string[];
+}): Promise<FinanceChatActionResult> {
+    if (!detectFinanceReconciliation(params.question, params.phase3Agent)) {
+        return { handled: false };
+    }
+
+    const records = await loadFinanceRecords(params.user, { documentIds: params.documentIds });
+    if (!records.length) {
+        return {
+            handled: true,
+            answer: 'No financial records found in your library to audit or reconcile.',
+            citations: [],
+        };
+    }
+
+    const invoiceNumberMap = new Map<string, FinanceRecord[]>();
+    const amountMap = new Map<number, FinanceRecord[]>();
+    const flaggedDuplicates: { record: FinanceRecord; reason: string }[] = [];
+
+    for (const rec of records) {
+        if (rec.invoiceNumber) {
+            const list = invoiceNumberMap.get(rec.invoiceNumber) || [];
+            list.push(rec);
+            invoiceNumberMap.set(rec.invoiceNumber, list);
+        }
+        if (rec.total && rec.total > 0) {
+            const list = amountMap.get(rec.total) || [];
+            list.push(rec);
+            amountMap.set(rec.total, list);
+        }
+    }
+
+    // Flag duplicates
+    for (const [invNum, list] of invoiceNumberMap.entries()) {
+        if (list.length > 1) {
+            for (const r of list) {
+                flaggedDuplicates.push({ record: r, reason: `Duplicate Invoice Number (#${invNum})` });
+            }
+        }
+    }
+
+    for (const [amt, list] of amountMap.entries()) {
+        if (list.length > 1) {
+            for (const r of list) {
+                if (!flaggedDuplicates.some((d) => d.record.documentId === r.documentId)) {
+                    flaggedDuplicates.push({ record: r, reason: `Matching Duplicate Amount (${r.currency || 'USD'} ${amt})` });
+                }
+            }
+        }
+    }
+
+    let markdown = `${formatAgentHeading('AP reconciliation audit', 2)}\n\n`;
+    markdown += `Scanned **${records.length}** financial document(s):\n\n`;
+    markdown += `- **Flagged discrepancies / duplicates:** ${flaggedDuplicates.length}\n`;
+    markdown += `- **Clean records:** ${records.length - flaggedDuplicates.length}\n\n`;
+
+    if (flaggedDuplicates.length) {
+        markdown += `**Flagged items**\n\n`;
+        markdown += `| Document | Invoice # | Party | Amount | Warning |\n`;
+        markdown += `| --- | --- | --- | --- | --- |\n`;
+        for (const flag of flaggedDuplicates) {
+            const r = flag.record;
+            markdown += `| **${r.filename}** | ${r.invoiceNumber || 'N/A'} | ${r.vendor || r.client || 'N/A'} | ${formatMoney(r.total || 0, r.currency || 'USD')} | ${flag.reason} |\n`;
+        }
+        markdown += `\n`;
+    } else {
+        markdown += `No duplicate invoice numbers or identical amount mismatches detected.\n\n`;
+    }
+
+    markdown += `**AP settlement summary**\n\n`;
+    markdown += `| Document | Invoice date | Vendor | Status | Outstanding |\n`;
+    markdown += `| --- | --- | --- | --- | --- |\n`;
+    for (const r of records.slice(0, 15)) {
+        const pStatus = getRecordPaymentStatus(r);
+        const statusBadge =
+            pStatus === 'PAID' ? 'Paid' : pStatus === 'PARTIAL' ? 'Partially paid' : 'Unpaid';
+        markdown += `| **${r.filename}** | ${formatDate(r.invoiceDate)} | ${r.vendor || 'N/A'} | ${statusBadge} | ${formatMoney(r.outstanding != null ? r.outstanding : r.total || 0, r.currency || 'USD')} |\n`;
+    }
+
+    const citations = records.map((r: FinanceRecord) => ({
+        documentId: r.documentId,
+        filename: r.filename,
+        documentType: r.classification || 'invoice',
+        phase3Agent: FINANCE_AGENT,
+    }));
+
+    return {
+        handled: true,
+        answer: markdown,
+        citations,
+    };
+}
+
+export async function tryFinanceCashOutflowCommand(params: {
+    user: AuthUser;
+    question: string;
+    phase3Agent?: string;
+    documentIds?: string[];
+}): Promise<FinanceChatActionResult> {
+    if (!detectFinanceCashOutflow(params.question, params.phase3Agent)) {
+        return { handled: false };
+    }
+
+    const records = await loadFinanceRecords(params.user, { documentIds: params.documentIds });
+    if (!records.length) {
+        return {
+            handled: true,
+            answer: 'No financial records found in your library to project cash outflows.',
+            citations: [],
+        };
+    }
+
+    const now = new Date();
+    let dueNext7 = 0;
+    let dueNext30 = 0;
+    let dueNext60 = 0;
+    let dueLater = 0;
+    let overdue = 0;
+    let currency = 'USD';
+
+    for (const r of records) {
+        if (getRecordPaymentStatus(r) === 'PAID') continue;
+        const dueAmt = r.outstanding != null ? r.outstanding : r.total || 0;
+        if (!dueAmt) continue;
+
+        if (r.currency) currency = r.currency;
+
+        if (r.dueDate) {
+            const due = new Date(r.dueDate);
+            const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays < 0) {
+                overdue += dueAmt;
+            } else if (diffDays <= 7) {
+                dueNext7 += dueAmt;
+            } else if (diffDays <= 30) {
+                dueNext30 += dueAmt;
+            } else if (diffDays <= 60) {
+                dueNext60 += dueAmt;
+            } else {
+                dueLater += dueAmt;
+            }
+        } else {
+            dueNext30 += dueAmt;
+        }
+    }
+
+    const totalOutflow = overdue + dueNext7 + dueNext30 + dueNext60 + dueLater;
+
+    let markdown = `${formatAgentHeading(`Cash outflow forecast (${currency})`, 2)}\n\n`;
+    markdown += `Total projected payable outflow: **${formatMoney(totalOutflow, currency)}**\n\n`;
+
+    markdown += `| Time window | Due amount | Priority |\n`;
+    markdown += `| --- | --- | --- |\n`;
+    markdown += `| **Past due / overdue** | ${formatMoney(overdue, currency)} | Immediate attention |\n`;
+    markdown += `| **Next 7 days** | ${formatMoney(dueNext7, currency)} | High priority |\n`;
+    markdown += `| **Next 30 days** | ${formatMoney(dueNext30, currency)} | Scheduled |\n`;
+    markdown += `| **31–60 days** | ${formatMoney(dueNext60, currency)} | Upcoming |\n`;
+    markdown += `| **Beyond 60 days** | ${formatMoney(dueLater, currency)} | Long-term |\n`;
+
+    const citations = records.map((r: FinanceRecord) => ({
+        documentId: r.documentId,
+        filename: r.filename,
+        documentType: r.classification || 'invoice',
+        phase3Agent: FINANCE_AGENT,
+    }));
+
+    return {
+        handled: true,
+        answer: markdown,
+        citations,
+    };
+}
+

@@ -4,9 +4,10 @@
  */
 import Document from '../models/Document';
 import { AuthUser, buildDocumentFilter } from './accessScope';
-import { DOC_TYPE_TO_AGENT, inferDocumentTypeFromFilename } from './documentStorage';
+import { DOC_TYPE_TO_AGENT, inferDocumentTypeFromFilename, resolveCanonicalAgent } from './documentStorage';
 import type { AgentChatVisualResult, ChatVisualSpec } from '../types/chatVisuals';
 import { executeFinanceAnalytics, wantsVisualization } from './financeChatVisualService';
+import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual } from './agentAnalyticsPolicy';
 import {
     FINANCE_AGENT,
     FINANCE_DOC_TYPES,
@@ -20,6 +21,7 @@ import {
     loadFinanceRecords,
     createFinanceExtractionCache,
     resolveFinancePortfolioDocumentIds,
+    detectCurrencyPreference,
 } from './financeAnalyticsService';
 import { canonicalizePartyName } from './financePartyNormalize';
 import { COMPLIANCE_AGENT, COMPLIANCE_DOC_TYPES } from './complianceAnalyticsService';
@@ -43,6 +45,8 @@ import {
 import { logAnalyticsResolve } from './analyticsObservability';
 import { getSessionFocusDocumentIds } from './chatFocusStore';
 import { mapFinanceIntentToPanelView, parseFinanceIntent, wantsPortfolioFinanceScope, wantsMonthlyTrendQuestion } from './financeIntent';
+import { executeLegalMissingDataAnalytics } from './legalAnalyticsService';
+import { detectLegalMissingDataAsk } from './legalChatActionService';
 
 async function executeHrCharts(
     user: AuthUser,
@@ -198,14 +202,25 @@ function resolveDocType(doc: {
     classification?: string | null;
     originalFilename?: string;
 }): string {
+    const fromName = inferDocumentTypeFromFilename(doc.originalFilename || '');
     const c = String(doc.classification || '')
         .trim()
         .toLowerCase()
         .replace(/[\s-]+/g, '_');
-    if (c && c !== 'other') {
-        if (c === 'cv' || c === 'curriculum_vitae') return 'resume';
-        return c;
+    const fromClass = c === 'cv' || c === 'curriculum_vitae' ? 'resume' : c;
+
+    if (fromName && fromName !== 'other') {
+        const nameAgent = DOC_TYPE_TO_AGENT[fromName];
+        const classAgent =
+            fromClass && fromClass !== 'other' ? DOC_TYPE_TO_AGENT[fromClass] : undefined;
+        if (nameAgent && nameAgent !== 'other_agent' && classAgent && nameAgent !== classAgent) {
+            return fromName;
+        }
+        if (fromClass && fromClass !== 'other') return fromClass;
+        return fromName;
     }
+    if (fromClass && fromClass !== 'other') return fromClass;
+    if (/\.(xlsx?|csv|tsv|ods)$/i.test(doc.originalFilename || '')) return 'invoice';
     return inferDocumentTypeFromFilename(doc.originalFilename || '') || 'other';
 }
 
@@ -242,6 +257,21 @@ export function agentForDomain(domain: AnalyticsDomain): string {
     }
 }
 
+/** Keep analytics scoped to the agent the user selected in chat. */
+export function filterScopedDocsByAgent(scoped: ScopedDoc[], phase3Agent: string): ScopedDoc[] {
+    return scoped.filter((d) => d.agentId === phase3Agent);
+}
+
+export async function filterDocumentIdsForAgent(
+    user: AuthUser,
+    documentIds: string[] | undefined,
+    phase3Agent?: string
+): Promise<string[] | undefined> {
+    if (!documentIds?.length || !phase3Agent) return documentIds;
+    const scoped = await loadScopedDocuments(user, documentIds);
+    return filterScopedDocsByAgent(scoped, phase3Agent).map((d) => d.documentId);
+}
+
 export async function loadScopedDocuments(
     user: AuthUser,
     documentIds?: string[],
@@ -259,7 +289,7 @@ export async function loadScopedDocuments(
     }
 
     const docs = await Document.find(query)
-        .select('documentId originalFilename classification pythonDocumentId')
+        .select('documentId originalFilename classification pythonDocumentId metadata')
         .sort({ createdAt: -1 })
         .limit(maxDocs)
         .lean();
@@ -267,12 +297,17 @@ export async function loadScopedDocuments(
     return docs.map((d) => {
         const classification = resolveDocType(d);
         const domain = domainForDocType(classification);
+        const meta = d.metadata as { phase3Agent?: string; naturalAgent?: string } | undefined;
         return {
             documentId: d.documentId,
             originalFilename: d.originalFilename,
             classification,
             domain,
-            agentId: agentForDomain(domain),
+            agentId: resolveCanonicalAgent({
+                originalFilename: d.originalFilename,
+                classification: d.classification,
+                metadata: meta,
+            }),
             pythonDocumentId: d.pythonDocumentId,
         };
     });
@@ -318,13 +353,17 @@ function detectQuestionDomains(question: string): AnalyticsDomain[] {
     return found;
 }
 
-function wantsChart(question: string): boolean {
+export function wantsChartQuestion(question: string): boolean {
     return (
         wantsVisualization(question) ||
-        /\b(chart|graph|visual|plot|breakdown|analytics|dashboard|show me|list items|line items|score|ranking|expiry|findings)\b/i.test(
+        /\b(chart|graph|graphs|visual|visuals|visuali[sz]e|plot|plots|dashboard|analytics)\b/i.test(
             question
         )
     );
+}
+
+function wantsChart(question: string): boolean {
+    return wantsChartQuestion(question);
 }
 
 /** Prefer question intent; fall back to domains present in scope. */
@@ -357,7 +396,13 @@ export function planAnalyticsRun(params: {
     else if (params.phase3Agent === COMPLIANCE_AGENT) agentDomain = 'compliance';
     else if (params.phase3Agent === 'procurement_agent') agentDomain = 'procurement';
     else if (params.phase3Agent === 'legal_agent') agentDomain = 'legal';
+    else if (params.phase3Agent === 'other_agent') agentDomain = 'generic';
     else if (agentHint && agentHint !== 'generic') agentDomain = agentHint;
+
+    // Selected agent wins — never fan out to other agents' document types.
+    if (agentDomain) {
+        return byDomain.has(agentDomain) ? [agentDomain] : [];
+    }
 
     const ordered: AnalyticsDomain[] = [];
     const add = (d: AnalyticsDomain) => {
@@ -365,7 +410,6 @@ export function planAnalyticsRun(params: {
     };
 
     for (const d of fromQuestion) add(d);
-    if (agentDomain) add(agentDomain);
 
     // Scope-first: every domain present in selection
     for (const d of byDomain.keys()) add(d);
@@ -504,6 +548,18 @@ async function executeGenericDomainAnalytics(
     question: string
 ): Promise<{ visuals: ChatVisualSpec[]; answer: string; citations: AgentChatVisualResult['citations'] }> {
     const agentId = agentForDomain(domain);
+
+    if (domain === 'legal' && detectLegalMissingDataAsk(question)) {
+        const missing = await executeLegalMissingDataAnalytics(user, {
+            documentIds: docs.map((d) => d.documentId),
+        });
+        return {
+            visuals: missing.visuals,
+            answer: missing.answer,
+            citations: missing.citations,
+        };
+    }
+
     const mix = await buildDocTypeMixVisual(docs, agentId);
     const citations = docs.slice(0, 12).map((d) => ({
         documentId: d.documentId,
@@ -651,21 +707,25 @@ async function executeGenericDomainAnalytics(
         });
     }
     if (domain === 'legal' && clauseRows.length) {
-        visuals.unshift({
-            id: `legal_clause_${Date.now()}`,
-            agentId,
-            kind: 'pie',
-            title: 'Clause type mix',
-            subtitle: `${clauseRows.reduce((n, r) => n + r.count, 0)} clause(s)`,
-            categoryKey: 'type',
-            series: [{ key: 'count', label: 'Clauses', color: '#7c3aed' }],
-            data: clauseRows
-                .sort((a, b) => b.count - a.count)
-                .slice(0, 12)
-                .map((r) => ({ type: r.type, count: r.count })),
-            sourceDocumentIds: docs.map((d) => d.documentId),
-            footer: 'From clauses / key_clauses extraction fields.',
-        });
+        const distinctTypes = new Set(clauseRows.map((r) => r.type));
+        const genericOnly = distinctTypes.size === 1 && distinctTypes.has('clause');
+        if (!genericOnly && distinctTypes.size >= 2) {
+            visuals.unshift({
+                id: `legal_clause_${Date.now()}`,
+                agentId,
+                kind: 'pie',
+                title: 'Clause type mix',
+                subtitle: `${clauseRows.reduce((n, r) => n + r.count, 0)} clause(s)`,
+                categoryKey: 'type',
+                series: [{ key: 'count', label: 'Clauses', color: '#7c3aed' }],
+                data: clauseRows
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 12)
+                    .map((r) => ({ type: r.type, count: r.count })),
+                sourceDocumentIds: docs.map((d) => d.documentId),
+                footer: 'From clauses / key_clauses extraction fields.',
+            });
+        }
     }
     if (domain === 'procurement' && poInvoiceRows.length) {
         visuals.unshift({
@@ -759,7 +819,16 @@ async function executeGenericDomainAnalytics(
 
     const answer =
         docs.length === 1
-            ? `Chart for **${docs[0].originalFilename}** only (${domainLabel}). Open Analytics for the graph.`
+            ? [
+                  `**${docs[0].originalFilename}** (${domainLabel})`,
+                  amountRows.length
+                      ? `Extracted total: **${Math.round(amountRows[0].amount * 100) / 100}** where available.`
+                      : riskRows.length
+                        ? `**${riskRows[0].count}** risk flag(s) extracted from this agreement.`
+                        : clauseRows.length
+                          ? `**${clauseRows.reduce((n, c) => n + c.count, 0)}** clause reference(s) extracted.`
+                          : `Document type: **${docs[0].classification.replace(/_/g, ' ')}**.`,
+              ].join('\n\n')
             : [
                   `Here’s what’s in your **${docs.length}** scoped ${domainLabel} file(s).`,
                   visuals.length > 1
@@ -771,8 +840,9 @@ async function executeGenericDomainAnalytics(
                                   : ''
                         }.`
                       : `I charted document types in scope. If you expected amounts, open a file and reprocess so totals are extracted.`,
-                  `Charts are in the analytics panel.`,
-              ].join(' ');
+              ]
+                  .filter(Boolean)
+                  .join(' ');
 
     return { visuals, answer, citations };
 }
@@ -797,10 +867,10 @@ function conversationalFinanceAnswer(
     const lead =
         visualTitles.length > 0
             ? opts?.singleDoc && names.length === 1
-                ? `Chart for ${fileBit}. Showing: ${visualTitles.join(', ')}.`
-                : `Portfolio view across ${fileBit}. Showing: ${visualTitles.join(', ')}.`
+                ? `Analytics for ${fileBit} — ${visualTitles.join(', ')}.`
+                : `Portfolio view across ${fileBit} — ${visualTitles.join(', ')}.`
             : `I looked at ${fileBit}.`;
-    if (!cleaned) return `${lead} Open Analytics for the graphs.`;
+    if (!cleaned) return `${lead}`;
     return `${lead}\n\n${cleaned}`;
 }
 
@@ -844,7 +914,7 @@ export async function runDynamicAnalytics(params: {
     force?: boolean;
 }): Promise<DynamicAnalyticsResult> {
     const started = Date.now();
-    const chartAsk = wantsChart(params.question) || Boolean(params.force);
+    const chartAsk = wantsChart(params.question) || wantsAgentAnalyticsVisual(params.question, params.phase3Agent) || Boolean(params.force);
     if (!chartAsk && !params.force) {
         return { handled: false };
     }
@@ -857,7 +927,10 @@ export async function runDynamicAnalytics(params: {
     const financeExtractionCache = createFinanceExtractionCache();
     const extractionStats = { hits: 0, misses: 0 };
 
-    const portfolioScope = wantsPortfolioFinanceScope(params.question);
+    const portfolioScope =
+        wantsPortfolioFinanceScope(params.question) &&
+        (!params.phase3Agent || params.phase3Agent === FINANCE_AGENT);
+    const financeScoped = !params.phase3Agent || params.phase3Agent === FINANCE_AGENT;
 
     let scopedIds = params.documentIds;
     if (portfolioScope) {
@@ -868,6 +941,7 @@ export async function runDynamicAnalytics(params: {
 
     // Dynamic: if the user names a file/vendor (e.g. glectronic), chart ONLY that file
     if (
+        financeScoped &&
         !portfolioScope &&
         params.documentIds?.length &&
         extractDocumentNameTokens(params.question).length
@@ -918,7 +992,12 @@ export async function runDynamicAnalytics(params: {
         namedFileLock = true;
     }
 
-    if (!portfolioScope && !namedFileLock && (scopedIds?.length || mergedFocus.length)) {
+    if (
+        financeScoped &&
+        !portfolioScope &&
+        !namedFileLock &&
+        (scopedIds?.length || mergedFocus.length)
+    ) {
         const narrowed = await narrowFinanceDocumentIds({
             user: params.user,
             question: params.question,
@@ -959,7 +1038,18 @@ export async function runDynamicAnalytics(params: {
         }
     }
 
-    const scoped = await loadScopedDocuments(params.user, scopedIds);
+    let scoped = await loadScopedDocuments(params.user, scopedIds);
+    if (params.phase3Agent) {
+        scoped = filterScopedDocsByAgent(scoped, params.phase3Agent);
+    }
+    // Focus/citation from another agent (e.g. a CV while on Finance) — use this agent's files instead.
+    if (!scoped.length && params.phase3Agent && params.documentIds?.length) {
+        namedFileLock = false;
+        scoped = filterScopedDocsByAgent(
+            await loadScopedDocuments(params.user, params.documentIds),
+            params.phase3Agent
+        );
+    }
     if (!scoped.length) {
         if (!chartAsk) return { handled: false };
         return {
@@ -992,7 +1082,7 @@ export async function runDynamicAnalytics(params: {
     const visuals: ChatVisualSpec[] = [];
     const citations: NonNullable<AgentChatVisualResult['citations']> = [];
     const answerParts: string[] = [];
-    let primaryAgent = agentForDomain(domains[0]);
+    let primaryAgent = params.phase3Agent || agentForDomain(domains[0]);
     let financeCoverage: import('../types/chatVisuals').FinanceAnalyticsCoverage | undefined;
     let financeAnalyticsView: string | undefined;
 
@@ -1015,6 +1105,7 @@ export async function runDynamicAnalytics(params: {
                         documentIds: ids,
                         extractionCache: financeExtractionCache,
                         extractionStats,
+                        preferredCurrency: detectCurrencyPreference(params.question),
                     });
                     financeCoverage = result.coverage ?? financeCoverage;
                     financeAnalyticsView = mapFinanceIntentToPanelView(intent);
@@ -1034,7 +1125,9 @@ export async function runDynamicAnalytics(params: {
                             }
                         )
                     );
-                    primaryAgent = FINANCE_AGENT;
+                    if (!params.phase3Agent || params.phase3Agent === FINANCE_AGENT) {
+                        primaryAgent = FINANCE_AGENT;
+                    }
                 } else if (domain === 'hr') {
                     const intent = parseHrIntent(params.question, params.phase3Agent);
                     if (intent === 'ranking' || intent === 'distribution') {
@@ -1133,17 +1226,21 @@ export async function runDynamicAnalytics(params: {
         elapsedMs: Date.now() - started,
     });
 
-    return {
-        handled: true,
-        agentId: primaryAgent,
-        answer: [lead, ...answerParts].filter(Boolean).join('\n\n'),
-        visuals,
-        citations: uniqueCitations,
-        domains,
-        documentCount: scoped.length,
-        coverage: financeCoverage,
-        analyticsView: financeAnalyticsView,
-    };
+    return applyAgentVisualPolicy(
+        {
+            handled: true,
+            agentId: params.phase3Agent || primaryAgent,
+            answer: [lead, ...answerParts].filter(Boolean).join('\n\n'),
+            visuals,
+            citations: uniqueCitations,
+            domains,
+            documentCount: scoped.length,
+            coverage: financeCoverage,
+            analyticsView: financeAnalyticsView,
+        },
+        params.question,
+        params.phase3Agent || primaryAgent
+    );
 }
 
 /** Dashboard entry used by GET /chat/analytics — still scope-first. */
@@ -1167,6 +1264,13 @@ export async function runDynamicDashboard(params: {
             status_mix: 'compliance status mix',
             scores: 'chart top CV scores',
             score_dist: 'CV score distribution',
+            risk: 'contract risk overview',
+            clauses: 'clause type mix',
+            obligations: 'contract obligations overview',
+            po_spend: 'po spend by supplier',
+            po_status: 'purchase order status mix',
+            doc_mix: 'document type mix',
+            missing: 'show missing extraction fields chart',
             overview: 'show analytics overview chart',
         };
         return map[v] || 'show analytics overview chart';

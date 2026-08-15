@@ -11,6 +11,7 @@ import {
     quoteFromPricing,
 } from '../services/planService';
 import { PLAN_AGENT_IDS } from '../models/AgentStoragePricing';
+import { resolveCanonicalAgent } from '../services/documentStorage';
 
 function assert(cond: boolean, msg: string) {
     if (!cond) throw new Error(`FAIL: ${msg}`);
@@ -170,5 +171,65 @@ console.log('── Quote / pricing sanity ──');
 console.log('── Catalog plan edit does not auto-change live subs (by design) ──');
 console.log('  ✓ live org agents come from OrgSubscription / approve / patchSubscription');
 console.log('  ✓ super admin patchSubscription.agentIds updates active entitlement');
+
+console.log('── Canonical agent: filename wins over processing agent ──');
+{
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: 'cv.pdf',
+            classification: 'invoice',
+            metadata: { phase3Agent: 'finance_agent' },
+        }) === 'hr_agent',
+        'cv.pdf stays HR even if processed as finance invoice'
+    );
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: '246910_digilog_invoice.pdf',
+            classification: 'resume',
+            metadata: { phase3Agent: 'hr_agent' },
+        }) === 'finance_agent',
+        'invoice filename stays finance even if tagged HR'
+    );
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: 'nda_acme.pdf',
+            classification: 'invoice',
+            metadata: { phase3Agent: 'finance_agent' },
+        }) === 'legal_agent',
+        'nda filename stays legal'
+    );
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: 'vendor_client_test_data.xlsx',
+            classification: 'other',
+            metadata: { phase3Agent: 'finance_agent' },
+        }) === 'finance_agent',
+        'xlsx without type still finance when processed as finance'
+    );
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: 'notes.pdf',
+            classification: 'invoice',
+            metadata: { phase3Agent: 'other_agent' },
+        }) === 'finance_agent',
+        'Other agent cannot claim an invoice via metadata'
+    );
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: 'iso_audit_report.pdf',
+            classification: 'invoice',
+            metadata: { phase3Agent: 'finance_agent' },
+        }) === 'compliance_agent',
+        'audit filename stays compliance'
+    );
+    assert(
+        resolveCanonicalAgent({
+            originalFilename: 'PO-1001.pdf',
+            classification: 'invoice',
+            metadata: { phase3Agent: 'finance_agent' },
+        }) === 'procurement_agent',
+        'PO filename stays procurement'
+    );
+}
 
 console.log('\ntestAgentEntitlements: ALL PLAN / SUPER-ADMIN CHECKS PASSED');

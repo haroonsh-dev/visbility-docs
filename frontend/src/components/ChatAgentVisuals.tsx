@@ -101,11 +101,19 @@ function SingleVisual({
 
     const useHorizontalBar =
         embedded && spec.kind === "bar" && spec.data.length > 0 && spec.data.length <= 20;
+    const isEmpty =
+        spec.data.length === 0 ||
+        (spec.data.length === 1 &&
+            spec.series.every((s) => !Number(spec.data[0]?.[s.key])) &&
+            /^(no |none$|not extracted|unknown)/i.test(String(spec.data[0]?.[categoryKey] || "")));
+    const emptyMessage = spec.emptyState || "No data extracted for this chart.";
     const chartHeight = embedded
         ? Math.max(280, Math.min(420, spec.data.length * (useHorizontalBar ? 36 : 48) + 80))
         : spec.kind === "pie"
           ? 220
-          : 260;
+          : spec.kind === "table"
+            ? Math.min(360, 48 + spec.data.length * 36)
+            : 260;
 
     return (
         <div
@@ -154,13 +162,50 @@ function SingleVisual({
                     </p>
                 ) : null}
             </div>
-            {spec.data.length === 0 && spec.emptyState ? (
+            {isEmpty ? (
                 <div
                     className={`px-4 py-8 text-center text-sm leading-relaxed ${
                         isDark ? "text-slate-400" : "text-slate-600"
                     }`}
                 >
-                    {spec.emptyState}
+                    {emptyMessage}
+                </div>
+            ) : spec.kind === "table" ? (
+                <div className="px-3 py-3 overflow-x-auto max-h-80">
+                    <table className="min-w-full text-[12px] border-collapse">
+                        <thead>
+                            <tr className={isDark ? "text-slate-400" : "text-slate-500"}>
+                                <th className="text-left font-semibold px-2 py-1.5 border-b border-inherit">
+                                    {spec.series.find((s) => s.key === categoryKey)?.label || "Item"}
+                                </th>
+                                {spec.series
+                                    .filter((s) => s.key !== categoryKey)
+                                    .map((s) => (
+                                        <th key={s.key} className="text-left font-semibold px-2 py-1.5 border-b border-inherit">
+                                            {s.label}
+                                        </th>
+                                    ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {spec.data.map((row, i) => (
+                                <tr
+                                    key={i}
+                                    className={onDataPointClick ? "cursor-pointer hover:bg-black/5 dark:hover:bg-white/5" : ""}
+                                    onClick={() => emitPointClick(row)}
+                                >
+                                    <td className="px-2 py-1.5 align-top font-medium">{String(row[categoryKey] ?? "—")}</td>
+                                    {spec.series
+                                        .filter((s) => s.key !== categoryKey)
+                                        .map((s) => (
+                                            <td key={s.key} className="px-2 py-1.5 align-top">
+                                                {String(row[s.key] ?? "—")}
+                                            </td>
+                                        ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             ) : (
             <div className="px-3 py-4" style={{ width: "100%", height: chartHeight }}>

@@ -11,6 +11,7 @@ import {
     defaultComplianceSettings,
     getOrgComplianceSettings,
 } from './orgComplianceSettingsService';
+import { filterDocsByAgent } from './documentStorage';
 
 export const COMPLIANCE_AGENT = 'compliance_agent';
 
@@ -398,7 +399,6 @@ function buildComplianceScopeQuery(filter: Record<string, unknown>, documentIds?
         ],
     };
     if (documentIds?.length) {
-        delete query.$or;
         query.documentId = { $in: documentIds };
     }
     return query;
@@ -411,11 +411,12 @@ export async function loadComplianceDocsForAnalytics(
     const maxDocs = options.maxDocs ?? 80;
     const filter = await buildDocumentFilter(user, {});
     const query = buildComplianceScopeQuery(filter, options.documentIds);
-    return Document.find(query)
+    const docs = await Document.find(query)
         .select('documentId originalFilename classification pythonDocumentId organizationId metadata')
         .sort({ createdAt: -1 })
         .limit(maxDocs)
         .lean();
+    return filterDocsByAgent(docs, COMPLIANCE_AGENT);
 }
 
 export async function loadComplianceSnapshots(
@@ -518,7 +519,8 @@ export function buildCertStatusVisual(snapshots: ComplianceDocSnapshot[]): ChatV
         subtitle: 'From expiry dates & status fields',
         categoryKey: 'status',
         series: [{ key: 'count', label: 'Documents' }],
-        data: rows.length ? rows : [{ status: 'No expiry data', count: 0 }],
+        data: rows,
+        emptyState: rows.length ? undefined : 'No certificate expiry or validity fields extracted.',
         footer: 'VALID · EXPIRING_SOON · EXPIRED from extraction (org warning window applies).',
     };
 }
@@ -542,6 +544,7 @@ export function buildExpiryTimelineVisual(snapshots: ComplianceDocSnapshot[]): C
             days: s.daysUntilExpiry as number,
             _documentIds: s.documentId,
         })),
+        emptyState: withExpiry.length ? undefined : 'No expiry dates extracted from scoped certificates.',
         footer: 'Sorted by soonest expiry. Based on extracted expiry / expiration dates.',
     };
 }
@@ -574,7 +577,8 @@ export function buildFindingsSeverityVisual(snapshots: ComplianceDocSnapshot[]):
         subtitle: 'Audits, inspections, quality & gaps',
         categoryKey: 'severity',
         series: [{ key: 'count', label: 'Findings', color: '#7c3aed' }],
-        data: rows.length ? rows : [{ severity: 'None', count: 0 }],
+        data: rows,
+        emptyState: rows.length ? undefined : 'No audit findings extracted from scoped documents.',
         footer: 'From audit_findings, findings, inspection FAIL rows, and quality failures.',
     };
 }
@@ -609,6 +613,7 @@ export function buildComplianceStatusVisual(snapshots: ComplianceDocSnapshot[]):
         categoryKey: 'status',
         series: [{ key: 'count', label: 'Documents' }],
         data: rows,
+        emptyState: rows.length ? undefined : 'No normalized compliance status on scoped documents.',
         footer: 'Normalized from overall_compliance_status, compliance_status, overall_rating, result.',
     };
 }

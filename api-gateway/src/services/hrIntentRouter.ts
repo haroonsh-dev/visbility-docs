@@ -11,7 +11,19 @@ import {
     executeHrPortfolioAnalytics,
     type HrVisualIntent,
 } from './hrAnalyticsService';
-import { tryHrChatCommand } from './hrChatActionService';
+import {
+    applyAgentVisualPolicy,
+} from './agentAnalyticsPolicy';
+import {
+    tryHrChatCommand,
+    detectHrCvTableAsk,
+    detectHrCvOverviewAsk,
+    tryHrCvComparisonTable,
+    tryHrCvOverviewCommand,
+    wantsHrCandidateDeepDive,
+    wantsHrAnalyticsVisual,
+    wantsHrTextOnlyExplain,
+} from './hrChatActionService';
 import {
     tryHrReportCommand,
     tryHrShortlistExport,
@@ -49,6 +61,8 @@ export type HrWorkTool =
     | 'internship_letter'
     | 'training_certificate'
     | 'list_candidates'
+    | 'cv_table'
+    | 'cv_overview'
     | 'section_pdf'
     | 'rescore_cvs'
     | 'qa';
@@ -110,6 +124,18 @@ export function classifyHrWorkIntent(
         )
     ) {
         return { tool: 'qa', confidence: 0.9, reason: 'document_qa' };
+    }
+
+    if (wantsHrCandidateDeepDive(question)) {
+        return { tool: 'cv_overview', confidence: 0.92, reason: 'candidate_deep_dive' };
+    }
+
+    if (detectHrCvTableAsk(question, onHr ? HR_AGENT : phase3Agent)) {
+        return { tool: 'cv_table', confidence: 0.9, reason: 'cv_table' };
+    }
+
+    if (detectHrCvOverviewAsk(question, onHr ? HR_AGENT : phase3Agent)) {
+        return { tool: 'cv_overview', confidence: 0.88, reason: 'cv_overview' };
     }
 
     // Letters first (actionable drafts) — before leave/certs analytics
@@ -201,23 +227,30 @@ export function classifyHrWorkIntent(
             return { tool: 'transcript', confidence: 0.8, reason: 'soft_transcript' };
         }
         if (/\b(candidates?|hiring|resumes?|cvs?)\b/.test(q)) {
-            if (/\b(list|show|top|best|rank)\b/.test(q)) {
+            if (detectHrCvOverviewAsk(question, HR_AGENT)) {
+                return { tool: 'cv_overview', confidence: 0.85, reason: 'soft_cv_overview' };
+            }
+            if (detectHrCvTableAsk(question, HR_AGENT)) {
+                return { tool: 'cv_table', confidence: 0.85, reason: 'soft_cv_table' };
+            }
+            if (/\b(list|show all)\b/.test(q) && !wantsHrTextOnlyExplain(question)) {
                 return { tool: 'list_candidates', confidence: 0.75, reason: 'soft_candidates' };
             }
-            return { tool: 'ranking', confidence: 0.7, reason: 'soft_ranking' };
+            if (wantsHrAnalyticsVisual(question)) {
+                if (/\b(distribution|histogram|spread)\b/.test(q)) {
+                    return { tool: 'distribution', confidence: 0.85, reason: 'soft_distribution' };
+                }
+                return { tool: 'ranking', confidence: 0.85, reason: 'soft_ranking' };
+            }
+            return { tool: 'cv_overview', confidence: 0.65, reason: 'cv_default_overview' };
         }
     }
 
     // Outside HR agent: only clear HR work phrases
     if (!onHr) return null;
 
-    // Default on HR agent: if question looks like HR ops, give overview; else QA
-    if (
-        /\b(hr|employee|leave|payroll|attendance|certificate|onboarding|performance|candidate|resume)\b/.test(
-            q
-        )
-    ) {
-        return { tool: 'overview', confidence: 0.55, reason: 'hr_fallback_overview' };
+    if (wantsHrAnalyticsVisual(question)) {
+        return { tool: 'overview', confidence: 0.55, reason: 'hr_analytics_overview' };
     }
 
     return { tool: 'qa', confidence: 0.4, reason: 'fallthrough_qa' };
@@ -226,7 +259,8 @@ export function classifyHrWorkIntent(
 async function runAnalyticsTool(
     user: AuthUser,
     tool: HrWorkTool,
-    documentIds?: string[]
+    documentIds?: string[],
+    question?: string
 ): Promise<HrDynamicResult> {
     if (tool === 'ranking' || tool === 'distribution') {
         const { executeHrAnalytics } = await import('./agentChatVisualService');
@@ -236,24 +270,32 @@ async function runAnalyticsTool(
             documentIds,
             tool === 'distribution' ? 'distribution' : 'ranking'
         );
-        return {
+        return applyAgentVisualPolicy(
+            {
+                handled: true,
+                tool,
+                answer: result.answer,
+                citations: result.citations,
+                visuals: result.visuals,
+            },
+            question || '',
+            HR_AGENT
+        );
+    }
+
+    const intent = tool as HrVisualIntent;
+    const result = await executeHrPortfolioAnalytics(user, intent, documentIds, 10);
+    return applyAgentVisualPolicy(
+        {
             handled: true,
             tool,
             answer: result.answer,
             citations: result.citations,
             visuals: result.visuals,
-        };
-    }
-
-    const intent = tool as HrVisualIntent;
-    const result = await executeHrPortfolioAnalytics(user, intent, documentIds, 10);
-    return {
-        handled: true,
-        tool,
-        answer: result.answer,
-        citations: result.citations,
-        visuals: result.visuals,
-    };
+        },
+        question || '',
+        HR_AGENT
+    );
 }
 
 /**
@@ -266,13 +308,12 @@ export async function tryHrDynamicAgent(params: {
     phase3Agent?: string;
     documentIds?: string[];
 }): Promise<HrDynamicResult> {
-    const classified = classifyHrWorkIntent(params.question, params.phase3Agent);
-    if (!classified || classified.tool === 'qa') {
+    if (params.phase3Agent && params.phase3Agent !== HR_AGENT) {
         return { handled: false };
     }
 
-    // Outside HR agent only handle high-confidence work
-    if (params.phase3Agent !== HR_AGENT && classified.confidence < 0.8) {
+    const classified = classifyHrWorkIntent(params.question, params.phase3Agent);
+    if (!classified || classified.tool === 'qa') {
         return { handled: false };
     }
 
@@ -301,9 +342,22 @@ export async function tryHrDynamicAgent(params: {
         const r = await tryHrShortlistExport({ ...params, phase3Agent: HR_AGENT });
         if (r.handled) return { ...r, tool };
     }
+    if (tool === 'cv_table') {
+        const r = await tryHrCvComparisonTable({ ...params, phase3Agent: HR_AGENT });
+        if (r.handled) return { ...r, tool, visuals: [] };
+    }
+    if (tool === 'cv_overview') {
+        const r = await tryHrCvOverviewCommand({ ...params, phase3Agent: HR_AGENT });
+        if (r.handled) return { ...r, tool, visuals: [] };
+    }
     if (tool === 'directory') {
         // Prefer analytics (table + optional charts) when available
-        const analytics = await runAnalyticsTool(params.user, 'directory', params.documentIds);
+        const analytics = await runAnalyticsTool(
+            params.user,
+            'directory',
+            params.documentIds,
+            params.question
+        );
         if (analytics.answer && !/no employee records/i.test(analytics.answer)) {
             return analytics;
         }
@@ -350,7 +404,7 @@ export async function tryHrDynamicAgent(params: {
     }
 
     if (ANALYTICS_TOOLS.has(tool)) {
-        return runAnalyticsTool(params.user, tool, params.documentIds);
+        return runAnalyticsTool(params.user, tool, params.documentIds, params.question);
     }
 
     return { handled: false };

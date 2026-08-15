@@ -6,6 +6,7 @@ import { canonicalizePartyName, partyRollupKey, resolveVendorDisplayName } from 
 import { normalizeFinanceUserQuestion, wantsFinanceListAllScope } from './financeQuestionNormalize';
 import { getOrgFinanceSettings } from './orgFinanceSettingsService';
 import type { ChatVisualDataRow, ChatVisualSpec, FinanceAnalyticsCoverage } from '../types/chatVisuals';
+import { resolveCanonicalAgent } from './documentStorage';
 
 export const FINANCE_AGENT = 'finance_agent';
 
@@ -60,6 +61,8 @@ export type FinanceRecord = {
     paidApplied?: number;
     /** Remaining balance after matched payments (defaults to total when unset). */
     outstanding?: number;
+    /** Spreadsheet / invoice payment status when extracted (Paid, Pending, etc.). */
+    paymentStatus?: string;
 };
 
 export type LoadFinanceOptions = {
@@ -70,6 +73,7 @@ export type LoadFinanceOptions = {
     extractionStats?: { hits: number; misses: number };
     vendorAliases?: Record<string, string>;
     baseCurrency?: string;
+    preferredCurrency?: string;
 };
 
 export function createFinanceExtractionCache(): Map<string, Record<string, unknown>> {
@@ -564,6 +568,10 @@ function makeRecord(
         normalizePoNumber(data.reference_number) ||
         normalizePoNumber(data.order_number);
     const invoiceNumber = scalarField(data.invoice_number) || scalarField(data['Invoice Number']);
+    const paymentStatus =
+        scalarField(data.status) ||
+        scalarField(data.payment_status) ||
+        scalarField(data['Status']);
     const cls = doc.classification ? String(doc.classification).toLowerCase() : undefined;
     const isPo = cls === 'purchase_order' || cls === 'po' || cls === 'quotation';
     return {
@@ -578,6 +586,7 @@ function makeRecord(
         classification: cls,
         poNumber: poNumber || undefined,
         invoiceNumber: invoiceNumber || undefined,
+        paymentStatus: paymentStatus || undefined,
         recordKind: isPo ? 'other' : 'invoice',
         outstanding: total,
         paidApplied: 0,
@@ -604,8 +613,12 @@ function isStandardInvoiceExtraction(
 }
 
 /** True if the file looks like a spreadsheet (xlsx/csv/etc.). */
-function isSpreadsheetFilename(filename?: string): boolean {
+export function isSpreadsheetFilename(filename?: string): boolean {
     return /\.(xlsx?|csv|tsv|ods)$/i.test(filename || '');
+}
+
+function isSpreadsheetFilenameInternal(filename?: string): boolean {
+    return isSpreadsheetFilename(filename);
 }
 
 /** Parse a markdown pipe table into rows of `{ header: value }`. */
@@ -656,27 +669,55 @@ const DATE_HEADERS = /^(?:date|invoice[\s_]?date|billing[\s_]?date|txn[\s_]?date
 const CURRENCY_HEADERS = /^(?:currency|ccy)$/i;
 const INVOICE_HEADERS = /^(?:invoice|invoice[\s_]?number|invoice[\s_]?no|inv[\s_]?#|inv[\s_]?no)$/i;
 const PO_HEADERS = /^(?:po|po[\s_]?number|purchase[\s_]?order|order[\s_]?number|reference|ref)$/i;
+const STATUS_HEADERS = /^status$/i;
 
 function normalizeHeaderKey(h: string): string {
     return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+function isAmountLikeHeader(h: string): boolean {
+    if (!h) return false;
+    if (
+        /invoice\s*(no|number|#)|inv\s*#|qty|quantity|unit|count|rate|date|currency|month|year/i.test(h) &&
+        !/amount|spend|total|payable|payment|value|price/i.test(h)
+    ) {
+        return false;
+    }
+    return /(amount|spend|total|payable|payment|value|price|\bpkr\b|\busd\b|\beur\b|\bgbp\b)/i.test(h);
+}
+
+/** Prefer a PKR amount column over a USD amount column so charts don't sticker PKR on USD numbers. */
+function scoreAmountHeader(h: string): number {
+    const cur = inferCurrencyFromText(h);
+    let score = 0;
+    if (/grand\s*total|total\s*amount|amount\s*payable/i.test(h)) score += 50;
+    else if (/\btotal\b/i.test(h)) score += 40;
+    else if (/\bamount\b|\bspend\b/i.test(h)) score += 30;
+    else score += 10;
+    if (cur === 'PKR') score += 25;
+    else if (cur === 'USD' || cur === 'EUR' || cur === 'GBP' || cur === 'INR') score += 5;
+    return score;
+}
+
 function findHeaderIndex(headers: string[], kind: 'amount' | 'vendor' | 'client'): number {
     const normalized = headers.map(normalizeHeaderKey);
+    if (kind === 'amount') {
+        let best = -1;
+        let bestScore = -1;
+        for (let i = 0; i < normalized.length; i++) {
+            const h = normalized[i];
+            if (!isAmountLikeHeader(h)) continue;
+            const score = scoreAmountHeader(h);
+            if (score > bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        return best;
+    }
     for (let i = 0; i < normalized.length; i++) {
         const h = normalized[i];
         if (!h) continue;
-        if (kind === 'amount') {
-            if (
-                /invoice\s*(no|number|#)|inv\s*#|qty|quantity|unit|count|rate|date|currency|month|year/i.test(h) &&
-                !/amount|spend|total|payable|payment|value|price/i.test(h)
-            ) {
-                continue;
-            }
-            if (/(amount|spend|total|payable|payment|value|price|pkr|usd|eur|gbp)/i.test(h)) {
-                return i;
-            }
-        }
         if (kind === 'vendor') {
             if (
                 /^(vendor|supplier|seller|merchant|payee|from|company)(\s+name)?$/i.test(h) ||
@@ -707,6 +748,49 @@ function detectColumn(header: string[], match: RegExp): number {
     return -1;
 }
 
+/** Read currency from labels like "Total Amount (PKR)" instead of defaulting to USD. */
+export function inferCurrencyFromText(text: string): string | null {
+    const t = String(text || '').toLowerCase();
+    if (!t.trim()) return null;
+    const hasInr = /\binr\b|indian\s+rupee|₹/.test(t);
+    const hasPkr = /\bpkr\b|pakistani(?:\s+rupee)?/.test(t);
+    const hasUsd = /\busd\b|\bdollars?\b|(?:^|[^\w])\$/.test(t);
+    const hasEur = /\beur\b|euros?|€/.test(t);
+    const hasGbp = /\bgbp\b|pounds?|£/.test(t);
+    const hits = [hasInr, hasPkr, hasUsd, hasEur, hasGbp].filter(Boolean).length;
+    // Concatenated headers like "Total Amount (USD) Total Amount (PKR)" are ambiguous.
+    if (hits > 1) return null;
+    if (hasInr) return 'INR';
+    if (hasPkr) return 'PKR';
+    if (hasUsd) return 'USD';
+    if (hasEur) return 'EUR';
+    if (hasGbp) return 'GBP';
+    if (/\brupees?\b|\brs\.?\b/.test(t)) return 'PKR';
+    return null;
+}
+
+function resolveExtractionCurrency(data: Record<string, unknown>, fallback = 'USD'): string {
+    const amountBlob = [
+        data.total_amount,
+        data.amount,
+        data['Total Amount (PKR)'],
+        data['Total Amount'],
+        data.grand_total,
+    ]
+        .map((v) => String(v ?? ''))
+        .join(' ');
+    if (/\$/.test(amountBlob) || /\busd\b/i.test(amountBlob)) return 'USD';
+    const fromAmount = inferCurrencyFromText(amountBlob);
+    if (fromAmount) return fromAmount;
+    const fromKeys = inferCurrencyFromText(
+        Object.keys(data)
+            .filter((k) => /amount|total|currency/i.test(k))
+            .join(' ')
+    );
+    if (fromKeys) return fromKeys;
+    return (scalarField(data.currency) || fallback).toUpperCase().slice(0, 3);
+}
+
 /** Turn a parsed spreadsheet table into FinanceRecords (one per row with amount + vendor|client). */
 function recordsFromTableRows(
     doc: { documentId: string; originalFilename: string; classification?: string | null },
@@ -722,12 +806,15 @@ function recordsFromTableRows(
             ? amtKeyIdx
             : detectColumn(header.map(normalizeHeaderKey), AMOUNT_HEADERS);
     if (amtIdx < 0) return [];
+    const amountHeader = header[amtIdx] || '';
+    const headerCurrency = inferCurrencyFromText(amountHeader);
     const vendorIdx = findHeaderIndex(header, 'vendor');
     const clientIdx = findHeaderIndex(header, 'client');
     const dateIdx = detectColumn(header.map(normalizeHeaderKey), DATE_HEADERS);
     const curIdx = detectColumn(header.map(normalizeHeaderKey), CURRENCY_HEADERS);
     const invIdx = detectColumn(header.map(normalizeHeaderKey), INVOICE_HEADERS);
     const poIdx = detectColumn(header.map(normalizeHeaderKey), PO_HEADERS);
+    const statusIdx = detectColumn(header.map(normalizeHeaderKey), STATUS_HEADERS);
 
     const cellAt = (row: Record<string, string>, idx: number) =>
         idx >= 0 && idx < header.length ? String(row[header[idx]] ?? '').trim() : '';
@@ -738,15 +825,23 @@ function recordsFromTableRows(
         if (amount == null || amount <= 0) continue;
         const vendor = cellAt(row, vendorIdx) || defaults.vendor;
         const client = cellAt(row, clientIdx) || defaults.client;
-        const currency = cellAt(row, curIdx).toUpperCase().slice(0, 3) || defaults.currency;
+        const cellCurrency = cellAt(row, curIdx).toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+        // Amount-column header wins (e.g. "Total Amount (PKR)") so a Currency=USD cell
+        // cannot relabel already-converted PKR figures as USD, or vice versa.
+        const currency =
+            headerCurrency ||
+            (cellCurrency.length === 3 ? cellCurrency : '') ||
+            defaults.currency;
         const dateStr = cellAt(row, dateIdx);
         const invoiceNumber = cellAt(row, invIdx);
         const poNumber = cellAt(row, poIdx);
+        const paymentStatus = cellAt(row, statusIdx);
         const stub: Record<string, unknown> = {
             invoice_date: dateStr || undefined,
             invoice_number: invoiceNumber || undefined,
             po_number: poNumber || undefined,
             currency,
+            status: paymentStatus || undefined,
         };
         out.push(
             makeRecord(
@@ -803,7 +898,15 @@ function recordsFromSpreadsheet(
     const defaults = {
         vendor: resolveVendorDisplayName(pickVendor(data, doc.originalFilename), vendorAliases),
         client: pickClient(data),
-        currency: (scalarField(data.currency) || 'USD').toUpperCase().slice(0, 3),
+        currency: (
+            inferCurrencyFromText(
+                `${doc.originalFilename} ${scalarField(data.currency)} ${Object.keys(data).join(' ')}`
+            ) ||
+            scalarField(data.currency) ||
+            'USD'
+        )
+            .toUpperCase()
+            .slice(0, 3),
         classification: doc.classification ?? null,
     };
 
@@ -854,7 +957,7 @@ function recordsFromExtraction(
     vendorAliases?: Record<string, string>
 ): FinanceRecord[] {
     // Spreadsheet-first: xlsx / csv → one record per meaningful row.
-    if (isSpreadsheetFilename(doc.originalFilename)) {
+    if (isSpreadsheetFilenameInternal(doc.originalFilename)) {
         const sheetRecords = recordsFromSpreadsheet(doc, data, vendorAliases);
         if (sheetRecords.length) return sheetRecords;
         return [];
@@ -866,7 +969,7 @@ function recordsFromExtraction(
         return pay.total > 0 ? [pay] : [];
     }
 
-    const currency = scalarField(data.currency) || 'USD';
+    const currency = resolveExtractionCurrency(data);
     const client = pickClient(data);
     const defaultVendor = resolveVendorDisplayName(
         pickVendor(data, doc.originalFilename),
@@ -1053,6 +1156,7 @@ function buildFinanceScopeQuery(filter: Record<string, unknown>, documentIds?: s
         status: 'ready',
         pythonDocumentId: { $exists: true, $nin: [null, ''] },
         classification: { $nin: [...FINANCE_ANALYTICS_EXCLUDED_CLASSIFICATIONS] },
+        originalFilename: { $not: /\b(cv|cvs|resume|curriculum|biodata)\b/i },
         $or: [
             { classification: { $in: [...FINANCE_DOC_TYPES] } },
             { 'metadata.phase3Agent': FINANCE_AGENT },
@@ -1069,7 +1173,6 @@ function buildFinanceScopeQuery(filter: Record<string, unknown>, documentIds?: s
         ],
     };
     if (documentIds?.length) {
-        delete query.classification;
         query.documentId = { $in: documentIds };
     }
     return query;
@@ -1190,9 +1293,18 @@ export async function loadFinanceRecords(user: AuthUser, options: LoadFinanceOpt
         .limit(maxDocs)
         .lean();
 
-    if (!docs.length || !isAiServiceEnabled()) return [];
+    const financeDocs = docs.filter(
+        (d) =>
+            resolveCanonicalAgent({
+                originalFilename: d.originalFilename,
+                classification: d.classification,
+                metadata: d.metadata as { phase3Agent?: string; naturalAgent?: string } | undefined,
+            }) === FINANCE_AGENT
+    );
 
-    const nested = await mapPool(docs, 6, async (doc) => {
+    if (!financeDocs.length || !isAiServiceEnabled()) return [];
+
+    const nested = await mapPool(financeDocs, 6, async (doc) => {
         try {
             const data = await extractionPayloadForDoc(doc, user, options.extractionCache, options.extractionStats);
             return recordsFromExtraction(doc, data, vendorAliases);
@@ -1205,14 +1317,15 @@ export async function loadFinanceRecords(user: AuthUser, options: LoadFinanceOpt
 }
 
 function dominantCurrency(records: FinanceRecord[], preferred?: string): string {
-    const counts = new Map<string, number>();
+    const sums = new Map<string, number>();
     for (const r of records) {
-        counts.set(r.currency, (counts.get(r.currency) || 0) + 1);
+        const cur = (r.currency || '').toUpperCase().slice(0, 3) || 'USD';
+        sums.set(cur, (sums.get(cur) || 0) + chartAmount(r));
     }
-    if (preferred && counts.has(preferred)) return preferred;
-    let best = preferred || 'USD';
-    let max = 0;
-    for (const [c, n] of counts) {
+    if (preferred && sums.has(preferred)) return preferred;
+    let best = records[0]?.currency || preferred || 'USD';
+    let max = -1;
+    for (const [c, n] of sums) {
         if (n > max) {
             max = n;
             best = c;
@@ -1526,43 +1639,88 @@ export function formatPoPairingTable(pairs: PoInvoicePair[], maxRows = 15): stri
     return lines.join('\n');
 }
 
+export const DEFAULT_FX_RATES_TO_USD: Record<string, number> = {
+    USD: 1.0,
+    PKR: 278.0,
+    EUR: 0.92,
+    GBP: 0.78,
+    AED: 3.67,
+    INR: 83.5,
+    CAD: 1.36,
+    AUD: 1.52,
+    SAR: 3.75,
+};
+
+export function convertCurrencyAmount(
+    amount: number,
+    fromCurrency: string,
+    targetCurrency: string,
+    customRates?: Record<string, number>
+): { amount: number; converted: boolean } {
+    const from = (fromCurrency || 'USD').toUpperCase();
+    const target = (targetCurrency || 'USD').toUpperCase();
+    if (from === target) return { amount, converted: false };
+
+    const rates: Record<string, number> = { ...DEFAULT_FX_RATES_TO_USD, ...(customRates || {}) };
+    const fromRateToUSD = rates[from];
+    const targetRateToUSD = rates[target];
+
+    if (!fromRateToUSD || !targetRateToUSD || fromRateToUSD <= 0 || targetRateToUSD <= 0) {
+        return { amount, converted: false };
+    }
+
+    const amountInUSD = amount / fromRateToUSD;
+    const convertedAmount = amountInUSD * targetRateToUSD;
+    return { amount: convertedAmount, converted: true };
+}
+
 function aggregateByParty(
     records: FinanceRecord[],
     party: 'vendor' | 'client',
     maxBars = 20,
     vendorAliases?: Record<string, string>,
-    preferredCurrency?: string
+    preferredCurrency?: string,
+    fxRates?: Record<string, number>
 ): { rows: ChatVisualDataRow[]; currency: string; docCount: number } {
-    const groups = new Map<string, { label: string; amount: number; currency: string; docs: Set<string> }>();
+    const currency = (preferredCurrency || dominantCurrency(records, preferredCurrency)).toUpperCase();
+    const groups = new Map<string, { label: string; amount: number; docs: Set<string> }>();
 
     for (const r of records) {
         if (isPaymentRecord(r)) continue;
         const raw = party === 'vendor' ? r.vendor : r.client;
         if (!raw?.trim()) continue;
-        const key = `${normalizePartyKey(raw, party === 'vendor' ? vendorAliases : undefined)}::${r.currency}`;
-        const amt = chartAmount(r);
+        const key = normalizePartyKey(raw, party === 'vendor' ? vendorAliases : undefined);
+        const rawAmt = chartAmount(r);
+        let convertedAmt = rawAmt;
+        if (preferredCurrency) {
+            const from = (r.currency || '').toUpperCase();
+            const to = preferredCurrency.toUpperCase();
+            if (from && from !== to) {
+                const fx = convertCurrencyAmount(rawAmt, from, to, fxRates);
+                if (!fx.converted) continue;
+                convertedAmt = fx.amount;
+            }
+        } else if ((r.currency || '').toUpperCase() !== currency) {
+            continue;
+        }
+
         const existing = groups.get(key);
         if (existing) {
-            existing.amount += amt;
+            existing.amount += convertedAmt;
             existing.docs.add(r.documentId);
         } else {
             groups.set(key, {
                 label: raw.trim(),
-                amount: amt,
-                currency: r.currency,
+                amount: convertedAmt,
                 docs: new Set([r.documentId]),
             });
         }
     }
 
     const sorted = [...groups.values()].sort((a, b) => b.amount - a.amount).slice(0, maxBars);
-    const currency = dominantCurrency(records, preferredCurrency);
     const categoryKey = party === 'vendor' ? 'vendor' : 'client';
     const rows: ChatVisualDataRow[] = sorted.map((g) => ({
-        [categoryKey]:
-            g.label.length > 32
-                ? `${g.label.slice(0, 30)}…${g.currency !== currency ? ` (${g.currency})` : ''}`
-                : g.label + (g.currency !== currency ? ` (${g.currency})` : ''),
+        [categoryKey]: g.label.length > 32 ? `${g.label.slice(0, 30)}…` : g.label,
         amount: Math.round(g.amount * 100) / 100,
         _documentIds: docIdsField(g.docs),
     }));
@@ -1571,8 +1729,28 @@ function aggregateByParty(
     return { rows, currency, docCount };
 }
 
-export function formatVendorSpendTable(records: FinanceRecord[], maxRows = 25): string {
-    const { rows, currency, docCount } = aggregateByParty(records, 'vendor', maxRows);
+export function detectCurrencyPreference(question: string): string | undefined {
+    const q = question.toLowerCase();
+    if (/\b(pkr|rupees|rs|rupee|pakistani)\b/.test(q)) return 'PKR';
+    if (/\b(usd|dollar|dollars|\$)\b/.test(q)) return 'USD';
+    if (/\b(eur|euro|euros|€)\b/.test(q)) return 'EUR';
+    if (/\b(gbp|pound|pounds|£)\b/.test(q)) return 'GBP';
+    return undefined;
+}
+
+export function formatVendorSpendTable(
+    records: FinanceRecord[],
+    maxRows = 25,
+    preferredCurrency?: string
+): string {
+    const { rows, currency, docCount } = aggregateByParty(
+        records,
+        'vendor',
+        maxRows,
+        undefined,
+        preferredCurrency,
+        DEFAULT_FX_RATES_TO_USD
+    );
     if (!rows.length) return '_No vendor totals could be computed from extractions._';
     const settled = records.some((r) => (r.paidApplied || 0) > 0);
     const lines = [
@@ -1587,24 +1765,29 @@ export function formatVendorSpendTable(records: FinanceRecord[], maxRows = 25): 
         }),
     ];
     const totalsByCurrency = sumTotalsByCurrency(records);
-    const grand = totalsByCurrency.get(currency) ?? [...totalsByCurrency.values()].reduce((a, b) => a + b, 0);
+    const totalsSummaryLines: string[] = [];
+    for (const [cur, amt] of totalsByCurrency.entries()) {
+        totalsSummaryLines.push(`**${cur}** ${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    }
+
     lines.push('');
     lines.push(
-        `**Grand ${settled ? 'outstanding' : 'total'} (${currency}):** ${grand.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} across **${docCount}** invoice document(s).`
+        `**Grand ${settled ? 'outstanding' : 'total'}:** ${totalsSummaryLines.join(' · ')} across **${docCount}** invoice document(s).`
     );
     return lines.join('\n');
 }
 
 export function buildVendorSpendVisual(
     records: FinanceRecord[],
-    opts?: { vendorAliases?: Record<string, string>; baseCurrency?: string }
+    opts?: { vendorAliases?: Record<string, string>; baseCurrency?: string; preferredCurrency?: string; fxRates?: Record<string, number> }
 ): ChatVisualSpec {
     const { rows, currency, docCount } = aggregateByParty(
         records,
         'vendor',
         20,
         opts?.vendorAliases,
-        opts?.baseCurrency
+        opts?.preferredCurrency,
+        opts?.fxRates
     );
     const withVendor = records.filter((r) => !isPaymentRecord(r) && r.vendor && r.vendor !== 'Unknown vendor');
     const sourceDocumentIds = [...new Set(records.filter((r) => !isPaymentRecord(r)).map((r) => r.documentId))];
@@ -1634,7 +1817,8 @@ export function buildVendorSpendVisual(
                 color: '#2563eb',
             },
         ],
-        data: rows.length ? rows : [{ vendor: 'No vendor on file', amount: 0 }],
+        data: rows,
+        emptyState: rows.length ? undefined : 'No vendor names extracted. Reprocess invoices or ask for line items.',
         sourceDocumentIds,
         dataQuality: {
             level: unknown || warnings.length > 1 ? 'medium' : 'high',
@@ -1648,9 +1832,20 @@ export function buildVendorSpendVisual(
     };
 }
 
-export function formatClientSpendTable(records: FinanceRecord[], maxRows = 100): string {
+export function formatClientSpendTable(
+    records: FinanceRecord[],
+    maxRows = 100,
+    preferredCurrency?: string
+): string {
     const clientRecords = records.filter((r) => !isPaymentRecord(r) && r.client.trim());
-    const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', maxRows);
+    const { rows, currency, docCount } = aggregateByParty(
+        clientRecords,
+        'client',
+        maxRows,
+        undefined,
+        preferredCurrency,
+        DEFAULT_FX_RATES_TO_USD
+    );
     if (!rows.length) return '_No client totals — customer_name / bill_to missing on extractions._';
     const settled = records.some((r) => (r.paidApplied || 0) > 0);
     const lines = [
@@ -1669,18 +1864,32 @@ export function formatClientSpendTable(records: FinanceRecord[], maxRows = 100):
     return lines.join('\n');
 }
 
-export function buildClientSpendVisual(records: FinanceRecord[]): ChatVisualSpec {
+export function buildClientSpendVisual(
+    records: FinanceRecord[],
+    opts?: { vendorAliases?: Record<string, string>; baseCurrency?: string; preferredCurrency?: string; fxRates?: Record<string, number> }
+): ChatVisualSpec {
     const nonPay = records.filter((r) => !isPaymentRecord(r));
     const clientRecords = nonPay.filter((r) => r.client.trim());
     const missingClientRecords = nonPay.filter((r) => !r.client.trim());
     const maxBars = Math.min(100, Math.max(20, new Set(clientRecords.map((r) => r.client)).size));
-    const { rows, currency, docCount } = aggregateByParty(clientRecords, 'client', maxBars);
+    const { rows, currency, docCount } = aggregateByParty(
+        clientRecords,
+        'client',
+        maxBars,
+        undefined,
+        opts?.preferredCurrency,
+        opts?.fxRates
+    );
     const settled = nonPay.some((r) => (r.paidApplied || 0) > 0);
 
     // Add a "Missing client" bucket so users see excluded totals instead of us hiding them.
-    const missingAmount = missingClientRecords
-        .filter((r) => r.currency === currency)
-        .reduce((sum, r) => sum + chartAmount(r), 0);
+    const missingAmount = missingClientRecords.reduce((sum, r) => {
+        const raw = chartAmount(r);
+        const from = (r.currency || '').toUpperCase();
+        if (!from || from === currency) return sum + raw;
+        const fx = convertCurrencyAmount(raw, from, currency, opts?.fxRates);
+        return fx.converted ? sum + fx.amount : sum;
+    }, 0);
     const missingDocIds = [...new Set(missingClientRecords.map((r) => r.documentId))];
     const dataRows: ChatVisualDataRow[] = [...rows];
     if (missingClientRecords.length) {
@@ -1894,6 +2103,38 @@ export function sumTotalsByCurrency(records: FinanceRecord[]): Map<string, numbe
     return map;
 }
 
+/** Convert records into a requested display currency (e.g. user said "in PKR"). */
+export function convertFinanceRecordsToCurrency(
+    records: FinanceRecord[],
+    targetCurrency: string,
+    customRates?: Record<string, number>
+): { records: FinanceRecord[]; converted: number; skippedCurrencies: string[] } {
+    const target = (targetCurrency || '').toUpperCase().slice(0, 3);
+    if (!target) return { records, converted: 0, skippedCurrencies: [] };
+    let converted = 0;
+    const skipped = new Set<string>();
+    const out = records.map((r) => {
+        const from = (r.currency || '').toUpperCase().slice(0, 3);
+        if (!from || from === target) return r;
+        const fx = convertCurrencyAmount(r.total, from, target, customRates);
+        if (!fx.converted || !r.total) {
+            skipped.add(from);
+            return r;
+        }
+        converted += 1;
+        const scale = fx.amount / r.total;
+        return {
+            ...r,
+            total: fx.amount,
+            currency: target,
+            outstanding: r.outstanding != null ? r.outstanding * scale : fx.amount,
+            amountPaid: r.amountPaid != null ? r.amountPaid * scale : undefined,
+            paidApplied: r.paidApplied != null ? r.paidApplied * scale : undefined,
+        };
+    });
+    return { records: out, converted, skippedCurrencies: [...skipped] };
+}
+
 /**
  * Convert every record to `baseCurrency` using org fxRates.
  * Records whose currency has no rate keep their original value + currency (and are
@@ -2060,6 +2301,36 @@ export function expandNameToken(token: string): string[] {
 }
 
 /** Tokens from the question that might be a filename / vendor / invoice #. */
+export function extractExplicitFilenameFromQuestion(question: string): string | null {
+    const m = question.match(/\b([a-z0-9][a-z0-9._-]{1,120}\.(?:xlsx?|xls|csv|tsv|ods|pdf))\b/i);
+    return m ? m[1] : null;
+}
+
+export function matchDocumentsByExplicitFilename(docs: NameMatchDoc[], question: string): string[] {
+    const explicit = extractExplicitFilenameFromQuestion(question);
+    if (!explicit || !docs.length) return [];
+    const target = explicit.toLowerCase();
+    const stem = target.replace(/\.[a-z0-9]+$/i, '');
+
+    const exact = docs.filter((d) => (d.originalFilename || '').toLowerCase() === target);
+    if (exact.length === 1) return [exact[0].documentId];
+    if (exact.length > 1) return [exact[0].documentId];
+
+    const partial = docs.filter((d) => {
+        const name = (d.originalFilename || '').toLowerCase();
+        return name === target || name.includes(stem) || stem.includes(name.replace(/\.[a-z0-9]+$/i, ''));
+    });
+    if (partial.length === 1) return [partial[0].documentId];
+    if (partial.length > 1) {
+        const stemHits = partial.filter((d) =>
+            (d.originalFilename || '').toLowerCase().includes(stem)
+        );
+        if (stemHits.length === 1) return [stemHits[0].documentId];
+        return [partial[0].documentId];
+    }
+    return [];
+}
+
 export function extractDocumentNameTokens(question: string): string[] {
     const normalized = normalizeFinanceUserQuestion(question).replace(/[^a-z0-9\s_-]/g, ' ');
     const words = normalized
@@ -2089,7 +2360,11 @@ export type NameMatchDoc = {
  * Returns only the best match(es) — never the whole scope.
  */
 export function matchDocumentIdsByNameTokens(docs: NameMatchDoc[], question: string): string[] {
+    const byExplicit = matchDocumentsByExplicitFilename(docs, question);
+    if (byExplicit.length) return byExplicit;
+
     if (wantsFinanceListAllScope(question)) return [];
+
     const q = normalizeFinanceUserQuestion(question);
     if (/\b(all|every|full|entire)\b/.test(q) && /\b(client|customer|vendor|supplier|lists?|data)\b/.test(q)) {
         return [];
@@ -2303,11 +2578,19 @@ export async function loadFinanceDocsForAnalytics(
     const maxDocs = options.maxDocs ?? 50;
     const filter = await buildDocumentFilter(user, {});
     const query = buildFinanceScopeQuery(filter, options.documentIds);
-    return Document.find(query)
-        .select('documentId originalFilename pythonDocumentId organizationId metadata')
+    const docs = await Document.find(query)
+        .select('documentId originalFilename classification pythonDocumentId organizationId metadata')
         .sort({ createdAt: -1 })
         .limit(maxDocs)
         .lean();
+    return docs.filter(
+        (d) =>
+            resolveCanonicalAgent({
+                originalFilename: d.originalFilename,
+                classification: d.classification,
+                metadata: d.metadata as { phase3Agent?: string; naturalAgent?: string } | undefined,
+            }) === FINANCE_AGENT
+    );
 }
 
 export async function resolveFinanceDocumentIdsFromQuestion(

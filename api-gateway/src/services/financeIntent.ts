@@ -107,19 +107,6 @@ export function mapFinanceIntentToPanelView(intent: string): string {
 }
 
 export function formatFinanceCoverageNotes(coverage?: FinanceAnalyticsCoverage): string {
-    if (!coverage?.files?.length) return '';
-    const skipped = coverage.files.filter((f) => f.status !== 'in_charts');
-    if (!skipped.length) return '';
-    const lines = skipped.slice(0, 10).map((f) => {
-        const label =
-            f.status === 'unsupported_format'
-                ? 'Unsupported format'
-                : f.status === 'no_extraction'
-                  ? 'No extraction'
-                  : f.status === 'not_linked'
-                    ? 'Not linked'
-                    : 'Skipped';
-        return `- **${f.filename}** (${label})${f.detail ? ` — ${f.detail}` : ''}`;
-    });
-    return ['', '**Files not in charts:**', ...lines].join('\n');
+    // Keep internal file coverage metadata in JSON object payload, but do not append raw debug file lists to user chat text.
+    return '';
 }

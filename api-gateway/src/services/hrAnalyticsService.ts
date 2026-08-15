@@ -13,6 +13,7 @@ import type { ChatVisualSpec } from '../types/chatVisuals';
 import { scalarField } from './financeAnalyticsService';
 import { HR_AGENT } from './offerLetterGenerationService';
 import { listTopResumesForUser } from './hrChatActionService';
+import { filterDocsByAgent } from './documentStorage';
 
 export { HR_AGENT };
 
@@ -512,6 +513,8 @@ export async function loadHrSnapshotBundle(
         .select('documentId originalFilename classification pythonDocumentId organizationId metadata')
         .lean();
 
+    const hrDocs = filterDocsByAgent(docs, HR_AGENT);
+
     const bundle: HrSnapshotBundle = {
         employees: [],
         certs: [],
@@ -523,7 +526,7 @@ export async function loadHrSnapshotBundle(
         transcripts: [],
     };
 
-    const parts = await mapPool(docs, 6, async (doc) => {
+    const parts = await mapPool(hrDocs, 6, async (doc) => {
         const data = await extractionPayloadForDoc(doc, user);
         return parseHrDocIntoBundle(
             {
@@ -607,6 +610,7 @@ export function buildOnboardingVisual(rows: HrOnboardingRow[]): ChatVisualSpec {
             pct: r.completeness,
             _documentIds: r.documentId,
         })),
+        emptyState: sorted.length ? undefined : 'No onboarding completeness data in scope.',
         footer: 'Missing docs from employee_document_completeness extractions.',
     };
 }
@@ -637,7 +641,8 @@ export function buildLeaveVisual(rows: HrLeaveRow[]): ChatVisualSpec {
         subtitle: `${rows.length} leave application(s)`,
         categoryKey: 'party',
         series: [{ key: 'days', label: 'Days', color: '#8b5cf6' }],
-        data: data.length ? data : [{ party: 'No leave data', days: 0 }],
+        data: data,
+        emptyState: data.length ? undefined : 'No leave applications with day counts in scope.',
         footer: 'Sum of total_days from leave applications in scope.',
     };
 }
@@ -707,6 +712,7 @@ export function buildAttendanceVisual(rows: HrAttendanceRow[]): ChatVisualSpec {
             pct: r.presentPct,
             _documentIds: r.documentId,
         })),
+        emptyState: sorted.length ? undefined : 'No attendance records in scope.',
         footer: 'days_present ÷ total_working_days from attendance extractions.',
     };
 }
@@ -771,11 +777,12 @@ export function buildTranscriptVisual(rows: HrTranscriptRow[]): ChatVisualSpec {
         subtitle: `${rows.length} transcript(s)`,
         categoryKey: 'student',
         series: [{ key: 'gpa', label: 'GPA / CGPA', color: '#a855f7' }],
-        data: (scored.length ? scored : rows).slice(0, 20).map((r) => ({
+        data: (scored.length ? scored : []).slice(0, 20).map((r) => ({
             student: r.studentName.length > 22 ? `${r.studentName.slice(0, 20)}…` : r.studentName,
             gpa: r.gpa ?? 0,
             _documentIds: r.documentId,
         })),
+        emptyState: scored.length ? undefined : 'No GPA / CGPA extracted from transcripts in scope.',
         footer: 'From transcript extractions (gpa_cgpa).',
     };
 }

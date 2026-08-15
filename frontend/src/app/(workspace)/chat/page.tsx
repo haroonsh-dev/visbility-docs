@@ -39,7 +39,7 @@ import {
     filterComplianceAnalyticsDocIds,
     isComplianceAnalyticsDoc,
 } from "@/lib/complianceAnalyticsScope";
-import { filterAnalyticsScopeDocIds } from "@/lib/analyticsScope";
+import { filterAnalyticsScopeDocIds, filterDocIdsForAgent } from "@/lib/analyticsScope";
 import {
     generatedPreviewHref,
     parseGeneratedPreviewDocumentId,
@@ -89,20 +89,78 @@ const ANALYTICS_AGENT_IDS = new Set([
     "compliance_agent",
     "procurement_agent",
     "legal_agent",
+    "other_agent",
 ]);
 
-function messageMayUseAnalytics(message: string, agentId?: string | null): boolean {
-    if (agentId && !ANALYTICS_AGENT_IDS.has(agentId) && agentId !== "other_agent") {
-        // Still allow when message itself asks for charts with scoped docs
-    }
+/** Text-only explain/overview — never auto-open Analytics. */
+function messageIsTextExplainAsk(message: string, agentId?: string | null): boolean {
     const q = message.toLowerCase();
-    return (
-        /\b(chart|graph|graphs|visuali[sz]e|visual|plot|analytics|breakdown|dashboard)\b/.test(q) ||
-        /\b(vendor|items?|line[\s-]?items?|spend|invoice|score|rank|expiry|findings|top\s+\d+|supplier|po|quotation)\b/.test(
+    if (/\b(chart|graph|visual|plot|ranking chart|analytics panel)\b/.test(q)) return false;
+
+    const generic =
+        /\b(explain|overview|summary|summarize|describe|profile|tell me about|what is|what are|break down)\b/.test(
             q
-        ) ||
-        /\b(show|list|give)\b.*\b(items?|numbers|stats|graph|chart)\b/.test(q)
-    );
+        );
+    const compare = /\b(comparison|compare|comparision|versus|\bvs\.?\b)\b/.test(q) && !/\btable\b/.test(q);
+    const single = /\b(only|not others|single|full overview)\b/.test(q);
+
+    if (agentId === "hr_agent" || /\b(cv|resume|candidate)\b/.test(q)) {
+        if ((generic || compare || single) && /\b(cv|resume|candidate|hiring)\b/.test(q)) return true;
+    }
+    if (agentId === "legal_agent" || /\b(contract|agreement|nda|legal|clause)\b/.test(q)) {
+        if (generic || compare) return true;
+    }
+    if (agentId === "finance_agent" || /\b(invoice|vendor|payable|finance|expense)\b/.test(q)) {
+        if (generic || compare) return true;
+    }
+    if (agentId === "compliance_agent" || /\b(compliance|certificate|audit|sop|iso|finding)\b/.test(q)) {
+        if (generic || compare) return true;
+    }
+    if (agentId === "procurement_agent" || /\b(purchase order|\bpo\b|rfq|quotation|procurement|supplier)\b/.test(q)) {
+        if (generic || compare) return true;
+    }
+    if (agentId === "other_agent" || /\b(document|file|pdf)\b/.test(q)) {
+        if (generic || compare || single) return true;
+    }
+    return false;
+}
+
+/** Analytics/chart-related asks — open Analytics when backend returns visuals. */
+function messageWantsAnalyticsPanel(message: string, agentId?: string | null): boolean {
+    if (messageIsTextExplainAsk(message, agentId)) return false;
+    const q = message.toLowerCase();
+    if (/\b(chart|graph|graphs|visuali[sz]e|visual|plot|analytics|dashboard|breakdown)\b/.test(q)) {
+        return true;
+    }
+    if (/\b(show me|give me|show a)\b.*\b(chart|graph|visual|analytics|ranking|scores|breakdown)\b/.test(q)) {
+        return true;
+    }
+    if (agentId === "hr_agent" || /\b(cv|resume|candidate)\b/.test(q)) {
+        if (/\b(rank|ranking|top \d+|score|scores|distribution|histogram)\b/.test(q)) return true;
+    }
+    if (agentId === "finance_agent" || /\b(invoice|vendor|finance|payable|receivable)\b/.test(q)) {
+        if (/\b(vendor spend|spend by|aging|overdue|monthly trend|line[\s-]?items?|client spend)\b/.test(q)) {
+            return true;
+        }
+    }
+    if (agentId === "compliance_agent" || /\b(compliance|certificate|audit|finding)\b/.test(q)) {
+        if (/\b(expiry|findings|severity|cert status|status mix)\b/.test(q)) {
+            if (/\b(chart|graph|visual|timeline|mix|dashboard)\b/.test(q)) return true;
+            if (/\b(show|list|top)\b/.test(q)) return true;
+        }
+    }
+    if (agentId === "legal_agent" || /\b(contract|agreement|legal|risk|clause)\b/.test(q)) {
+        if (/\b(risk|clause|party value)\b/.test(q) && /\b(chart|graph|visual|mix)\b/.test(q)) return true;
+    }
+    if (agentId === "procurement_agent" || /\b(purchase order|\bpo\b|supplier|procurement|rfq)\b/.test(q)) {
+        if (/\b(supplier spend|po vs invoice|spend by)\b/.test(q)) return true;
+        if (/\b(supplier|spend|\bpo\b)\b/.test(q) && /\b(chart|graph|visual)\b/.test(q)) return true;
+    }
+    return false;
+}
+
+function messageMayUseAnalytics(message: string, agentId?: string | null): boolean {
+    return messageWantsAnalyticsPanel(message, agentId);
 }
 
 const WELCOME_MSG: ChatMessage = {
@@ -532,6 +590,7 @@ function ChatContent() {
             setAnalyticsView("overview");
             setAnalyticsVisuals([]);
             chatAnalyticsLockRef.current = false;
+            setChatContextDocIds([]);
         }
     }, [agentUrlParam]);
 
@@ -551,6 +610,14 @@ function ChatContent() {
                 if (agentId === "compliance_agent" && view !== "overview") {
                     params.set("view", view);
                 }
+                if (
+                    (agentId === "legal_agent" ||
+                        agentId === "procurement_agent" ||
+                        agentId === "other_agent") &&
+                    view !== "overview"
+                ) {
+                    params.set("view", view);
+                }
                 if (scopeDocIds?.length) {
                     params.set("documentIds", scopeDocIds.join(","));
                 }
@@ -559,7 +626,7 @@ function ChatContent() {
                     ? (data.data.visuals as ChatVisualSpec[])
                     : [];
                 setAnalyticsVisuals(visuals);
-                setAnalyticsAgentId(data?.data?.agentId || agentId);
+                setAnalyticsAgentId(agentId);
                 const count = data?.data?.documentCount;
                 setAnalyticsDocCount(typeof count === "number" ? count : undefined);
                 const cov = data?.data?.coverage;
@@ -584,9 +651,12 @@ function ChatContent() {
         const cited = chatContextDocIds.filter(
             (id) => filterAnalyticsScopeDocIds(libraryDocs, [id]).length > 0
         );
-        const merged = [...new Set([...selected, ...cited])];
+        let merged = [...new Set([...selected, ...cited])];
+        if (agentUrlParam) {
+            merged = filterDocIdsForAgent(libraryDocs, merged, agentUrlParam);
+        }
         return merged.length ? merged : undefined;
-    }, [chatScope, selectedDocIds, libraryDocs, chatContextDocIds]);
+    }, [chatScope, selectedDocIds, libraryDocs, chatContextDocIds, agentUrlParam]);
 
     const openAnalyticsPanel = useCallback(
         (fetchDashboard = false) => {
@@ -671,6 +741,15 @@ function ChatContent() {
         });
     }, [agentUrlParam, isNewChatReq]);
 
+    // Drop off-agent selections when switching agents
+    useEffect(() => {
+        if (!agentUrlParam) return;
+        setSelectedDocIds((prev) => {
+            const next = filterDocIdsForAgent(libraryDocs, prev, agentUrlParam);
+            return next.length === prev.length && next.every((id, i) => id === prev[i]) ? prev : next;
+        });
+    }, [agentUrlParam, libraryDocs]);
+
     useEffect(() => {
         if (!agentUrlParam || !libraryDocs.length) return;
         const matchingDocs = libraryDocs.filter((d) => resolveDocAgent(d) === agentUrlParam);
@@ -679,30 +758,7 @@ function ChatContent() {
                 ? matchingDocs.filter((d) => isFinanceAnalyticsDoc(d))
                 : agentUrlParam === "compliance_agent"
                   ? matchingDocs.filter((d) => isComplianceAnalyticsDoc(d))
-                  : agentUrlParam === "hr_agent"
-                    ? matchingDocs.filter((d) => {
-                          const c = String(d.classification || "").toLowerCase();
-                          if (
-                              [
-                                  "resume",
-                                  "employee_record",
-                                  "hr_document",
-                                  "leave_application",
-                                  "payroll",
-                                  "attendance",
-                                  "training_certificate",
-                                  "performance_review",
-                                  "employment_contract",
-                                  "transcript",
-                              ].includes(c)
-                          ) {
-                              return true;
-                          }
-                          return /\b(cv|resume|payroll|leave|attendance|employee|certificate)\b/i.test(
-                              d.originalFilename || ""
-                          );
-                      })
-                    : matchingDocs;
+                  : matchingDocs;
         if (scoped.length > 0) {
             setSelectedDocIds(scoped.map((d) => d.documentId));
             setChatScope("selected");
@@ -1145,15 +1201,21 @@ function ChatContent() {
                 body.phase3Agent = agentUrlParam;
             }
             if (chatScope === "selected") {
-                body.documentIds = selectedDocIds;
-                const selected = libraryDocs.filter((d) => selectedDocIds.includes(d.documentId));
-                const agents = new Set(selected.map((d) => resolveDocAgent(d)));
-                if (agents.size === 1) {
-                    const only = [...agents][0];
-                    if (only && only !== "other_agent" && isAgentAllowed(only)) {
-                        body.phase3Agent = only;
+                const scopedIds = agentUrlParam
+                    ? filterDocIdsForAgent(libraryDocs, selectedDocIds, agentUrlParam)
+                    : selectedDocIds;
+                body.documentIds = scopedIds;
+                if (!agentUrlParam) {
+                    const selected = libraryDocs.filter((d) => scopedIds.includes(d.documentId));
+                    const agents = new Set(selected.map((d) => resolveDocAgent(d)));
+                    if (agents.size === 1) {
+                        const only = [...agents][0];
+                        if (only && only !== "other_agent" && isAgentAllowed(only)) {
+                            body.phase3Agent = only;
+                        }
                     }
                 }
+                const selected = libraryDocs.filter((d) => scopedIds.includes(d.documentId));
                 const types = new Set(
                     selected.map((d) => d.classification).filter((t): t is string => Boolean(t))
                 );
@@ -1191,7 +1253,13 @@ function ChatContent() {
             }
             const focusIds = portfolioAsk
                 ? []
-                : [...new Set([...focusFromLastTurn, ...chatContextDocIds])].filter(Boolean);
+                : [...new Set([...focusFromLastTurn, ...chatContextDocIds])]
+                      .filter((id) => {
+                          if (!effectiveAgent) return true;
+                          const doc = libraryDocs.find((d) => d.documentId === id);
+                          return doc ? resolveDocAgent(doc) === effectiveAgent : false;
+                      })
+                      .filter(Boolean);
             if (focusIds.length) {
                 body.focusDocumentIds = focusIds.slice(0, 3);
             }
@@ -1223,20 +1291,25 @@ function ChatContent() {
 
             const fullReply = data?.data?.reply || "No response.";
             const nextVisuals = Array.isArray(data?.data?.visuals) ? (data.data.visuals as ChatVisualSpec[]) : [];
+            const userAskedForCharts = messageWantsAnalyticsPanel(trimmed, effectiveAgent);
             setAnalyticsLoading(false);
-            if (data?.data?.model === "agent-analytics" && data?.data?.agentId && ANALYTICS_AGENT_IDS.has(data.data.agentId)) {
+            if (
+                userAskedForCharts &&
+                data?.data?.model === "agent-analytics" &&
+                effectiveAgent &&
+                ANALYTICS_AGENT_IDS.has(effectiveAgent)
+            ) {
                 setAnalyticsPanelOpen(true);
                 setDocumentsPanelOpen(false);
-                setAnalyticsAgentId(data.data.agentId);
+                setAnalyticsAgentId(effectiveAgent);
             }
-            if (nextVisuals.length) {
+            if (nextVisuals.length && userAskedForCharts) {
                 chatAnalyticsLockRef.current = true;
                 setAnalyticsVisuals(nextVisuals);
                 setAnalyticsPanelOpen(true);
                 setDocumentsPanelOpen(false);
-                const vizAgent = data?.data?.agentId;
-                if (vizAgent && ANALYTICS_AGENT_IDS.has(vizAgent)) {
-                    setAnalyticsAgentId(vizAgent);
+                if (effectiveAgent && ANALYTICS_AGENT_IDS.has(effectiveAgent)) {
+                    setAnalyticsAgentId(effectiveAgent);
                 }
                 const respView = data?.data?.analyticsView;
                 if (typeof respView === "string") {
@@ -1253,6 +1326,20 @@ function ChatContent() {
                         "status_mix",
                         "scores",
                         "score_dist",
+                        "onboarding",
+                        "leave",
+                        "payroll",
+                        "attendance",
+                        "directory",
+                        "performance",
+                        "transcript",
+                        "risk",
+                        "clauses",
+                        "obligations",
+                        "po_spend",
+                        "po_status",
+                        "doc_mix",
+                        "missing",
                     ]);
                     if (allowed.has(respView)) {
                         setAnalyticsView(respView as AnalyticsPanelView);
@@ -1280,11 +1367,9 @@ function ChatContent() {
                 visuals: nextVisuals.length ? nextVisuals : undefined,
             });
             const replyForChat =
-                nextVisuals.length && data?.data?.model === "agent-analytics"
+                nextVisuals.length && userAskedForCharts
                     ? fullReply
-                    : nextVisuals.length
-                      ? `${fullReply}\n\nI’ve put the chart(s) in the Analytics panel.`
-                      : fullReply;
+                    : fullReply;
             await revealStreamText(
                 assistantId,
                 replyForChat,
@@ -1306,7 +1391,7 @@ function ChatContent() {
                 agentId: data?.data?.agentId,
                 aiProvider: data?.data?.aiProvider,
                 aiModel: data?.data?.aiModel,
-                chartData: data?.data?.chartData,
+                chartData: userAskedForCharts ? data?.data?.chartData : undefined,
             });
             // Track only what this turn discussed — never the full scope (breaks "chart of that")
             if (citations.length) {
@@ -2134,6 +2219,18 @@ function ChatContent() {
                             messages.map((msg, msgIdx) => {
                                 const isLastMsg = messages[messages.length - 1]?.id === msg.id;
                                 const hasText = Boolean((msg.content || "").trim());
+                                const priorUserMsg = [...messages.slice(0, msgIdx)]
+                                    .reverse()
+                                    .find((m) => m.role === "user");
+                                const showInlineChart =
+                                    Boolean(msg.chartData) &&
+                                    Boolean(
+                                        priorUserMsg &&
+                                            messageWantsAnalyticsPanel(
+                                                priorUserMsg.content,
+                                                msg.agentId
+                                            )
+                                    );
                                 const isThinking =
                                     msg.role === "assistant" &&
                                     !hasText &&
@@ -2294,7 +2391,7 @@ function ChatContent() {
                                                     {formatAssistantMarkdown(msg.content)}
                                                 </ReactMarkdown>
                                                 )}
-                                                {msg.chartData && (
+                                                {showInlineChart && msg.chartData && (
                                                     <ChatGraphRenderer chartData={msg.chartData} />
                                                 )}
                                                 {msg.agentId && (
