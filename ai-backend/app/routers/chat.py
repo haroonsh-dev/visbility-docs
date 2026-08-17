@@ -3,9 +3,33 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from ..models.schemas import ChatRequest, ChatResponse, ChatSessionResponse, ChatSessionListResponse
 from ..services.chat_service import chat_service
+from ..services import agent_registry
 from ..database import SupabaseDB
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+
+
+def _record_chat_tool_invocation(request: ChatRequest, answer: str, status: str = "completed"):
+    """Audit the chat.ask tool invocation (best-effort; never breaks chat).
+
+    Covers every path in chat_service with one call per endpoint. The resolved
+    agent is approximated from the request scope (phase3_agent or doc type);
+    chat.ask is a Tier 1 read tool so the policy decision is always allow.
+    """
+    agent_id = request.phase3_agent or (
+        agent_registry.resolve_agent_for_doc(request.document_type) if request.document_type else ""
+    )
+    agent_registry.record_tool_invocation(
+        organization_id=request.organization_id,
+        tool_name="chat.ask",
+        agent_id=agent_id or "",
+        user_id=request.user_id or "",
+        input_payload={"question": (request.question or "")[:1000]},
+        result_status=status,
+        result_summary=(answer or "")[:500],
+        decision="allow",
+        risk_tier="read",
+    )
 
 
 @router.get(
@@ -107,6 +131,8 @@ async def chat_with_document(request: ChatRequest = Body(...)):
         provider_config=request.provider_config.model_dump() if request.provider_config else None,
     )
 
+    _record_chat_tool_invocation(request, result.get("answer", ""))
+
     return ChatResponse(
         answer=result["answer"],
         sources=result["sources"],
@@ -178,6 +204,8 @@ async def chat_all_documents(request: ChatRequest = Body(...)):
         model=request.model,
         provider_config=request.provider_config.model_dump() if request.provider_config else None,
     )
+
+    _record_chat_tool_invocation(request, result.get("answer", ""))
 
     return ChatResponse(
         answer=result["answer"],

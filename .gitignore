@@ -30,3 +30,9 @@ Visibility_Docs_AI_VM-main update model/
 
 # Temporary diff files used during merges
 _diff_app_*.txt
+
+# Junk / accidental artifacts — do not commit
+*.zip
+*.tsbuildinfo
+ai-backend/test_results.txt
+.pytest_cache/

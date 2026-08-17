@@ -16,6 +16,12 @@ const BACKGROUND_JOBS_ENABLED = process.env.DISABLE_BACKGROUND_JOBS !== 'true';
 async function start() {
     await dbConnect();
     await seedPlansOnBoot();
+    try {
+        const { ensureIntegrationIndexes } = await import('./services/integrationDbSetup');
+        await ensureIntegrationIndexes();
+    } catch (err: any) {
+        logger.warn(`[integrations] index setup failed: ${err?.message || err}`);
+    }
     app.listen(PORT, () => {
         logger.info(`Visibility Docs AI API listening on http://localhost:${PORT}`);
         logger.info(`OpenRemote enabled: ${process.env.OPENREMOTE_ENABLED !== 'false'}`);

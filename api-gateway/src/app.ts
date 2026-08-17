@@ -18,6 +18,7 @@ import settingsRoutes from './routes/settings';
 import plansRoutes from './routes/plans';
 import integrationsRoutes from './routes/integrations';
 import emailReportsRoutes from './routes/emailReports';
+import agentsToolsRoutes from './routes/agentsTools';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { authenticate } from './middleware/auth';
 import { listAllDocumentIntelligence, reprocessDocument } from './controllers/documentsController';
@@ -27,11 +28,19 @@ dotenv.config();
 const app: Express = express();
 app.disable('etag');
 
+// CORS: credentials require explicit origins — never fall back to '*' with
+// credentials (browsers reject it and it silently disables auth cookies).
+// Dev fallback covers the documented local ports; production must set FRONTEND_URL.
+const corsOrigins = process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map((url) => url.trim())
+    : ['http://localhost:3124', 'http://127.0.0.1:3124'];
+if (!process.env.FRONTEND_URL) {
+    console.warn('[app] FRONTEND_URL is not set — CORS falling back to localhost dev origins.');
+}
+
 app.use(
     cors({
-        origin: process.env.FRONTEND_URL
-            ? process.env.FRONTEND_URL.split(',').map((url) => url.trim())
-            : '*',
+        origin: corsOrigins,
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Integration-Key'],
@@ -71,6 +80,7 @@ app.use('/api/docs/plans', plansRoutes);
 app.use('/api/docs/integrations', integrationsRoutes);
 app.use('/api/docs/email-reports', emailReportsRoutes);
 app.use('/api/docs/super-admin', superAdminRoutes);
+app.use('/api/docs/agents', agentsToolsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

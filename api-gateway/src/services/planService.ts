@@ -1,5 +1,6 @@
 import AgentStoragePricing, {
     PLAN_AGENT_IDS,
+    PLAN_AGENT_LABELS,
     type IAgentStoragePricing,
 } from '../models/AgentStoragePricing';
 import OrgSubscription, { type IOrgSubscription } from '../models/OrgSubscription';
@@ -7,6 +8,43 @@ import Document from '../models/Document';
 import Organization from '../models/Organization';
 import Department from '../models/Department';
 import { loadUserDeptContext, type AuthUser } from './accessScope';
+import { getAiAgentCatalog } from './aiServiceClient';
+import logger from '../utils/logger';
+
+/** Agents this org may use, resolved from the ai-backend registry when reachable.
+ *  Falls back to the bundled PLAN_AGENT_IDS list when the AI service is down. */
+export async function resolvePlanAgentIds(): Promise<string[]> {
+    try {
+        const catalog = await getAiAgentCatalog();
+        if (catalog?.agent_ids?.length) {
+            // Preserve bundled ordering (finance, procurement, hr, legal, compliance, other)
+            // while picking up any new agents the registry knows about.
+            const bundledSet = new Set<string>(PLAN_AGENT_IDS);
+            const bundled = PLAN_AGENT_IDS.filter((id) => catalog.agent_ids.includes(id));
+            const extra = catalog.agent_ids.filter((id) => !bundledSet.has(id));
+            if (extra.length) {
+                logger.info(`Registry catalog added agent(s) to plan entitlements: ${extra.join(', ')}`);
+            }
+            return [...bundled, ...extra];
+        }
+    } catch (e: any) {
+        logger.warn(`Failed to resolve plan agent ids from AI registry: ${e?.message || e}`);
+    }
+    return [...PLAN_AGENT_IDS];
+}
+
+/** Display labels for the catalog, resolved from the registry when reachable. */
+export async function resolvePlanAgentLabels(): Promise<Record<string, string>> {
+    try {
+        const catalog = await getAiAgentCatalog();
+        if (catalog?.agent_labels && Object.keys(catalog.agent_labels).length) {
+            return catalog.agent_labels;
+        }
+    } catch (e: any) {
+        logger.warn(`Failed to resolve plan agent labels from AI registry: ${e?.message || e}`);
+    }
+    return { ...PLAN_AGENT_LABELS };
+}
 
 function id() {
     return `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -25,12 +63,13 @@ export function generateSubscriptionId() {
 }
 
 export async function getOrCreatePricing(): Promise<IAgentStoragePricing> {
+    const agentIds = await resolvePlanAgentIds();
     let doc = await AgentStoragePricing.findOne({ configId: 'default' });
     if (!doc) {
         doc = await AgentStoragePricing.create({
             configId: 'default',
             currency: 'USD',
-            agents: PLAN_AGENT_IDS.map((agentId) => ({
+            agents: agentIds.map((agentId) => ({
                 agentId,
                 monthlyPrice: agentId === 'other_agent' ? 0 : 29,
                 yearlyPrice: agentId === 'other_agent' ? 0 : 290,
@@ -45,7 +84,7 @@ export async function getOrCreatePricing(): Promise<IAgentStoragePricing> {
         // Ensure all known agents exist in catalog
         const existing = new Set(doc.agents.map((a) => a.agentId));
         let changed = false;
-        for (const agentId of PLAN_AGENT_IDS) {
+        for (const agentId of agentIds) {
             if (!existing.has(agentId)) {
                 doc.agents.push({
                     agentId,
@@ -199,12 +238,14 @@ export async function getAllowedAgentsForOrg(
     return entitlement.agentIds;
 }
 
-/** Agent ids from raw input, limited to org plan and known catalog agents. */
+/** Agent ids from raw input, limited to the org plan. The org plan is itself
+ *  registry-derived (getOrCreatePricing resolves from the ai-backend catalog),
+ *  so filtering against it alone keeps a new registry agent settable for a
+ *  department without needing a frontend/bundled-list update. */
 export function normalizeAgentsToOrgPlan(raw: unknown, orgAgentIds: string[]): string[] {
     if (!Array.isArray(raw)) return [];
     const orgSet = new Set(orgAgentIds);
-    const planSet = new Set<string>(PLAN_AGENT_IDS);
-    return [...new Set(raw.map((x) => String(x)).filter((id) => planSet.has(id) && orgSet.has(id)))];
+    return [...new Set(raw.map((x) => String(x)).filter((id) => orgSet.has(id)))];
 }
 
 /** When department list is empty, members get full org plan agents. */
@@ -228,9 +269,11 @@ export async function getEffectiveAllowedAgentIds(
     user: Pick<AuthUser, 'role' | 'organizationId' | 'userId'>
 ): Promise<EffectiveAgentContext> {
     if (user.role === 'superAdmin') {
+        // Super admins see the full registry catalog (not just the bundled fallback list).
+        const all = await resolvePlanAgentIds();
         return {
-            agentIds: [...PLAN_AGENT_IDS],
-            orgAgentIds: [...PLAN_AGENT_IDS],
+            agentIds: all,
+            orgAgentIds: all,
             departmentId: null,
         };
     }

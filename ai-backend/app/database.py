@@ -173,6 +173,22 @@ def _init_local_db(conn):
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS agent_tool_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            agent_id TEXT,
+            user_id TEXT,
+            risk_tier TEXT DEFAULT 'read',
+            decision TEXT DEFAULT 'allow',
+            input_payload TEXT,
+            result_status TEXT DEFAULT 'started',
+            result_summary TEXT,
+            duration_ms INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_tool_audit_org ON agent_tool_audit(organization_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_agent_tool_audit_tool ON agent_tool_audit(tool_name);
         CREATE INDEX IF NOT EXISTS idx_doc_org ON documents(organization_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_doc ON document_chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_org ON document_chunks(organization_id);
@@ -674,6 +690,16 @@ def _local_insert(table: str, data: dict):
         cur = conn.execute("INSERT INTO processing_jobs (organization_id, document_id, job_type, stage, status, progress) VALUES (?,?,?,?,?,?)",
                            (data.get("organization_id", ""), data.get("document_id", ""), data.get("job_type", "full_pipeline"),
                             data.get("stage", "queued"), data.get("status", "queued"), data.get("progress", 0)))
+        conn.commit()
+        return type("Result", (), {"data": [{**data, "id": cur.lastrowid}]})()
+    if table == "agent_tool_audit":
+        cur = conn.execute(
+            "INSERT INTO agent_tool_audit (organization_id, tool_name, agent_id, user_id, risk_tier, decision, input_payload, result_status, result_summary, duration_ms, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (data.get("organization_id", ""), data.get("tool_name", ""), data.get("agent_id", ""),
+             data.get("user_id", ""), data.get("risk_tier", "read"), data.get("decision", "allow"),
+             data.get("input_payload"), data.get("result_status", "started"),
+             data.get("result_summary", ""), data.get("duration_ms"), data.get("created_at")),
+        )
         conn.commit()
         return type("Result", (), {"data": [{**data, "id": cur.lastrowid}]})()
     if table == "agent_runs":

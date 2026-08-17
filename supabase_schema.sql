@@ -121,6 +121,45 @@ CREATE TABLE processing_jobs (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Agent Tool Gateway audit trail (plan Step 4: tamper-proof tool invocation log)
+CREATE TABLE IF NOT EXISTS agent_tool_audit (
+  id BIGSERIAL PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  agent_id TEXT,
+  user_id TEXT,
+  risk_tier TEXT NOT NULL DEFAULT 'read',
+  decision TEXT NOT NULL DEFAULT 'allow',
+  input_payload TEXT,
+  result_status TEXT NOT NULL DEFAULT 'started',
+  result_summary TEXT,
+  duration_ms INTEGER,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tool_audit_org ON agent_tool_audit(organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_tool_audit_tool ON agent_tool_audit(tool_name);
+
+-- Append-only: the audit trail must never be amended or pruned by an
+-- application bug or a tampered client. The trigger blocks UPDATE/DELETE even
+-- for the service-role key (triggers fire regardless of RLS bypass); to
+-- legitimately clean the table, drop the trigger first, then re-create it.
+CREATE OR REPLACE FUNCTION block_agent_tool_audit_mutation() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'agent_tool_audit is append-only; UPDATE/DELETE is not permitted';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_block_agent_tool_audit_mutation ON agent_tool_audit;
+CREATE TRIGGER trg_block_agent_tool_audit_mutation
+    BEFORE UPDATE OR DELETE ON agent_tool_audit
+    FOR EACH ROW EXECUTE FUNCTION block_agent_tool_audit_mutation();
+
+-- Hide the audit trail from anon/authenticated roles (the app talks to
+-- Supabase with a service-role key, which bypasses RLS, so reads/writes still
+-- work); only the backend can see or append rows.
+ALTER TABLE agent_tool_audit ENABLE ROW LEVEL SECURITY;
+
 -- Vector search function
 CREATE OR REPLACE FUNCTION match_documents(
   query_embedding VECTOR(384),

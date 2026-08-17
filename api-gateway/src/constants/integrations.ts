@@ -14,7 +14,8 @@ export const INTEGRATION_PROVIDER_IDS = [
     'ignition',
     'mastercontrol',
     'fiix_upkeep',
-    // Generic
+    // SaaS / Generic
+    'clickup',
     'custom_webhook',
     'sql_csv_drop',
 ] as const;
@@ -31,4 +32,5 @@ export const SECRET_FIELD_KEYS = new Set([
     'tokenSecret',
     'refreshToken',
     'connectionString',
+    'apiToken',
 ]);

@@ -14,6 +14,7 @@ import {
 } from './financeChatActionService';
 import { tryFinanceChatVisual } from './financeChatVisualService';
 import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual, wantsAgentTextOnlyExplain } from './agentAnalyticsPolicy';
+import { FINANCE_CAPABILITY_REPLY, isCapabilityQuestion } from '../utils/chatCapability';
 
 export type FinanceWorkTool =
     | 'reconciliation'
@@ -49,6 +50,11 @@ export function detectFinanceReportAsk(question: string, phase3Agent?: string): 
     );
 }
 
+export function detectFinanceCapabilityAsk(question: string, phase3Agent?: string): boolean {
+    if (phase3Agent && phase3Agent !== FINANCE_AGENT) return false;
+    return isCapabilityQuestion(question);
+}
+
 export async function tryFinanceDynamicAgent(opts: {
     user: AuthUser;
     question: string;
@@ -71,6 +77,16 @@ export async function tryFinanceDynamicAgent(opts: {
                 visuals: [],
             };
         }
+    }
+
+    if (detectFinanceCapabilityAsk(question, phase3Agent)) {
+        return {
+            handled: true,
+            answer: FINANCE_CAPABILITY_REPLY,
+            citations: [],
+            visuals: [],
+            tool: 'overview',
+        };
     }
 
     // Computed spreadsheet / portfolio totals — never let the LLM guess sums

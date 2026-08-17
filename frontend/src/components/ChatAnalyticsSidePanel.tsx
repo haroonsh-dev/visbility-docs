@@ -114,6 +114,14 @@ const FINANCE_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
     { id: "mix", label: "Doc mix" },
 ];
 
+const COMPLIANCE_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "expiry", label: "Certs expiry" },
+    { id: "findings", label: "Findings" },
+    { id: "cert_status", label: "Cert status" },
+    { id: "status_mix", label: "Status mix" },
+];
+
 const HR_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "scores", label: "CV scores" },

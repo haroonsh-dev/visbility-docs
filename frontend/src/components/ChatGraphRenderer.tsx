@@ -47,22 +47,25 @@ const CustomTooltip = ({ active, payload, label, yAxisLabel }: any) => {
 };
 
 export default function ChatGraphRenderer({ chartData }: { chartData: ChartDataPayload }) {
-    if (!chartData || !Array.isArray(chartData.data) || chartData.data.length === 0) {
-        return null;
-    }
+    const hasData = !!(chartData && Array.isArray(chartData.data) && chartData.data.length > 0);
 
-    const type = (chartData.chart_type || chartData.chartType || "bar").toLowerCase();
-    const title = chartData.title || "Financial Visual Summary";
-    const data = chartData.data;
-
+    // All hooks must run unconditionally (rules-of-hooks) — compute first, bail out later.
     const formattedData = useMemo(() => {
-        return data.map((item, idx) => ({
+        if (!hasData) return [];
+        return chartData.data.map((item, idx) => ({
             name: item.label || `Item ${idx + 1}`,
             value: Number(item.value) || 0,
             fill: item.color || PALETTE[idx % PALETTE.length],
             documentId: item.documentId
         }));
-    }, [data]);
+    }, [chartData, hasData]);
+
+    if (!hasData) {
+        return null;
+    }
+
+    const type = (chartData.chart_type || chartData.chartType || "bar").toLowerCase();
+    const title = chartData.title || "Financial Visual Summary";
 
     const Icon = type === "pie" ? PieIcon : type === "area" || type === "line" ? TrendingUp : BarChart3;
 
@@ -82,7 +85,7 @@ export default function ChatGraphRenderer({ chartData }: { chartData: ChartDataP
                     <span className="text-xs font-bold tracking-wide text-white">{title}</span>
                 </div>
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.15)] px-2 py-0.5 rounded-full border border-[rgba(56,182,255,0.25)]">
-                    Finance Agent Graph
+                    {type === "pie" ? "Share Breakdown" : type === "area" || type === "line" ? "Trend Graph" : "Bar Graph"}
                 </span>
             </div>
 

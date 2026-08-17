@@ -11,6 +11,21 @@ const CHAT_TIMEOUT = parseInt(process.env.AI_CHAT_TIMEOUT_MS || '300000', 10);
 /** Status polls / document GET — ai-backend can queue behind OCR/LLM; 8s was too aggressive */
 const QUICK_FETCH_TIMEOUT = parseInt(process.env.AI_QUICK_FETCH_TIMEOUT_MS || '30000', 10);
 const ENABLED = process.env.AI_SERVICE_ENABLED !== 'false';
+/** Well-known dev-only value; rejected in production (see below). */
+const DEV_INTERNAL_SERVICE_KEY = 'dev-internal-service-key';
+/** Shared secret presented to the ai-backend so mutation endpoints trust the gateway. */
+const INTERNAL_SERVICE_KEY =
+    process.env.AI_INTERNAL_SERVICE_KEY || DEV_INTERNAL_SERVICE_KEY;
+
+if (
+    (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'prod') &&
+    INTERNAL_SERVICE_KEY === DEV_INTERNAL_SERVICE_KEY
+) {
+    throw new Error(
+        'AI_INTERNAL_SERVICE_KEY must be set to a non-default value in production. ' +
+        'Refusing to start with the shared dev secret (it would let anyone impersonate the gateway).'
+    );
+}
 
 export function isAiServiceEnabled(): boolean {
     return ENABLED;
@@ -21,6 +36,9 @@ function client() {
         baseURL: BASE_URL,
         timeout: TIMEOUT,
         validateStatus: () => true,
+        headers: {
+            'X-Internal-Service-Key': INTERNAL_SERVICE_KEY,
+        },
     });
 }
 
@@ -70,6 +88,167 @@ export type AiUploadResult = {
     status: string;
     message: string;
 };
+
+export type ToolPolicyCheck = {
+    decision: 'allow' | 'allow_with_audit' | 'approval_required';
+    risk_tier?: string;
+    reason?: string;
+    known?: boolean;
+};
+
+export type AiAgentCatalog = {
+    agent_ids: string[];
+    agent_labels: Record<string, string>;
+    doc_type_to_agent: Record<string, string>;
+    tool_count: number;
+};
+
+export type AiAgentInfo = {
+    id: string;
+    label: string;
+    description?: string;
+    doc_types?: string[];
+    prompt_path?: string;
+    tools?: Array<{ name: string; description: string; risk_tier: string; action: string }>;
+    capabilities?: string[];
+};
+
+export type AiToolAuditRow = {
+    id?: string | number;
+    tool_name: string;
+    agent_id?: string;
+    user_id?: string;
+    risk_tier?: string;
+    decision?: string;
+    result_status?: string;
+    result_summary?: string;
+    duration_ms?: number;
+    created_at?: string;
+};
+
+export type AiToolAuditResult = {
+    total: number;
+    rows: AiToolAuditRow[];
+};
+
+/**
+ * Fetch the canonical agent catalog (agents + doc_type -> agent map) from the
+ * ai-backend registry. Returns null when the service is disabled or unreachable
+ * so callers can fall back to their bundled copy.
+ *
+ * Cached briefly: the catalog changes only when an agent / doc_type is added
+ * upstream, but pricing + entitlement lookups call this on nearly every request.
+ * A 60s TTL keeps those cheap while still propagating registry changes quickly.
+ */
+const CATALOG_TTL_MS = 60_000;
+let catalogCache: { fetchedAt: number; value: AiAgentCatalog | null } | null = null;
+
+export async function getAiAgentCatalog(force = false): Promise<AiAgentCatalog | null> {
+    if (!ENABLED) return null;
+    if (!force && catalogCache && Date.now() - catalogCache.fetchedAt < CATALOG_TTL_MS) {
+        return catalogCache.value;
+    }
+    try {
+        const res = await client().get('/api/v1/agents/catalog', { timeout: 15_000 });
+        const value = res.status < 400 && res.data?.data ? (res.data.data as AiAgentCatalog) : null;
+        catalogCache = { fetchedAt: Date.now(), value };
+        return value;
+    } catch (e: any) {
+        // On failure keep serving the last-known catalog if it's still fresh-ish,
+        // so a transient AI-backend blip doesn't break plan/pricing lookups.
+        if (catalogCache && Date.now() - catalogCache.fetchedAt < CATALOG_TTL_MS * 6) {
+            logger.warn(`AI agent catalog fetch failed (serving cached copy): ${e?.message || e}`);
+            return catalogCache.value;
+        }
+        logger.warn(`AI agent catalog fetch failed: ${e?.message || e}`);
+        return null;
+    }
+}
+
+/** Ask the ai-backend policy gate whether a tool may run. Records an audit row. */
+export async function checkToolPolicy(
+    toolName: string,
+    organizationId: string,
+    permissions: string[],
+    userId?: string
+): Promise<ToolPolicyCheck | null> {
+    if (!ENABLED) return null;
+    try {
+        const res = await client().post(
+            `/api/v1/tools/${encodeURIComponent(toolName)}/check`,
+            {
+                organization_id: organizationId,
+                permissions,
+                user_id: userId || '',
+            },
+            { timeout: 15_000 }
+        );
+        if (res.status >= 400) {
+            logger.warn(`AI tool policy check failed for ${toolName}: ${JSON.stringify(res.data)}`);
+            return null;
+        }
+        return (res.data?.data || null) as ToolPolicyCheck | null;
+    } catch (e: any) {
+        logger.warn(`AI tool policy check error for ${toolName}: ${e?.message || e}`);
+        return null;
+    }
+}
+
+/** Capability marketplace: full agent catalog with tools + capabilities. */
+export async function getAiAgents(): Promise<AiAgentInfo[] | null> {
+    if (!ENABLED) return null;
+    try {
+        const res = await client().get('/api/v1/agents', { timeout: 15_000 });
+        if (res.status >= 400) return null;
+        const agents = res.data?.data?.agents;
+        return Array.isArray(agents) ? (agents as AiAgentInfo[]) : null;
+    } catch (e: any) {
+        logger.warn(`AI agent marketplace fetch failed: ${e?.message || e}`);
+        return null;
+    }
+}
+
+/** Tools available to one agent (registry surface). */
+export async function getAgentTools(
+    agentId: string
+): Promise<AiAgentInfo['tools'] | null> {
+    if (!ENABLED || !agentId) return null;
+    try {
+        const res = await client().get(`/api/v1/agents/${encodeURIComponent(agentId)}/tools`, {
+            timeout: 15_000,
+        });
+        if (res.status >= 400 || !res.data?.data) return null;
+        const tools = res.data.data.tools;
+        return Array.isArray(tools) ? (tools as AiAgentInfo['tools']) : null;
+    } catch (e: any) {
+        logger.warn(`AI agent tools fetch failed: ${e?.message || e}`);
+        return null;
+    }
+}
+
+/** Agent tool invocation audit trail for an org (newest first). */
+export async function getToolAudit(params: {
+    organizationId: string;
+    limit?: number;
+    toolName?: string;
+}): Promise<AiToolAuditResult | null> {
+    if (!ENABLED || !params.organizationId) return null;
+    try {
+        const res = await client().get('/api/v1/tools/audit', {
+            params: {
+                organization_id: params.organizationId,
+                limit: params.limit || 50,
+                ...(params.toolName ? { tool_name: params.toolName } : {}),
+            },
+            timeout: 15_000,
+        });
+        if (res.status >= 400 || !res.data?.data) return null;
+        return res.data.data as AiToolAuditResult;
+    } catch (e: any) {
+        logger.warn(`AI tool audit fetch failed: ${e?.message || e}`);
+        return null;
+    }
+}
 
 export async function deleteDocumentFromAi(
     pythonDocumentId: string,

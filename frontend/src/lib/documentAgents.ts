@@ -1,3 +1,16 @@
+/**
+ * CANONICAL SOURCE: the ai-backend agent registry
+ * (ai-backend/app/services/agent_registry.py — AGENT_CATALOG + DOCUMENT_TO_PHASE3_AGENT).
+ *
+ * Keep this file in sync with the registry. A new agent or doc_type added upstream
+ * must be reflected here or it will be missing from the UI. Run the drift check to
+ * verify (from api-gateway/):
+ *
+ *   npm run test:catalog-drift
+ *
+ * Frontend-only doc_types below (e.g. *_letter, *_report, "po") are UI aliases the
+ * classifier doesn't emit; the drift check reports them as non-blocking warnings.
+ */
 export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     // Finance
     invoice: "finance_agent",

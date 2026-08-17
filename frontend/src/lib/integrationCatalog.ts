@@ -74,17 +74,93 @@ const OUTBOUND_FIELD: IntegrationField = {
     help: "Optional. Manual Send can POST file / summary / extracted JSON here. Not auto — only when you click Send.",
 };
 
-const COMMON_TAIL: IntegrationField[] = [SCHEDULE_FIELD, AGENT_FIELD, OUTBOUND_FIELD];
+const USE_CASE_FIELD: IntegrationField = {
+    key: "useCase",
+    label: "Use case / document stream",
+    type: "select",
+    options: [
+        { value: "", label: "General" },
+        { value: "ap", label: "Finance — Accounts Payable (AP)" },
+        { value: "ar", label: "Finance — Accounts Receivable (AR)" },
+        { value: "gl", label: "Finance — GL / statements" },
+        { value: "payroll", label: "HR — Payroll" },
+        { value: "hiring", label: "HR — Hiring / CVs" },
+        { value: "contracts", label: "Legal — Contracts / NDAs" },
+        { value: "po", label: "Procurement — PO / RFQ" },
+        { value: "qc", label: "Compliance — QC / inspection" },
+        { value: "capa", label: "Compliance — CAPA / NCR" },
+        { value: "maintenance", label: "Maintenance — Work orders" },
+    ],
+    help: "Pick the business stream — routes to the right AI agent (Finance AP vs Compliance QC, etc.).",
+};
+
+const COMMON_TAIL: IntegrationField[] = [SCHEDULE_FIELD, USE_CASE_FIELD, AGENT_FIELD, OUTBOUND_FIELD];
+
+/** Default agent when user leaves “Default AI agent” on Auto-detect. */
+export const CATEGORY_DEFAULT_AGENT: Record<IntegrationCategory, string> = {
+    file_cloud: "other_agent",
+    erp: "finance_agent",
+    mes: "compliance_agent",
+    quality: "compliance_agent",
+    maintenance: "compliance_agent",
+    generic: "other_agent",
+};
+
+export const USE_CASE_DEFAULT_AGENT: Record<string, string> = {
+    ap: "finance_agent",
+    ar: "finance_agent",
+    gl: "finance_agent",
+    payroll: "hr_agent",
+    hiring: "hr_agent",
+    contracts: "legal_agent",
+    po: "procurement_agent",
+    qc: "compliance_agent",
+    capa: "compliance_agent",
+    maintenance: "compliance_agent",
+};
+
+export const CATEGORY_DEFAULT_USE_CASE: Partial<Record<IntegrationCategory, string>> = {
+    erp: "ap",
+    quality: "qc",
+    maintenance: "maintenance",
+    mes: "qc",
+};
+
+export function getRecommendedAgentForIntegration(
+    item: IntegrationCatalogItem,
+    useCase?: string | null
+): string {
+    const uc = String(useCase || "").trim();
+    if (uc && USE_CASE_DEFAULT_AGENT[uc]) return USE_CASE_DEFAULT_AGENT[uc];
+    return CATEGORY_DEFAULT_AGENT[item.category] || "other_agent";
+}
+
+export function getRecommendedUseCaseForCategory(category: IntegrationCategory): string {
+    return CATEGORY_DEFAULT_USE_CASE[category] || "";
+}
+
+export function supportsMultiConnection(_providerId: string): boolean {
+    return true;
+}
+
+export function getAgentChatPath(agentId?: string | null): string {
+    const agent = String(agentId || "").trim();
+    if (!agent) return "/chat?new=1";
+    return `/chat?agent=${encodeURIComponent(agent)}&new=1`;
+}
 
 function guide(software: string, whereKeys: string, mapHint: string, verifyHint: string): string[] {
     return [
         whereKeys,
         `Paste the required credentials and connection details into the Connect form on this page.`,
+        `Set Use case (AP, QC, Hiring, …) and Default AI agent — e.g. SAP AP → Finance, MasterControl CAPA → Compliance.`,
+        `Each connection gets a unique push URL + API key. Your ${software} export job or middleware POSTs PDFs/CSV there (multipart file or JSON fileUrl).`,
         `Set sync interval (suggested: every 15 minutes for production docs, or end-of-shift for batch reports).`,
         mapHint,
         `Optionally add an Outbound results webhook URL so AI summaries, extracted fields, and status can be sent back to ${software} or your middleware.`,
         `Click Save connection, then Test connection to validate required fields.`,
         verifyHint,
+        `Open the matching agent chat (Finance, Compliance, HR, …) with document scope All to analyze ingested files.`,
         `After go-live, monitor last sync status on this card and check Activity for ingest events.`,
     ];
 }
@@ -93,8 +169,9 @@ const outboundNote = (system: string) =>
     `Bidirectional: inbound pulls documents into Visibility Docs; outbound can POST JSON summaries (documentId, filename, status, extracted fields, AI summary) to your webhook so ${system} or middleware can update tickets, quality records, or dashboards.`;
 
 /**
- * Curated catalog — only high-value factory / enterprise connectors.
- * Live today: google_drive (sync), custom_webhook (ingest). Others are setup + guides for rollout.
+ * Curated catalog — factory / enterprise connectors.
+ * Live inbound push (multipart + JSON fileUrl) works for every connection via unique push URL + key.
+ * Live pull sync today: google_drive, clickup (list sync + webhook). Others: push from middleware/ETL.
  */
 export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
     // —— File & Cloud ——
@@ -485,10 +562,57 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
 
     // —— Generic (always useful) ——
     {
+        id: "clickup",
+        name: "ClickUp",
+        category: "generic",
+        description:
+            "Connect ClickUp lists — webhooks pull task attachments into Visibility; agents analyze in chat. One connection per list + default agent.",
+        directions: "both",
+        fields: [
+            {
+                key: "label",
+                label: "Connection label",
+                type: "text",
+                required: true,
+                placeholder: "ClickUp Finance AP",
+            },
+            {
+                key: "apiToken",
+                label: "ClickUp API token",
+                type: "password",
+                required: true,
+                secret: true,
+                placeholder: "pk_…",
+                help: "ClickUp → Settings → Apps → API Token. Stored encrypted server-side.",
+            },
+            {
+                key: "listId",
+                label: "ClickUp List ID",
+                type: "text",
+                required: true,
+                placeholder: "901234567890",
+                help: "Open the list in ClickUp — the ID is in the URL after /l/",
+            },
+            AGENT_FIELD,
+            OUTBOUND_FIELD,
+        ],
+        guideSteps: [
+            "Create one connection per ClickUp list (Finance AP, HR hiring, Legal contracts, …).",
+            "Set Default AI agent so attachments route to Finance / HR / Legal automatically.",
+            "Save → Status tab → copy the ClickUp webhook URL (includes secret key).",
+            "In ClickUp: Settings → Integrations → Webhooks → paste URL → subscribe to taskUpdated (and taskCreated if you want).",
+            "Add an attachment to a task in that list — Visibility ingests it within seconds.",
+            "Optional: click Run test, then Sync now on Status to pull all existing attachments from the list.",
+            "Open the matching agent chat (Finance, HR, …) with document scope All — ask totals, summaries, charts.",
+        ],
+        setupNotes:
+            "Live today: ClickUp webhook → auto-ingest attachments + manual list sync. Chat analytics use extracted document data. Outbound: Send from library posts summaries to your webhook.",
+    },
+    {
         id: "custom_webhook",
         name: "Custom Webhook / REST API",
         category: "generic",
-        description: "Universal inbound HTTP endpoint — any factory system can POST files now. Best starting point.",
+        description: "Universal inbound HTTP — POST a file (multipart) or JSON with fileUrl. Create one connection per system + default agent.",
         directions: "both",
         fields: [
             {
@@ -502,17 +626,16 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             OUTBOUND_FIELD,
         ],
         guideSteps: [
-            "Enter a label (e.g. Plant A middleware) and optional default AI agent, then click Save connection.",
-            "Copy the Ingest URL and Integration API Key shown after connect.",
-            "From your factory software or middleware, POST multipart/form-data with field name file to the Ingest URL.",
-            "Include header X-Integration-Key: <your key>. Optional form fields: phase3Agent, filename.",
-            'Example (curl): curl -X POST "$INGEST_URL" -H "X-Integration-Key: $KEY" -F "file=@report.pdf" -F "phase3Agent=compliance_agent"',
+            "Create one connection per external system (e.g. SAP Finance, HR ATS, Legal CLM) — each gets its own ingest URL + API key.",
+            "Set Default AI agent on each connection (Finance, HR, Legal, …) so files route to the right agent automatically.",
+            "Inbound option A — multipart file POST: curl -X POST \"$INGEST_URL\" -H \"X-Integration-Key: $KEY\" -F \"file=@report.pdf\" -F \"phase3Agent=finance_agent\"",
+            "Inbound option B — JSON URL fetch (ClickUp/Jira/SaaS webhooks): curl -X POST \"$INGEST_URL\" -H \"X-Integration-Key: $KEY\" -H \"Content-Type: application/json\" -d '{\"fileUrl\":\"https://…/invoice.pdf\",\"filename\":\"invoice.pdf\",\"phase3Agent\":\"finance_agent\",\"externalRef\":{\"taskId\":\"123\"}}'",
             "Optional outbound: set Outbound results webhook URL to receive AI summaries after processing.",
             "Confirm the uploaded file appears under Documents with metadata.source = custom_webhook.",
             "Rotate the key anytime from Status / rotate key.",
         ],
         setupNotes:
-            "Live today: inbound file ingest via the API key and URL below. Outbound: set Outbound results webhook URL, then use Send from library (Status tab or document details) to POST summaries and extracted JSON to your endpoint.",
+            "Live today: multipart file ingest + JSON fileUrl fetch (smart webhook). One connection per system recommended — assign a default agent per connection. Outbound: use Send from library to POST summaries to your webhook.",
     },
     {
         id: "sql_csv_drop",

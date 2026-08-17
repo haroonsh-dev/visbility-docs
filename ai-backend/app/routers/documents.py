@@ -3,13 +3,15 @@ import asyncio
 import traceback
 import logging
 from uuid import uuid4
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body, Request, status
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body, Request, status, Depends
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from ..config import settings
 from ..database import SupabaseDB
 from ..models.schemas import UploadResponse, DocumentListResponse, ProcessResponse, ExtractionListResponse
 from ..services.document_service import document_service
+from ..auth_deps import get_internal_or_user
+from ..services import agent_registry
 from ..utils.file_utils import (
     save_upload_file,
     is_allowed_file,
@@ -20,6 +22,50 @@ from ..utils.file_utils import (
 logger = logging.getLogger("visibility-docs")
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
+
+
+def _enforce_tool(
+    tool_name: str,
+    principal: dict,
+    organization_id: str,
+    agent_id: str = "",
+    input_payload: dict | None = None,
+):
+    """Run the policy gate for a real mutation. Returns the evaluation.
+
+    Raises HTTPException(403) when PolicyDenied (Tier-3 without override) and
+    HTTPException(503) when the tool is blocked outright (unknown to the
+    registry, or the invocation could not be recorded to the audit trail).
+    """
+    try:
+        return agent_registry.enforce_tool_policy(
+            tool_name=tool_name,
+            organization_id=organization_id,
+            principal=principal,
+            agent_id=agent_id,
+            input_payload=input_payload,
+        )
+    except agent_registry.PolicyDenied as pd:
+        evaluation = pd.evaluation or {}
+        if evaluation.get("decision") == "blocked":
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "tool_blocked",
+                    "tool": tool_name,
+                    "reason": evaluation.get(
+                        "reason", "Tool call blocked — risk could not be assessed or audited."
+                    ),
+                },
+            )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "approval_required",
+                "tool": tool_name,
+                "reason": evaluation.get("reason", "Tier 3 tool requires approval"),
+            },
+        )
 
 
 class ClassifyTextRequest(BaseModel):
@@ -188,7 +234,17 @@ async def get_document_file(document_id: str, organization_id: str = ""):
     summary="Re-run full document pipeline (background)",
     description="Reset and re-run OCR, classification, extraction, and indexing in the background",
 )
-async def reprocess_document(document_id: str, organization_id: str = ""):
+async def reprocess_document(
+    document_id: str,
+    organization_id: str = "",
+    principal: dict = Depends(get_internal_or_user),
+):
+    _enforce_tool(
+        "documents.reprocess",
+        principal,
+        organization_id,
+        input_payload={"document_id": document_id},
+    )
     org_id = organization_id
     if not org_id:
         existing = document_service.get_document(document_id, "")
@@ -241,7 +297,12 @@ async def reprocess_document(document_id: str, organization_id: str = ""):
     summary="Process a document",
     description="Run OCR, classification, entity extraction, and indexing on a document",
 )
-async def process_document(document_id: str, request: Request, force: bool = False):
+async def process_document(
+    document_id: str,
+    request: Request,
+    force: bool = False,
+    principal: dict = Depends(get_internal_or_user),
+):
     org_id = request.query_params.get("organization_id")
     force_run = force or request.query_params.get("force", "").lower() in ("1", "true", "yes")
     if not org_id:
@@ -254,6 +315,13 @@ async def process_document(document_id: str, request: Request, force: bool = Fal
             pass
     if not org_id:
         raise HTTPException(status_code=400, detail="organization_id is required in query param or JSON body")
+
+    _enforce_tool(
+        "documents.reprocess",
+        principal,
+        org_id,
+        input_payload={"document_id": document_id, "force": force_run},
+    )
 
     existing = document_service.get_document(document_id, org_id)
     if existing and not force_run:
@@ -451,10 +519,22 @@ async def advance_workflow(document_id: str, organization_id: str = "", notes: s
     summary="Approve document in workflow",
     description="Approve the document at the current workflow stage",
 )
-async def approve_document(document_id: str, organization_id: str = "", approver: str = "", notes: str = ""):
+async def approve_document(
+    document_id: str,
+    organization_id: str = "",
+    approver: str = "",
+    notes: str = "",
+    principal: dict = Depends(get_internal_or_user),
+):
     from ..services.workflow_service import workflow_service
     if not approver:
         raise HTTPException(status_code=400, detail="approver name required")
+    _enforce_tool(
+        "workflow.approve",
+        principal,
+        organization_id,
+        input_payload={"document_id": document_id, "approver": approver, "notes": notes},
+    )
     return workflow_service.approve(document_id, organization_id, approver, notes)
 
 
@@ -463,10 +543,22 @@ async def approve_document(document_id: str, organization_id: str = "", approver
     summary="Reject document in workflow",
     description="Reject the document at the current workflow stage",
 )
-async def reject_document(document_id: str, organization_id: str = "", approver: str = "", reason: str = ""):
+async def reject_document(
+    document_id: str,
+    organization_id: str = "",
+    approver: str = "",
+    reason: str = "",
+    principal: dict = Depends(get_internal_or_user),
+):
     from ..services.workflow_service import workflow_service
     if not approver or not reason:
         raise HTTPException(status_code=400, detail="approver and reason required")
+    _enforce_tool(
+        "workflow.reject",
+        principal,
+        organization_id,
+        input_payload={"document_id": document_id, "approver": approver, "reason": reason},
+    )
     return workflow_service.reject(document_id, organization_id, approver, reason)
 
 
@@ -506,7 +598,17 @@ async def list_pending_approvals(organization_id: str = "", assigned_to: str = "
     summary="Delete a document",
     description="Delete document and all associated data",
 )
-async def delete_document(document_id: str, organization_id: str = ""):
+async def delete_document(
+    document_id: str,
+    organization_id: str = "",
+    principal: dict = Depends(get_internal_or_user),
+):
+    _enforce_tool(
+        "documents.delete",
+        principal,
+        organization_id,
+        input_payload={"document_id": document_id},
+    )
     return document_service.delete_document(document_id, organization_id)
 
 

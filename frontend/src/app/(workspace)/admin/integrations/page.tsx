@@ -15,6 +15,10 @@ import SendToIntegrationModal from "@/components/SendToIntegrationModal";
 import {
     INTEGRATION_CATALOG,
     INTEGRATION_CATEGORIES,
+    getRecommendedAgentForIntegration,
+    getRecommendedUseCaseForCategory,
+    getAgentChatPath,
+    supportsMultiConnection,
     type IntegrationCatalogItem,
     type IntegrationCategory,
     type IntegrationField,
@@ -30,6 +34,9 @@ type Connection = {
     ingestApiKeyMasked?: string;
     ingestApiKey?: string;
     ingestUrl?: string;
+    clickupWebhookUrl?: string;
+    connectionPushUrl?: string;
+    useCase?: string | null;
     isActive: boolean;
     intervalMinutes: number;
     syncMode?: "interval" | "daily" | "manual";
@@ -126,6 +133,7 @@ function IntegrationsContent() {
     const [syncing, setSyncing] = useState(false);
     const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
     const [sendOpen, setSendOpen] = useState(false);
+    const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
 
     const loadPlan = useCallback(async () => {
         try {
@@ -174,28 +182,60 @@ function IntegrationsContent() {
         loadConnections();
     }, [ready, canAccessPage, loadConnections]);
 
-    const byProvider = useMemo(() => {
-        const map = new Map<string, Connection>();
-        connections.forEach((c) => map.set(c.providerId, c));
+    const connectionCountByProvider = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const c of connections) {
+            if (!c.isActive) continue;
+            map.set(c.providerId, (map.get(c.providerId) || 0) + 1);
+        }
         return map;
     }, [connections]);
+
+    const isProviderConnected = useCallback(
+        (providerId: string) => (connectionCountByProvider.get(providerId) || 0) > 0,
+        [connectionCountByProvider]
+    );
+    const byProvider = useMemo(() => {
+        const map = new Map<string, Connection>();
+        for (const c of connections) {
+            if (!c.isActive) continue;
+            if (!map.has(c.providerId)) map.set(c.providerId, c);
+        }
+        return map;
+    }, [connections]);
+
+    const connectionsForActive = useMemo(() => {
+        if (!activeId) return [];
+        return connections.filter((c) => c.providerId === activeId && c.isActive);
+    }, [connections, activeId]);
+
+    const activeConn = useMemo(() => {
+        if (!activeId) return undefined;
+        if (supportsMultiConnection(activeId)) {
+            if (editingConnectionId) {
+                return connections.find((c) => c.connectionId === editingConnectionId);
+            }
+            return connectionsForActive[0];
+        }
+        return byProvider.get(activeId);
+    }, [activeId, byProvider, connections, connectionsForActive, editingConnectionId]);
 
     const connectionCounts = useMemo(() => {
         let connected = 0;
         for (const item of INTEGRATION_CATALOG) {
-            if (byProvider.get(item.id)?.isActive) connected += 1;
+            if (isProviderConnected(item.id)) connected += 1;
         }
         return {
             total: INTEGRATION_CATALOG.length,
             connected,
             disconnected: INTEGRATION_CATALOG.length - connected,
         };
-    }, [byProvider]);
+    }, [isProviderConnected]);
 
     const filtered = useMemo(() => {
         const q = search.trim().toLowerCase();
         const list = INTEGRATION_CATALOG.filter((item) => {
-            const connected = !!byProvider.get(item.id)?.isActive;
+            const connected = isProviderConnected(item.id);
             if (connFilter === "connected" && !connected) return false;
             if (connFilter === "disconnected" && connected) return false;
             if (category !== "all" && item.category !== category) return false;
@@ -209,16 +249,15 @@ function IntegrationsContent() {
         });
         // Connected first, then A–Z
         return list.sort((a, b) => {
-            const ac = byProvider.get(a.id)?.isActive ? 0 : 1;
-            const bc = byProvider.get(b.id)?.isActive ? 0 : 1;
+            const ac = isProviderConnected(a.id) ? 0 : 1;
+            const bc = isProviderConnected(b.id) ? 0 : 1;
             if (ac !== bc) return ac - bc;
             return a.name.localeCompare(b.name);
         });
-    }, [search, category, connFilter, byProvider]);
+    }, [search, category, connFilter, isProviderConnected]);
 
     const activeItem = activeId ? INTEGRATION_CATALOG.find((i) => i.id === activeId) || null : null;
-    const activeConn = activeId ? byProvider.get(activeId) : undefined;
-    const isConnected = !!activeConn?.isActive;
+    const isConnected = connectionsForActive.length > 0 || !!activeConn?.isActive;
 
     const fillForm = (item: IntegrationCatalogItem, conn?: Connection) => {
         const next: Record<string, string> = {};
@@ -251,6 +290,13 @@ function IntegrationsContent() {
         if (!next.dailyAt) next.dailyAt = "09:00";
         if (!next.autoSyncEnabled) next.autoSyncEnabled = "true";
         if (!next.intervalAutoUpload) next.intervalAutoUpload = "false";
+        if (!next.label) next.label = conn?.label || item.name;
+        if (!conn) {
+            if (!next.useCase) next.useCase = getRecommendedUseCaseForCategory(item.category);
+            if (!next.phase3Agent) {
+                next.phase3Agent = getRecommendedAgentForIntegration(item, next.useCase);
+            }
+        }
         setForm(next);
     };
 
@@ -262,7 +308,9 @@ function IntegrationsContent() {
         setTestResult(null);
         setDriveFiles([]);
         setSelectedFileIds(new Set());
-        const conn = byProvider.get(item.id);
+        const list = connections.filter((c) => c.providerId === item.id && c.isActive);
+        const conn = list[0] || byProvider.get(item.id);
+        setEditingConnectionId(conn?.connectionId || null);
         fillForm(item, conn);
         setPanelTab(conn?.isActive ? "status" : "guide");
     };
@@ -273,6 +321,19 @@ function IntegrationsContent() {
         setTestResult(null);
         setDriveFiles([]);
         setSelectedFileIds(new Set());
+        setEditingConnectionId(null);
+    };
+
+    const startNewConnection = () => {
+        if (!activeItem) return;
+        setEditingConnectionId(null);
+        setFreshIngestKey(null);
+        fillForm(activeItem);
+        setForm((prev) => ({
+            ...prev,
+            label: `${activeItem.name} — ${connectionsForActive.length + 1}`,
+        }));
+        setPanelTab("setup");
     };
 
     const setField = (key: string, value: string) => {
@@ -336,6 +397,8 @@ function IntegrationsContent() {
                 method: "POST",
                 body: JSON.stringify({
                     providerId: activeItem.id,
+                    connectionId: editingConnectionId || undefined,
+                    createNew: !editingConnectionId ? true : undefined,
                     label: form.label || activeItem.name,
                     direction: activeItem.directions,
                     intervalMinutes: Number(form.intervalMinutes) || 15,
@@ -348,8 +411,9 @@ function IntegrationsContent() {
             });
             const conn = res?.data?.connection as Connection | undefined;
             if (conn?.ingestApiKey) setFreshIngestKey(conn.ingestApiKey);
+            if (conn?.connectionId) setEditingConnectionId(conn.connectionId);
             setSuccess(res?.message || "Connected successfully");
-            await loadConnections();
+            await loadConnections({ force: true });
             setPanelTab("status");
         } catch (e: any) {
             setError(e.message || "Failed to save");
@@ -376,7 +440,7 @@ function IntegrationsContent() {
             const msg = res?.message || "Test passed — connection fields look valid.";
             setTestResult({ ok: true, message: msg });
             setSuccess(msg);
-            await loadConnections();
+            await loadConnections({ force: true });
         } catch (e: any) {
             const msg = e.message || "Test failed";
             setTestResult({ ok: false, message: msg });
@@ -396,7 +460,7 @@ function IntegrationsContent() {
             setSuccess("Disconnected");
             setFreshIngestKey(null);
             setTestResult(null);
-            await loadConnections();
+            await loadConnections({ force: true });
             fillForm(activeItem);
             setPanelTab("setup");
         } catch (e: any) {
@@ -433,6 +497,89 @@ function IntegrationsContent() {
             setError("Could not copy");
         }
     };
+
+    const copyIngestCurl = async (mode: "multipart" | "json") => {
+        if (!activeConn?.ingestUrl) {
+            setError("Save the connection first to get an ingest URL");
+            return;
+        }
+        const key = freshIngestKey || "YOUR_INGEST_KEY";
+        const agent =
+            activeConn.config?.phase3Agent != null
+                ? String(activeConn.config.phase3Agent)
+                : "finance_agent";
+        const url = activeConn.ingestUrl;
+        const curl =
+            mode === "multipart"
+                ? `curl -X POST "${url}" \\\n  -H "X-Integration-Key: ${key}" \\\n  -F "file=@/path/to/document.pdf"`
+                : `curl -X POST "${url}" \\\n  -H "X-Integration-Key: ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"fileUrl":"https://example.com/report.pdf","filename":"report.pdf","phase3Agent":"${agent}"}'`;
+        await copyText(curl);
+    };
+
+    const resolveClickUpWebhookUrl = (): string => {
+        if (!activeConn?.clickupWebhookUrl) return "";
+        if (activeConn.clickupWebhookUrl.includes("key=")) return activeConn.clickupWebhookUrl;
+        const key = freshIngestKey;
+        if (!key) return `${activeConn.clickupWebhookUrl}?key=••••`;
+        return `${activeConn.clickupWebhookUrl}?key=${encodeURIComponent(key)}`;
+    };
+
+    const copyClickUpWebhookUrl = async () => {
+        const url = resolveClickUpWebhookUrl();
+        if (!url || url.includes("••••")) {
+            setError("Rotate the ingest key to copy the full ClickUp webhook URL");
+            return;
+        }
+        await copyText(url);
+    };
+
+    const syncClickUpListNow = async () => {
+        if (!activeConn) return;
+        setSyncing(true);
+        setError(null);
+        setSuccess(null);
+        try {
+            const res = await apiRequest(`/docs/integrations/${activeConn.connectionId}/sync`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+            setSuccess(res?.message || "ClickUp sync finished");
+            await loadConnections({ force: true });
+        } catch (e: any) {
+            setError(e.message || "ClickUp sync failed");
+        } finally {
+            setSyncing(false);
+        }
+    };
+
+    const resolveConnectionPushUrl = (): string => {
+        if (!activeConn?.connectionPushUrl) return "";
+        if (activeConn.connectionPushUrl.includes("key=")) return activeConn.connectionPushUrl;
+        const key = freshIngestKey;
+        if (!key) return `${activeConn.connectionPushUrl}?key=••••`;
+        return `${activeConn.connectionPushUrl}?key=${encodeURIComponent(key)}`;
+    };
+
+    const copyConnectionPushUrl = async () => {
+        const url = resolveConnectionPushUrl();
+        if (!url || url.includes("••••")) {
+            setError("Rotate the ingest key to copy the full system push URL");
+            return;
+        }
+        await copyText(url);
+    };
+
+    const agentChatHref = useMemo(() => {
+        const agent = String(activeConn?.config?.phase3Agent || "").trim();
+        return getAgentChatPath(agent || undefined);
+    }, [activeConn?.config?.phase3Agent]);
+
+    const useCaseLabel = useMemo(() => {
+        const uc = String(activeConn?.config?.useCase || activeConn?.useCase || "").trim();
+        const field = INTEGRATION_CATALOG.flatMap((i) => i.fields).find((f) => f.key === "useCase");
+        const opt = field?.options?.find((o) => o.value === uc);
+        return opt?.label || uc || "General";
+    }, [activeConn?.config?.useCase, activeConn?.useCase]);
 
     const renderField = (field: IntegrationField) => {
         const value = form[field.key] ?? "";
@@ -752,7 +899,8 @@ function IntegrationsContent() {
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {filtered.map((item) => {
                         const conn = byProvider.get(item.id);
-                        const connected = !!conn?.isActive;
+                        const connected = isProviderConnected(item.id);
+                        const connectionCount = connectionCountByProvider.get(item.id) || 0;
                         return (
                             <button
                                 key={item.id}
@@ -777,7 +925,9 @@ function IntegrationsContent() {
                                     {connected ? (
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25">
                                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                            Connected
+                                            {connectionCount > 1
+                                                ? `${connectionCount} connected`
+                                                : "Connected"}
                                         </span>
                                     ) : (
                                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-surface-2 text-foreground-muted border border-border">
@@ -1221,13 +1371,155 @@ function IntegrationsContent() {
                                             </div>
                                         )}
 
-                                        {/* Ingest endpoint */}
+                                        {activeConn.providerId === "clickup" && (
+                                            <div className="rounded-2xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-4 space-y-3">
+                                                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)]">
+                                                    ClickUp webhook (auto-ingest attachments)
+                                                </p>
+                                                <p className="text-[11px] text-foreground-muted leading-relaxed">
+                                                    Paste this URL in ClickUp → Settings → Integrations → Webhooks.
+                                                    Attachments on list{" "}
+                                                    <strong>{String(activeConn.config?.listId || "—")}</strong> ingest
+                                                    automatically for agent{" "}
+                                                    <strong>
+                                                        {String(activeConn.config?.phase3Agent || "auto").replace(
+                                                            "_agent",
+                                                            ""
+                                                        )}
+                                                    </strong>
+                                                    .
+                                                </p>
+                                                <div className="space-y-1">
+                                                    <p className="text-[11px] text-foreground-muted">Webhook URL</p>
+                                                    <div className="flex gap-2">
+                                                        <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
+                                                            {resolveClickUpWebhookUrl() || "—"}
+                                                        </code>
+                                                        {resolveClickUpWebhookUrl() &&
+                                                            !resolveClickUpWebhookUrl().includes("••••") && (
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn-ghost p-2 rounded-lg border border-border"
+                                                                    onClick={copyClickUpWebhookUrl}
+                                                                    aria-label="Copy ClickUp webhook URL"
+                                                                >
+                                                                    <Copy size={14} />
+                                                                </button>
+                                                            )}
+                                                    </div>
+                                                    {freshIngestKey ? (
+                                                        <p className="text-[11px] text-amber-300 mt-1">
+                                                            Copy webhook URL now — key is shown only once after save/rotate.
+                                                        </p>
+                                                    ) : (
+                                                        <p className="text-[11px] text-foreground-muted mt-1">
+                                                            Rotate ingest key to reveal the full webhook URL for ClickUp.
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <div className="flex flex-wrap gap-2 pt-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={syncClickUpListNow}
+                                                        disabled={syncing}
+                                                        className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
+                                                    >
+                                                        {syncing ? (
+                                                            <Loader2 size={11} className="animate-spin" />
+                                                        ) : (
+                                                            <Download size={11} />
+                                                        )}
+                                                        Sync existing attachments now
+                                                    </button>
+                                                    <Link
+                                                        href={agentChatHref}
+                                                        className="text-[11px] rounded-lg border border-emerald-500/30 text-emerald-300 px-2.5 py-1.5 hover:bg-emerald-500/10 inline-flex items-center gap-1"
+                                                    >
+                                                        Open agent chat →
+                                                    </Link>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <div className="rounded-2xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-4 space-y-3">
                                             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)]">
-                                                Inbound ingest endpoint
+                                                System push endpoint (all connectors)
+                                            </p>
+                                            <p className="text-[11px] text-foreground-muted leading-relaxed">
+                                                Stream: <strong>{useCaseLabel}</strong> → agent{" "}
+                                                <strong>
+                                                    {String(activeConn.config?.phase3Agent || "auto").replace(
+                                                        "_agent",
+                                                        ""
+                                                    )}
+                                                </strong>
+                                                . Point {activeItem?.name || "your system"} exports here (one URL per
+                                                connection — e.g. SAP AP vs MasterControl QC).
+                                            </p>
+                                            {connectionsForActive.length > 0 && (
+                                                <div className="space-y-2">
+                                                    <select
+                                                        className="w-full rounded-lg border border-border bg-black/20 px-2.5 py-2 text-xs"
+                                                        value={activeConn.connectionId}
+                                                        onChange={(e) => {
+                                                            const id = e.target.value;
+                                                            setEditingConnectionId(id);
+                                                            const picked = connections.find(
+                                                                (c) => c.connectionId === id
+                                                            );
+                                                            if (activeItem && picked) fillForm(activeItem, picked);
+                                                        }}
+                                                    >
+                                                        {connectionsForActive.map((c) => (
+                                                            <option key={c.connectionId} value={c.connectionId}>
+                                                                {c.label}
+                                                                {c.config?.useCase
+                                                                    ? ` · ${String(c.config.useCase).toUpperCase()}`
+                                                                    : ""}
+                                                                {c.config?.phase3Agent
+                                                                    ? ` → ${String(c.config.phase3Agent).replace("_agent", "")}`
+                                                                    : ""}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <button
+                                                        type="button"
+                                                        onClick={startNewConnection}
+                                                        className="text-[11px] text-accent hover:underline"
+                                                    >
+                                                        + Add another connection (AP / AR / QC / …)
+                                                    </button>
+                                                </div>
+                                            )}
+                                            <div className="space-y-1">
+                                                <p className="text-[11px] text-foreground-muted">
+                                                    Per-connection push URL
+                                                </p>
+                                                <div className="flex gap-2">
+                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
+                                                        {resolveConnectionPushUrl() || "—"}
+                                                    </code>
+                                                    {resolveConnectionPushUrl() &&
+                                                        !resolveConnectionPushUrl().includes("••••") && (
+                                                            <button
+                                                                type="button"
+                                                                className="btn-ghost p-2 rounded-lg border border-border"
+                                                                onClick={copyConnectionPushUrl}
+                                                                aria-label="Copy push URL"
+                                                            >
+                                                                <Copy size={14} />
+                                                            </button>
+                                                        )}
+                                                </div>
+                                            </div>
+                                            <p className="text-[11px] text-foreground-muted">
+                                                Multipart: <code className="text-[10px]">-F file=@doc.pdf</code> · JSON:{" "}
+                                                <code className="text-[10px]">{`{"fileUrl":"https://…/doc.pdf"}`}</code>
                                             </p>
                                             <div className="space-y-1">
-                                                <p className="text-[11px] text-foreground-muted">URL</p>
+                                                <p className="text-[11px] text-foreground-muted">
+                                                    Shared ingest URL (alternative)
+                                                </p>
                                                 <div className="flex gap-2">
                                                     <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
                                                         {activeConn.ingestUrl || "—"}
@@ -1263,7 +1555,7 @@ function IntegrationsContent() {
                                                 </div>
                                                 {freshIngestKey ? (
                                                     <p className="text-[11px] text-amber-300 mt-1">
-                                                        Copy this key now — full key is shown only once.
+                                                        Copy push URL + key now — shown only once after save/rotate.
                                                     </p>
                                                 ) : (
                                                     <button
@@ -1274,6 +1566,28 @@ function IntegrationsContent() {
                                                         <RefreshCw size={11} /> Rotate key
                                                     </button>
                                                 )}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 pt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => copyIngestCurl("multipart")}
+                                                    className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1"
+                                                >
+                                                    <Copy size={11} /> Copy multipart cURL
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => copyIngestCurl("json")}
+                                                    className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1"
+                                                >
+                                                    <Copy size={11} /> Copy JSON cURL
+                                                </button>
+                                                <Link
+                                                    href={agentChatHref}
+                                                    className="text-[11px] rounded-lg border border-emerald-500/30 text-emerald-300 px-2.5 py-1.5 hover:bg-emerald-500/10 inline-flex items-center gap-1"
+                                                >
+                                                    Open agent chat →
+                                                </Link>
                                             </div>
                                         </div>
 

@@ -460,6 +460,20 @@ function ChatContent() {
     const prevPathRef = useRef<string | null>(null);
     const deepLinkAppliedRef = useRef(false);
 
+    // Render-safe mirror of lastPromptRef: whether the last exchange has a user
+    // prompt to replay. Derives from state so the UI never reads a ref during render.
+    const hasRegenerablePrompt = useMemo(() => {
+        if (!messages.length) return false;
+        const last = messages[messages.length - 1];
+        if (!last) return false;
+        if (last.role === "user") return Boolean((last.content || "").trim());
+        const priorUser = [...messages]
+            .slice(0, -1)
+            .reverse()
+            .find((m) => m.role === "user");
+        return Boolean(priorUser && (priorUser.content || "").trim());
+    }, [messages]);
+
     const pythonToNode = new Map(
         libraryDocs.filter((d) => d.pythonDocumentId).map((d) => [d.pythonDocumentId as string, d.documentId])
     );
@@ -1082,7 +1096,7 @@ function ChatContent() {
         } catch (e: any) {
             setMessages([
                 {
-                    id: `e_${Date.now()}`,
+                    id: `e_${crypto.randomUUID()}`,
                     role: "assistant",
                     content: `Could not load chat: ${e.message || "unknown error"}`,
                 },
@@ -2533,7 +2547,7 @@ function ChatContent() {
                                                         <button
                                                             type="button"
                                                             onClick={regenerateLast}
-                                                            disabled={sending || !lastPromptRef.current}
+                                                            disabled={sending || !hasRegenerablePrompt}
                                                             className={`group relative h-8 w-8 min-h-8 min-w-8 inline-flex items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${
                                                                 isDark
                                                                     ? "text-slate-400 hover:bg-white/10 hover:text-slate-200"

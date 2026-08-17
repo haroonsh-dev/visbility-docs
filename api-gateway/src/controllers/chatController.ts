@@ -20,6 +20,7 @@ import {
 } from '../services/aiServiceClient';
 import { PERMISSIONS } from '../types/permissions';
 import logger from '../utils/logger';
+import { getCapabilityReply, isCapabilityQuestion } from '../utils/chatCapability';
 import { recordActivityFromReq } from '../services/activityLog';
 import { DOC_TYPE_TO_AGENT, resolveCanonicalAgent } from '../services/documentStorage';
 import { requireAllowedAgent } from '../services/planService';
@@ -126,16 +127,34 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
             return res.status(400).json({ success: false, message: 'message is required' });
         }
 
+        const phase3AgentEarly =
+            (req.body.phase3_agent || req.body.phase3Agent || '').toString().trim() || undefined;
+
+        if (isCapabilityQuestion(message)) {
+            return res.json({
+                success: true,
+                data: {
+                    reply: getCapabilityReply(phase3AgentEarly),
+                    citations: [],
+                    sessionId,
+                    chatScope,
+                    model: 'capability-help',
+                    agentId: phase3AgentEarly || undefined,
+                },
+            });
+        }
+
         const isChitchat = (() => {
             const q = message.toLowerCase();
             if (!q || q.length > 80) return false;
+            if (isCapabilityQuestion(message)) return true;
             const docHints = [
                 'resume', 'cv', 'invoice', 'document', 'file', 'score', 'candidate',
                 'pdf', 'contract', 'find', 'show', 'list', 'who', 'what is', 'kitne',
                 'kitna', 'batao', 'tell me', 'search', 'summar', 'extract',
             ];
             if (docHints.some((h) => q.includes(h))) return false;
-            return /^(hi|hii+|hello|hey|hy|helo|hola|salam|assalam|aoa|slm|good\s*(morning|afternoon|evening|night)|gm|gn|how are you|how's it going|how r u|whats? up|sup|thanks?|thank you|thx|ty|shukriya|ok|okay|k|cool|great|nice|bye|goodbye|yes|no|yep|yup|nope|yeah|help|who are you|what can you do)\b/i.test(
+            return /^(hi|hii+|hello|hey|hy|helo|hola|salam|assalam|aoa|slm|good\s*(morning|afternoon|evening|night)|gm|gn|how are you|how's it going|how r u|whats? up|sup|thanks?|thank you|thx|ty|shukriya|ok|okay|k|cool|great|nice|bye|goodbye|yes|no|yep|yup|nope|yeah|help|who are you|what can you do|what you can do)\b/i.test(
                 q
             );
         })();

@@ -75,7 +75,8 @@ const IntegrationConnectionSchema = new Schema<IIntegrationConnection>(
     { timestamps: true }
 );
 
-IntegrationConnectionSchema.index({ organizationId: 1, providerId: 1 }, { unique: true });
+IntegrationConnectionSchema.index({ organizationId: 1, providerId: 1 });
+IntegrationConnectionSchema.index({ organizationId: 1, providerId: 1, label: 1 });
 IntegrationConnectionSchema.index({ autoSyncEnabled: 1, nextSyncAt: 1, isActive: 1 });
 IntegrationConnectionSchema.index({ organizationId: 1, isActive: 1 });
 

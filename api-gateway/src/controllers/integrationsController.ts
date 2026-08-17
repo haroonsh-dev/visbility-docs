@@ -2,13 +2,17 @@ import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import IntegrationConnection, { IntegrationSyncMode } from '../models/IntegrationConnection';
-import User from '../models/User';
 import { INTEGRATION_PROVIDER_IDS, SECRET_FIELD_KEYS } from '../constants/integrations';
 import { getActiveSubscription } from '../services/planService';
-import { recordActivityFromReq, recordActivity } from '../services/activityLog';
-import { ensureUploadDir, saveUploadedFile } from '../services/documentStorage';
-import { assertStorageAvailable } from '../services/planService';
-import { hasPermission, type AuthUser } from '../services/accessScope';
+import { recordActivityFromReq } from '../services/activityLog';
+import {
+    fetchRemoteIngestFile,
+    ingestFileForConnection,
+    buildConnectionPushUrl,
+    processIngestHttpRequest,
+    resolveIngestConnection,
+} from '../services/integrationIngestService';
+import { hasPermission } from '../services/accessScope';
 import { PERMISSIONS } from '../types/permissions';
 import {
     computeNextSyncAt,
@@ -18,6 +22,14 @@ import {
 } from '../services/integrationSyncService';
 import { normalizeFolderId, parseCredentials } from '../services/googleDriveService';
 import { sendDocumentsViaIntegration, sendRawFileViaIntegration } from '../services/integrationSendService';
+import { checkToolPolicy } from '../services/aiServiceClient';
+import { policyBlocksSend } from '../utils/policyGate';
+import {
+    buildClickUpWebhookUrl,
+    processClickUpWebhook,
+    syncClickUpList,
+    verifyClickUpToken,
+} from '../services/clickupBridgeService';
 import fs from 'fs';
 
 function maskSecret(value: string): string {
@@ -124,6 +136,14 @@ function publicConnection(doc: any, req: Request) {
         ingestApiKeyMasked: maskSecret(doc.ingestApiKey),
         ingestApiKey: undefined as string | undefined,
         ingestUrl,
+        clickupWebhookUrl:
+            doc.providerId === 'clickup' && doc.connectionId
+                ? `${base.replace(/\/$/, '')}/api/docs/integrations/clickup/${doc.connectionId}/webhook`
+                : undefined,
+        connectionPushUrl: doc.connectionId
+            ? `${base.replace(/\/$/, '')}/api/docs/integrations/connections/${doc.connectionId}/push`
+            : undefined,
+        useCase: doc.config?.useCase ? String(doc.config.useCase) : null,
         isActive: doc.isActive,
         intervalMinutes,
         syncMode: doc.syncMode || 'interval',
@@ -140,6 +160,7 @@ function publicConnection(doc: any, req: Request) {
         outboundWebhookUrl: doc.config?.outboundWebhookUrl
             ? String(doc.config.outboundWebhookUrl)
             : null,
+        defaultPhase3Agent: doc.config?.phase3Agent ? String(doc.config.phase3Agent) : null,
         hasOutboundWebhook: Boolean(String(doc.config?.outboundWebhookUrl || '').trim()),
         outboundFolderId: doc.config?.outboundFolderId
             ? String(doc.config.outboundFolderId)
@@ -203,12 +224,15 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
         config.autoSyncEnabled = autoSyncEnabled;
         config.intervalAutoUpload = intervalAutoUpload;
         if (fields.phase3Agent != null) config.phase3Agent = String(fields.phase3Agent);
+        if (fields.useCase != null) config.useCase = String(fields.useCase);
         if (Object.prototype.hasOwnProperty.call(fields, 'outboundWebhookUrl')) {
             const outbound = String(fields.outboundWebhookUrl ?? '').trim();
             if (outbound) config.outboundWebhookUrl = outbound;
         }
         if (fields.serviceAccountEmail) config.serviceAccountEmail = String(fields.serviceAccountEmail);
         if (fields.folderId) config.folderId = normalizeFolderId(String(fields.folderId));
+        if (fields.listId) config.listId = String(fields.listId).trim();
+        if (fields.clickupListId) config.listId = String(fields.clickupListId).trim();
 
         // Normalize Google service-account JSON/PEM so OpenSSL can read the stored key
         if (providerId === 'google_drive' && secrets.privateKey) {
@@ -232,7 +256,23 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
                 ? computeNextSyncAt(syncMode, intervalMinutes, dailyAt, new Date())
                 : null;
 
-        let doc = await IntegrationConnection.findOne({ organizationId: orgId, providerId });
+        const connectionIdParam = String(req.body?.connectionId || '').trim();
+        const forceCreate = req.body?.createNew === true || String(req.body?.createNew || '') === 'true';
+
+        let doc =
+            connectionIdParam && !forceCreate
+                ? await IntegrationConnection.findOne({ connectionId: connectionIdParam, organizationId: orgId })
+                : null;
+
+        if (!doc && !forceCreate) {
+            const labelKey = String(label || providerId).trim();
+            doc = await IntegrationConnection.findOne({
+                organizationId: orgId,
+                providerId,
+                label: labelKey,
+            });
+        }
+
         const isNew = !doc;
         if (!doc) {
             doc = await IntegrationConnection.create({
@@ -302,6 +342,24 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
         // Show full ingest key once on create
         if (isNew) {
             payload.ingestApiKey = doc.ingestApiKey;
+            const base =
+                process.env.PUBLIC_API_URL ||
+                process.env.API_PUBLIC_URL ||
+                `${req.protocol}://${req.get('host')}`;
+            if (doc.ingestApiKey) {
+                (payload as Record<string, unknown>).connectionPushUrl = buildConnectionPushUrl(
+                    base,
+                    doc.connectionId,
+                    doc.ingestApiKey
+                );
+            }
+            if (doc.providerId === 'clickup' && doc.ingestApiKey) {
+                (payload as Record<string, unknown>).clickupWebhookUrl = buildClickUpWebhookUrl(
+                    base,
+                    doc.connectionId,
+                    doc.ingestApiKey
+                );
+            }
         }
 
         res.status(isNew ? 201 : 200).json({
@@ -357,9 +415,61 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
             }
         }
 
+        if (doc.providerId === 'clickup') {
+            const missing: string[] = [];
+            if (!doc.ingestApiKey) missing.push('ingestApiKey');
+            if (!doc.secrets?.apiToken) missing.push('apiToken');
+            if (missing.length) {
+                doc.lastStatus = `test_failed: missing ${missing.join(', ')}`;
+                await doc.save();
+                return res.status(400).json({
+                    success: false,
+                    message: `Test failed — missing: ${missing.join(', ')}`,
+                    data: { ok: false, missing },
+                });
+            }
+            try {
+                const info = await verifyClickUpToken(doc.secrets.apiToken);
+                doc.lastStatus = `test_ok: ClickUp ${info.user} (${info.teams} team(s))`;
+                doc.lastSyncAt = new Date();
+                await doc.save();
+                const base =
+                    process.env.PUBLIC_API_URL ||
+                    process.env.API_PUBLIC_URL ||
+                    `${req.protocol}://${req.get('host')}`;
+                const clickupWebhookUrl = buildClickUpWebhookUrl(
+                    base,
+                    doc.connectionId,
+                    doc.ingestApiKey
+                );
+                return res.json({
+                    success: true,
+                    message:
+                        'ClickUp token valid. Paste the webhook URL into ClickUp → Integrations → Webhooks. Task attachments ingest automatically.',
+                    data: {
+                        ok: true,
+                        clickupUser: info.user,
+                        clickupWebhookUrl,
+                        defaultPhase3Agent: doc.config?.phase3Agent || null,
+                        listId: doc.config?.listId || null,
+                    },
+                });
+            } catch (e: any) {
+                doc.lastStatus = `test_failed: ${e?.message || 'ClickUp test failed'}`;
+                await doc.save();
+                return res.status(400).json({
+                    success: false,
+                    message: e?.message || 'ClickUp test failed',
+                    data: { ok: false },
+                });
+            }
+        }
+
         const missing: string[] = [];
         if (!doc.providerId) missing.push('providerId');
         if (doc.providerId === 'custom_webhook') {
+            if (!doc.ingestApiKey) missing.push('ingestApiKey');
+        } else if (doc.providerId === 'sql_csv_drop') {
             if (!doc.ingestApiKey) missing.push('ingestApiKey');
         } else {
             const cfg = doc.config || {};
@@ -392,10 +502,25 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
         doc.lastSyncAt = new Date();
         await doc.save();
 
+        const base =
+            process.env.PUBLIC_API_URL ||
+            process.env.API_PUBLIC_URL ||
+            `${req.protocol}://${req.get('host')}`;
+        const ingestUrl = `${base.replace(/\/$/, '')}/api/docs/integrations/ingest`;
+        const webhookHint =
+            doc.providerId === 'custom_webhook' || doc.providerId === 'sql_csv_drop'
+                ? ' Supports multipart file POST and JSON { "fileUrl": "https://…" }.'
+                : '';
+
         res.json({
             success: true,
-            message: 'Connection fields look valid.',
-            data: { ok: true, lastStatus: doc.lastStatus },
+            message: `Connection fields look valid.${webhookHint}`,
+            data: {
+                ok: true,
+                lastStatus: doc.lastStatus,
+                ingestUrl: doc.ingestApiKey ? ingestUrl : undefined,
+                defaultPhase3Agent: doc.config?.phase3Agent || null,
+            },
         });
     } catch (error) {
         next(error);
@@ -451,10 +576,38 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
         if (!doc) {
             return res.status(404).json({ success: false, message: 'Integration not found' });
         }
+
+        if (doc.providerId === 'clickup') {
+            const result = await syncClickUpList(doc);
+            const summary = `ingested=${result.ingested}, skipped=${result.skipped}, failed=${result.failed}, tasks=${result.taskCount}`;
+            doc.lastSyncAt = new Date();
+            doc.lastStatus = result.failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
+            doc.lastSyncSummary = summary;
+            await doc.save();
+
+            recordActivityFromReq(req, {
+                action: 'integrations.sync',
+                category: 'document',
+                resourceType: 'integration',
+                resourceId: doc.connectionId,
+                message: `ClickUp list sync: ${summary}`,
+                metadata: { summary, ingested: result.ingested },
+            });
+
+            return res.json({
+                success: true,
+                message: `ClickUp sync finished — ${summary}`,
+                data: {
+                    ...result,
+                    connection: publicConnection(doc.toObject(), req),
+                },
+            });
+        }
+
         if (doc.providerId !== 'google_drive') {
             return res.status(400).json({
                 success: false,
-                message: 'Sync is currently available for Google Drive only',
+                message: 'Sync is available for Google Drive and ClickUp (list pull) only',
             });
         }
 
@@ -717,6 +870,30 @@ export const sendViaIntegration = async (req: Request, res: Response, next: Next
         const orgId = await requireAdminWithActivePlan(req, res);
         if (!orgId) return;
 
+        // Policy gate: integrations.send is a Tier-3 (high-risk, outbound) tool.
+        // This controller already enforced admin + active-plan RBAC, so the
+        // gateway presents that as the tool override. The ai-backend records the
+        // decision in the audit trail and can still block if the tool is unknown
+        // to the registry (decision == "blocked").
+        const policy = await checkToolPolicy('integrations.send', orgId, ['tool.integrations.send'], req.user?.userId);
+        if (policy && policyBlocksSend(policy.decision)) {
+            return res.status(403).json({
+                success: false,
+                message: policy.reason || 'Outbound integration send was blocked by policy.',
+            });
+        }
+        // Fail CLOSED: a null check means the policy service is unreachable. A
+        // Tier-3 outbound send must not proceed without a recorded policy decision
+        // (the audit row is written by the ai-backend on this call), so block it
+        // rather than silently sending data outward.
+        if (!policy) {
+            return res.status(503).json({
+                success: false,
+                code: 'POLICY_SERVICE_UNAVAILABLE',
+                message: 'Tool policy service is unavailable — outbound integration send is blocked until the AI backend is reachable.',
+            });
+        }
+
         const doc = await IntegrationConnection.findOne({
             connectionId: req.params.id,
             organizationId: orgId,
@@ -924,106 +1101,118 @@ export const uploadFileViaIntegration = async (req: Request, res: Response, next
 
 /** Public ingest endpoint — authenticated via X-Integration-Key */
 export const ingestViaIntegration = async (req: Request, res: Response, next: NextFunction) => {
+    let multipartTmp = '';
     try {
         const apiKey = String(req.headers['x-integration-key'] || req.body?.apiKey || '').trim();
-        if (!apiKey) {
+        const connection = await resolveIngestConnection(apiKey);
+        if (!connection) {
             return res.status(401).json({
                 success: false,
-                message: 'Missing X-Integration-Key header',
+                message: apiKey ? 'Invalid integration key' : 'Missing X-Integration-Key header',
+            });
+        }
+
+        if (req.file) multipartTmp = req.file.path;
+        const result = await processIngestHttpRequest(req, connection);
+
+        res.status(201).json({
+            success: true,
+            message: result.ingestMode === 'file_url' ? 'Document ingested from URL' : 'Document ingested',
+            data: result,
+        });
+    } catch (error: any) {
+        if (multipartTmp && fs.existsSync(multipartTmp)) {
+            try {
+                fs.unlinkSync(multipartTmp);
+            } catch {
+                /* ignore */
+            }
+        }
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
+                success: false,
+                code: error.code,
+                message: error.message,
+            });
+        }
+        next(error);
+    }
+};
+
+/** Per-connection push URL — for ERP/QMS middleware that needs a unique URL per system stream. */
+export const pushViaConnection = async (req: Request, res: Response, next: NextFunction) => {
+    let multipartTmp = '';
+    try {
+        const connectionId = String(req.params.id || '').trim();
+        const key = String(req.query.key || req.headers['x-integration-key'] || req.body?.apiKey || '').trim();
+        if (!connectionId || !key) {
+            return res.status(401).json({
+                success: false,
+                message: 'Missing connection id or key (query ?key= or X-Integration-Key header)',
+            });
+        }
+
+        const connection = await IntegrationConnection.findOne({ connectionId, isActive: true });
+        if (!connection || connection.ingestApiKey !== key) {
+            return res.status(401).json({ success: false, message: 'Invalid connection push key' });
+        }
+
+        if (req.file) multipartTmp = req.file.path;
+        const result = await processIngestHttpRequest(req, connection);
+
+        res.status(201).json({
+            success: true,
+            message: result.ingestMode === 'file_url' ? 'Document ingested from URL' : 'Document ingested',
+            data: result,
+        });
+    } catch (error: any) {
+        if (multipartTmp && fs.existsSync(multipartTmp)) {
+            try {
+                fs.unlinkSync(multipartTmp);
+            } catch {
+                /* ignore */
+            }
+        }
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
+                success: false,
+                code: error.code,
+                message: error.message,
+            });
+        }
+        next(error);
+    }
+};
+
+/** Public ClickUp webhook — authenticated via ?key= ingest API key (ClickUp cannot set custom headers). */
+export const clickUpWebhook = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const connectionId = String(req.params.id || '').trim();
+        const key = String(req.query.key || req.headers['x-integration-key'] || '').trim();
+        if (!connectionId || !key) {
+            return res.status(401).json({
+                success: false,
+                message: 'Missing connection id or key query parameter',
             });
         }
 
         const connection = await IntegrationConnection.findOne({
-            ingestApiKey: apiKey,
+            connectionId,
             isActive: true,
+            providerId: 'clickup',
         });
-        if (!connection) {
-            return res.status(401).json({ success: false, message: 'Invalid integration key' });
+        if (!connection || connection.ingestApiKey !== key) {
+            return res.status(401).json({ success: false, message: 'Invalid ClickUp webhook key' });
         }
 
-        const file = req.file;
-        if (!file) {
-            return res.status(400).json({ success: false, message: 'No file uploaded (multipart field: file)' });
-        }
-
-        const storageCheck = await assertStorageAvailable(connection.organizationId, file.size || 0);
-        if (!storageCheck.ok) {
-            return res.status(403).json({
-                success: false,
-                code: 'STORAGE_LIMIT',
-                message: storageCheck.message,
-            });
-        }
-
-        const adminUser =
-            (await User.findOne({
-                organizationId: connection.organizationId,
-                role: 'admin',
-                status: 'active',
-            }).lean()) ||
-            (await User.findOne({ userId: connection.createdBy, status: 'active' }).lean());
-
-        if (!adminUser) {
-            return res.status(500).json({ success: false, message: 'No active admin user for organization' });
-        }
-
-        const authUser: AuthUser = {
-            userId: adminUser.userId,
-            role: adminUser.role,
-            organizationId: connection.organizationId,
-            permissions: undefined,
-        };
-
-        const phase3Agent =
-            String(req.body?.phase3Agent || connection.config?.phase3Agent || '').trim() || undefined;
-
-        ensureUploadDir();
-        const { doc, aiModelResponse } = await saveUploadedFile(authUser, file, phase3Agent);
-
-        // Tag source
-        doc.metadata = {
-            ...(doc.metadata || {}),
-            source: connection.providerId,
-            integrationConnectionId: connection.connectionId,
-            integrationLabel: connection.label,
-        };
-        await doc.save();
-
-        connection.lastSyncAt = new Date();
-        connection.lastStatus = 'ingest_ok';
-        await connection.save();
-
-        recordActivity({
-            organizationId: connection.organizationId,
-            actorUserId: adminUser.userId,
-            actorEmail: adminUser.email,
-            actorRole: adminUser.role,
-            action: 'integrations.ingest',
-            category: 'document',
-            resourceType: 'document',
-            resourceId: doc.documentId,
-            message: `Integration ingest (${connection.providerId}): ${doc.originalFilename}`,
-            metadata: {
-                providerId: connection.providerId,
-                connectionId: connection.connectionId,
-                filename: doc.originalFilename,
-            },
-        });
-
-        res.status(201).json({
-            success: true,
-            message: 'Document ingested',
-            data: {
-                documentId: doc.documentId,
-                filename: doc.originalFilename,
-                status: doc.status,
-                providerId: connection.providerId,
-                aiModelResponse,
-            },
-        });
+        const result = await processClickUpWebhook(connection, req.body || {});
+        return res.json({ success: true, ...result });
     } catch (error: any) {
         if (error?.statusCode) {
-            return res.status(error.statusCode).json({ success: false, message: error.message });
+            return res.status(error.statusCode).json({
+                success: false,
+                message: error.message,
+            });
         }
         next(error);
     }

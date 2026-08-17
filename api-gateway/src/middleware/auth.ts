@@ -65,7 +65,9 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
         return res.status(401).json({
             success: false,
             message: 'Invalid or expired token',
-            error: error.message,
+            // Never echo the underlying error to the client — it can leak
+            // internals (DB names, paths, stack traces). Log it instead.
+            ...(process.env.NODE_ENV !== 'production' && { detail: String(error?.message || '') }),
         });
     }
 };

@@ -58,6 +58,7 @@ export type ComplianceAnalyticsCoverage = {
     documentsInScope: number;
     documentsWithExpiry: number;
     documentsWithFindings: number;
+    warnings?: string[];
     files?: Array<{
         documentId: string;
         filename: string;

@@ -4,7 +4,7 @@ import PlanRequest from '../models/PlanRequest';
 import OrgSubscription from '../models/OrgSubscription';
 import Organization from '../models/Organization';
 import User from '../models/User';
-import { PLAN_AGENT_IDS, PLAN_AGENT_LABELS } from '../models/AgentStoragePricing';
+import { PLAN_AGENT_IDS } from '../models/AgentStoragePricing';
 import { recordActivityFromReq } from '../services/activityLog';
 import {
     activateSubscription,
@@ -16,6 +16,7 @@ import {
     getOrgStorageUsedBytes,
     getEffectiveAllowedAgentIds,
     quoteFromPricing,
+    resolvePlanAgentLabels,
 } from '../services/planService';
 
 function asNumber(v: unknown, fallback = 0): number {
@@ -23,22 +24,25 @@ function asNumber(v: unknown, fallback = 0): number {
     return Number.isFinite(n) ? n : fallback;
 }
 
-function normalizeAgentIds(raw: unknown): string[] {
+function normalizeAgentIds(raw: unknown, allowed?: Iterable<string> | Set<string>): string[] {
     if (!Array.isArray(raw)) return [];
-    const allowed = new Set<string>(PLAN_AGENT_IDS);
-    return [...new Set(raw.map((x) => String(x)).filter((id) => allowed.has(id)))];
+    const allow = allowed ? new Set<string>(allowed) : new Set<string>(PLAN_AGENT_IDS);
+    return [...new Set(raw.map((x) => String(x)).filter((id) => allow.has(id)))];
 }
 
 // ── Super Admin: Pricing ──────────────────────────────────────
 
 export const getPricing = async (_req: Request, res: Response, next: NextFunction) => {
     try {
-        const pricing = await getOrCreatePricing();
+        const [pricing, agentLabels] = await Promise.all([
+            getOrCreatePricing(),
+            resolvePlanAgentLabels(),
+        ]);
         res.json({
             success: true,
             data: {
                 pricing,
-                agentLabels: PLAN_AGENT_LABELS,
+                agentLabels,
             },
         });
     } catch (error) {
@@ -55,15 +59,18 @@ export const updatePricing = async (req: Request, res: Response, next: NextFunct
         if (body.pricePerGbMonthly != null) pricing.pricePerGbMonthly = asNumber(body.pricePerGbMonthly);
         if (body.pricePerGbYearly != null) pricing.pricePerGbYearly = asNumber(body.pricePerGbYearly);
         if (body.freeStorageGb != null) pricing.freeStorageGb = asNumber(body.freeStorageGb, 1);
+        // The pricing doc is seeded from the registry catalog, so its rows are
+        // the runtime allowlist — agents added upstream appear here automatically.
+        const catalogIds = pricing.agents.map((a) => a.agentId);
         if (Array.isArray(body.freeAgentIds)) {
-            pricing.freeAgentIds = normalizeAgentIds(body.freeAgentIds);
+            pricing.freeAgentIds = normalizeAgentIds(body.freeAgentIds, catalogIds);
             if (!pricing.freeAgentIds.length) pricing.freeAgentIds = ['other_agent'];
         }
         if (Array.isArray(body.agents)) {
             const byId = new Map(pricing.agents.map((a) => [a.agentId, a]));
             for (const row of body.agents) {
                 const agentId = String(row.agentId || '');
-                if (!(PLAN_AGENT_IDS as readonly string[]).includes(agentId)) continue;
+                if (!catalogIds.includes(agentId)) continue;
                 const existing = byId.get(agentId);
                 if (existing) {
                     if (row.monthlyPrice != null) existing.monthlyPrice = asNumber(row.monthlyPrice);
@@ -603,9 +610,10 @@ export const patchSubscription = async (req: Request, res: Response, next: NextF
 
 export const listPlansPublic = async (_req: Request, res: Response, next: NextFunction) => {
     try {
-        const [plans, pricing] = await Promise.all([
+        const [plans, pricing, agentLabels] = await Promise.all([
             Plan.find({ status: 'active' }).sort({ price: 1 }).lean(),
             getOrCreatePricing(),
+            resolvePlanAgentLabels(),
         ]);
         res.json({
             success: true,
@@ -619,7 +627,7 @@ export const listPlansPublic = async (_req: Request, res: Response, next: NextFu
                     freeAgentIds: pricing.freeAgentIds,
                     freeStorageGb: pricing.freeStorageGb,
                 },
-                agentLabels: PLAN_AGENT_LABELS,
+                agentLabels,
             },
         });
     } catch (error) {
@@ -758,10 +766,11 @@ export const getMySubscription = async (req: Request, res: Response, next: NextF
                 },
             });
         }
-        const [orgEntitlement, storageUsedBytes, effective] = await Promise.all([
+        const [orgEntitlement, storageUsedBytes, effective, agentLabels] = await Promise.all([
             getOrgEntitlement(organizationId),
             getOrgStorageUsedBytes(organizationId),
             getEffectiveAllowedAgentIds(req.user),
+            resolvePlanAgentLabels(),
         ]);
         res.json({
             success: true,
@@ -773,7 +782,7 @@ export const getMySubscription = async (req: Request, res: Response, next: NextF
                     departmentId: effective.departmentId,
                 },
                 storageUsedBytes,
-                agentLabels: PLAN_AGENT_LABELS,
+                agentLabels,
             },
         });
     } catch (error) {

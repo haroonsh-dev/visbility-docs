@@ -12,8 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
-from .routers import documents, search, chat, auth, reports, groq_config, settings as settings_router, hr
-from .auth_deps import get_current_user, get_optional_user
+from .routers import documents, search, chat, auth, reports, groq_config, settings as settings_router, hr, agents as agents_router
+from .auth_deps import get_internal_or_user
 from fastapi import Depends
 from .config import settings
 from .services.groq_service import GroqRateLimitExceeded
@@ -136,13 +136,21 @@ async def global_exception_handler(request: Request, exc):
 
 
 app.include_router(auth.router)
-app.include_router(documents.router, dependencies=[Depends(get_optional_user)])
-app.include_router(search.router, dependencies=[Depends(get_optional_user)])
-app.include_router(chat.router, dependencies=[Depends(get_optional_user)])
-app.include_router(hr.router, dependencies=[Depends(get_optional_user)])
-app.include_router(reports.router, dependencies=[Depends(get_optional_user)])
+# The gateway signs every request with X-Internal-Service-Key; any caller that
+# can't prove it is the gateway (or a valid user JWT) is rejected at the router
+# level. This closes the "ai-backend trusts the gateway blindly" hole.
+app.include_router(documents.router, dependencies=[Depends(get_internal_or_user)])
+app.include_router(search.router, dependencies=[Depends(get_internal_or_user)])
+app.include_router(chat.router, dependencies=[Depends(get_internal_or_user)])
+app.include_router(hr.router, dependencies=[Depends(get_internal_or_user)])
+app.include_router(reports.router, dependencies=[Depends(get_internal_or_user)])
 app.include_router(groq_config.router)
 app.include_router(settings_router.router)
+# Agents/tools surface: catalog reads are meant to be introspectable, but the
+# audit trail (GET /tools/audit) is org-scoped data. The gateway signs every call
+# with the internal key, so requiring it here closes that exposure without
+# breaking the frontend's indirect access (it goes through the gateway).
+app.include_router(agents_router.router, dependencies=[Depends(get_internal_or_user)])
 
 
 @app.get("/", tags=["status"])

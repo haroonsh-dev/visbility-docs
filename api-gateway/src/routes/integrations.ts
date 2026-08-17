@@ -3,6 +3,7 @@ import fs from 'fs';
 import multer from 'multer';
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth';
+import { ingestLimiter } from '../middleware/rateLimiter';
 import {
     listIntegrations,
     saveIntegration,
@@ -10,6 +11,8 @@ import {
     deleteIntegration,
     rotateIngestKey,
     ingestViaIntegration,
+    clickUpWebhook,
+    pushViaConnection,
     listIntegrationFiles,
     syncIntegrationFiles,
     listSyncInbox,
@@ -31,7 +34,11 @@ const upload = multer({
 const router = Router();
 
 /** Public ingest — no JWT; uses X-Integration-Key */
-router.post('/ingest', upload.single('file'), ingestViaIntegration);
+router.post('/ingest', ingestLimiter, upload.single('file'), ingestViaIntegration);
+/** Per-system push URL — unique per connection (SAP AP, MasterControl QC, …) */
+router.post('/connections/:id/push', ingestLimiter, upload.single('file'), pushViaConnection);
+/** Public ClickUp webhook — ?key= matches connection ingest API key */
+router.post('/clickup/:id/webhook', ingestLimiter, clickUpWebhook);
 
 router.use(authenticate);
 router.get('/', listIntegrations);

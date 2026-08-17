@@ -169,6 +169,25 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
 CREATE INDEX IF NOT EXISTS idx_workflow_doc_id ON workflow_instances(document_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow_instances(status);
 
+-- Agent Tool Gateway audit trail (plan Step 4: tamper-proof tool invocation log)
+CREATE TABLE IF NOT EXISTS agent_tool_audit (
+    id BIGSERIAL PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    agent_id TEXT,
+    user_id TEXT,
+    risk_tier TEXT NOT NULL DEFAULT 'read',
+    decision TEXT NOT NULL DEFAULT 'allow',
+    input_payload TEXT,
+    result_status TEXT NOT NULL DEFAULT 'started',
+    result_summary TEXT,
+    duration_ms INTEGER,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tool_audit_org ON agent_tool_audit(organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_tool_audit_tool ON agent_tool_audit(tool_name);
+
 CREATE OR REPLACE FUNCTION match_documents(
     query_embedding VECTOR(1024),
     match_threshold FLOAT DEFAULT 0.7,

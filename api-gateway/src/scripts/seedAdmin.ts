@@ -74,9 +74,16 @@ async function upsertUser(opts: {
 async function main() {
     await dbConnect();
 
-    const superPwd = process.env.SEED_SUPER_PASSWORD || 'Super@12345';
-    const adminPwd = process.env.SEED_ADMIN_PASSWORD || 'Admin@12345';
-    const teamPwd = process.env.SEED_TEAM_PASSWORD || 'Team@12345';
+    const superPwd = process.env.SEED_SUPER_PASSWORD;
+    const adminPwd = process.env.SEED_ADMIN_PASSWORD;
+    const teamPwd = process.env.SEED_TEAM_PASSWORD;
+    if (!superPwd || !adminPwd || !teamPwd) {
+        console.error(
+            'Seed passwords must be provided via environment (no defaults are allowed):\n' +
+            '  SEED_SUPER_PASSWORD, SEED_ADMIN_PASSWORD, SEED_TEAM_PASSWORD'
+        );
+        process.exit(1);
+    }
 
     await upsertUser({
         email: process.env.SEED_SUPER_EMAIL || 'super@docs.visibilitybots.com',
