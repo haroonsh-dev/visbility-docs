@@ -22,6 +22,7 @@ import {
 } from './complianceChatVisualService';
 import {
     filterDocumentIdsForAgent,
+    loadAgentScopedDocuments,
     runDynamicAnalytics,
     runDynamicDashboard,
 } from './dynamicAnalyticsEngine';
@@ -223,6 +224,7 @@ export async function getAgentAnalyticsDashboard(params: {
     view?: string;
     limit?: number;
     documentIds?: string[];
+    dashboardMode?: boolean;
 }): Promise<{
     agentId: string;
     visuals: ChatVisualSpec[];
@@ -250,8 +252,15 @@ export async function getAgentAnalyticsDashboard(params: {
     let scopedDocIds = params.documentIds;
     if (scopedDocIds?.length) {
         scopedDocIds = await filterDocumentIdsForAgent(user, scopedDocIds, agentId);
+    } else if (params.dashboardMode) {
+        const scoped = await loadAgentScopedDocuments(user, agentId);
+        scopedDocIds = scoped.map((d) => d.documentId);
     }
-    const scopeMode = scopedDocIds?.length ? 'selected' : 'all';
+    const scopeMode: 'all' | 'selected' = params.documentIds?.length
+        ? 'selected'
+        : params.dashboardMode
+          ? 'all'
+          : 'selected';
 
     if (scopedDocIds?.length) {
         const dyn = await runDynamicDashboard({
@@ -265,9 +274,20 @@ export async function getAgentAnalyticsDashboard(params: {
             visuals: dyn.visuals || [],
             citations: dyn.citations || [],
             summary: dyn.answer || '',
-            documentCount: dyn.documentCount || 0,
+            documentCount: dyn.documentCount || scopedDocIds.length,
             coverage: dyn.coverage,
-            scopeMode,
+            scopeMode: params.dashboardMode ? 'all' : 'selected',
+        };
+    }
+
+    if (params.dashboardMode) {
+        return {
+            agentId,
+            visuals: [],
+            citations: [],
+            summary: `No processed ${agentId.replace('_agent', '')} documents yet. Upload files or connect an integration, then refresh.`,
+            documentCount: 0,
+            scopeMode: 'all',
         };
     }
 

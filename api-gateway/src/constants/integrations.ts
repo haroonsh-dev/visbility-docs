@@ -33,4 +33,7 @@ export const SECRET_FIELD_KEYS = new Set([
     'refreshToken',
     'connectionString',
     'apiToken',
+    'ingestBearerToken',
+    'ingestBasicPassword',
+    'ingestCustomHeaderValue',
 ]);

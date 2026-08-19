@@ -307,6 +307,7 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     question: message,
                     phase3Agent,
                     documentIds: scopedAnalyticsDocIds,
+                    req,
                 });
                 if (hrDynamic.handled && hrDynamic.answer) {
                     let persistedSessionId = sessionId;
@@ -1306,12 +1307,17 @@ export const getChatAnalyticsHandler = async (req: Request, res: Response, next:
                 .filter(Boolean);
         }
 
+        const dashboardMode =
+            String(req.query.mode || '').toLowerCase() === 'dashboard' ||
+            String(req.query.dashboard || '').toLowerCase() === 'true';
+
         const dashboard = await getAgentAnalyticsDashboard({
             user: req.user,
             agentId,
             view,
             limit: Number.isFinite(limit) ? limit : undefined,
             documentIds,
+            dashboardMode,
         });
 
         res.json({

@@ -246,6 +246,12 @@ export function inferDocumentTypeFromFilename(filename: string): string | null {
     if (name.includes('sop')) return 'sop';
     if (name.includes('payroll')) return 'payroll';
     if (name.includes('offer') && name.includes('letter')) return 'offer_letter';
+    if (name.includes('experience') && name.includes('letter')) return 'experience_letter';
+    if (name.includes('joining') && name.includes('letter')) return 'joining_letter';
+    if (name.includes('internship') && name.includes('letter')) return 'internship_letter';
+    if (name.includes('promotion') && name.includes('letter')) return 'promotion_letter';
+    if (name.includes('relieving') && name.includes('letter')) return 'relieving_letter';
+    if (name.includes('warning') && name.includes('letter')) return 'warning_letter';
     return null;
 }
 

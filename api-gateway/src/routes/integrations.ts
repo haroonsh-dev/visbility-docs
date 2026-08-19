@@ -14,6 +14,8 @@ import {
     clickUpWebhook,
     pushViaConnection,
     listIntegrationFiles,
+    listClickUpListsForConnection,
+    resolveClickUpListForConnection,
     syncIntegrationFiles,
     listSyncInbox,
     confirmSyncPrompt,
@@ -45,6 +47,8 @@ router.get('/', listIntegrations);
 router.get('/sync-inbox', listSyncInbox);
 router.post('/', saveIntegration);
 router.post('/:id/test', testIntegration);
+router.get('/:id/clickup/lists', listClickUpListsForConnection);
+router.post('/:id/clickup/resolve-list', resolveClickUpListForConnection);
 router.get('/:id/files', listIntegrationFiles);
 router.post('/:id/sync', syncIntegrationFiles);
 router.post('/:id/send', sendViaIntegration);

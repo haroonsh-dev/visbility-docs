@@ -35,6 +35,9 @@ import {
     generateExperienceLetterFromResume,
     getExperienceLetterPrefillForDocument,
 } from '../controllers/experienceLetterController';
+import { getSystemMonitor } from '../controllers/systemMonitorController';
+import { getAgentFleet } from '../controllers/agentFleetController';
+import { listHrCandidatesOutreach, sendHrCandidateEmail, patchHrCandidateEmail, previewHrCandidateEmail } from '../controllers/hrCandidateController';
 
 const tmpDir = path.join(process.cwd(), 'uploads', '_tmp');
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
@@ -49,7 +52,13 @@ const router = Router();
 router.use(authenticate);
 router.get('/', listDocuments);
 router.get('/stats', getDocumentStats);
+router.get('/system/monitor', getSystemMonitor);
+router.get('/agent-fleet', getAgentFleet);
 router.get('/hr-analytics', getHrAnalytics);
+router.get('/hr/candidates/outreach', listHrCandidatesOutreach);
+router.post('/hr/candidates/preview', previewHrCandidateEmail);
+router.post('/hr/candidates/email', sendHrCandidateEmail);
+router.patch('/hr/candidates/:documentId/email', patchHrCandidateEmail);
 router.get('/intelligence/all', listAllDocumentIntelligence);
 router.post('/bulk', upload.array('files', 20), uploadDocumentsBulk);
 router.post('/bulk-delete', bulkDeleteDocuments);

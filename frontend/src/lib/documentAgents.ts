@@ -86,6 +86,30 @@ export const AGENT_OPTIONS = [
     { value: "other_agent", label: "Other Agent" },
 ];
 
+/** Agents with analytics dashboard + chat charts */
+export const ANALYTICS_AGENT_IDS = [
+    "finance_agent",
+    "hr_agent",
+    "compliance_agent",
+    "procurement_agent",
+    "legal_agent",
+    "other_agent",
+] as const;
+
+export type AnalyticsAgentId = (typeof ANALYTICS_AGENT_IDS)[number];
+
+export function isAnalyticsAgentId(id: string | null | undefined): id is AnalyticsAgentId {
+    return !!id && (ANALYTICS_AGENT_IDS as readonly string[]).includes(id);
+}
+
+export function agentDashboardPath(agentId: string): string {
+    return `/agents/${encodeURIComponent(agentId)}`;
+}
+
+export function agentChatPath(agentId: string): string {
+    return `/chat?agent=${encodeURIComponent(agentId)}&new=1`;
+}
+
 export const AGENT_FILTER_OPTIONS = [
     { value: "", label: "All agents" },
     ...AGENT_OPTIONS.filter((o) => o.value),

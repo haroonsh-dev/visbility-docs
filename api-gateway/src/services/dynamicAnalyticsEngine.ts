@@ -313,6 +313,43 @@ export async function loadScopedDocuments(
     });
 }
 
+/** All ready/review docs for one agent — used by standalone agent dashboards (not chat selection). */
+export async function loadAgentScopedDocuments(
+    user: AuthUser,
+    phase3Agent: string,
+    maxDocs = 150
+): Promise<ScopedDoc[]> {
+    const filter = await buildDocumentFilter(user, {});
+    const docs = await Document.find({
+        ...filter,
+        status: { $in: ['ready', 'review'] },
+    })
+        .select('documentId originalFilename classification pythonDocumentId metadata')
+        .sort({ createdAt: -1 })
+        .limit(Math.max(maxDocs * 4, 200))
+        .lean();
+
+    const mapped = docs.map((d) => {
+        const classification = resolveDocType(d);
+        const domain = domainForDocType(classification);
+        const meta = d.metadata as { phase3Agent?: string; naturalAgent?: string } | undefined;
+        return {
+            documentId: d.documentId,
+            originalFilename: d.originalFilename,
+            classification,
+            domain,
+            agentId: resolveCanonicalAgent({
+                originalFilename: d.originalFilename,
+                classification: d.classification,
+                metadata: meta,
+            }),
+            pythonDocumentId: d.pythonDocumentId,
+        };
+    });
+
+    return mapped.filter((d) => d.agentId === phase3Agent).slice(0, maxDocs);
+}
+
 function groupByDomain(docs: ScopedDoc[]): Map<AnalyticsDomain, ScopedDoc[]> {
     const map = new Map<AnalyticsDomain, ScopedDoc[]>();
     for (const d of docs) {

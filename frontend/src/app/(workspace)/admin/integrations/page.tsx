@@ -23,6 +23,13 @@ import {
     type IntegrationCategory,
     type IntegrationField,
 } from "@/lib/integrationCatalog";
+import { getProviderCapabilities, isErpProvider, SCHEDULE_FIELD_KEYS } from "@/lib/integrationCapabilities";
+import {
+    buildIngestCurlExamples,
+    ingestAuthModeLabel,
+    INGEST_AUTH_MODE_OPTIONS,
+    shouldShowIngestAuthField,
+} from "@/lib/integrationIngestAuth";
 
 type Connection = {
     connectionId: string;
@@ -37,6 +44,9 @@ type Connection = {
     clickupWebhookUrl?: string;
     connectionPushUrl?: string;
     useCase?: string | null;
+    ingestAuthMode?: string | null;
+    ingestAuthModeLabel?: string | null;
+    ingestCustomHeaderName?: string | null;
     isActive: boolean;
     intervalMinutes: number;
     syncMode?: "interval" | "daily" | "manual";
@@ -71,6 +81,11 @@ type DriveFileRow = {
 type PanelTab = "guide" | "setup" | "status";
 type TestResult = { ok: boolean; message: string } | null;
 type ConnectionFilter = "all" | "connected" | "disconnected";
+type ClickUpListOption = {
+    listId: string;
+    listName: string;
+    path: string;
+};
 
 const CATEGORY_LABELS: Record<IntegrationCategory, string> = {
     file_cloud: "File & Cloud",
@@ -113,8 +128,8 @@ function IntegrationsContent() {
     const { ready, canAccessPage } = usePermissions();
 
     const [hasActivePlan, setHasActivePlan] = useState<boolean | null>(null);
-    const [connections, setConnections] = useState<Connection[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [connections, setConnections] = useState<Connection[]>(() => connectionsCache?.connections || []);
+    const [loading, setLoading] = useState(() => !(connectionsCache && Date.now() - connectionsCache.at < CONNECTIONS_CACHE_MS));
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [search, setSearch] = useState("");
@@ -134,6 +149,11 @@ function IntegrationsContent() {
     const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
     const [sendOpen, setSendOpen] = useState(false);
     const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
+    const [clickUpLists, setClickUpLists] = useState<ClickUpListOption[]>([]);
+    const [clickUpListsLoading, setClickUpListsLoading] = useState(false);
+    const [clickUpListHint, setClickUpListHint] = useState<string | null>(null);
+    const [clickUpTaskRef, setClickUpTaskRef] = useState("");
+    const [clickUpResolveLoading, setClickUpResolveLoading] = useState(false);
 
     const loadPlan = useCallback(async () => {
         try {
@@ -150,6 +170,7 @@ function IntegrationsContent() {
         if (!opts?.force && fresh && connectionsCache) {
             setConnections(connectionsCache.connections);
             setError(null);
+            setLoading(false);
             return;
         }
         setLoading(true);
@@ -290,6 +311,10 @@ function IntegrationsContent() {
         if (!next.dailyAt) next.dailyAt = "09:00";
         if (!next.autoSyncEnabled) next.autoSyncEnabled = "true";
         if (!next.intervalAutoUpload) next.intervalAutoUpload = "false";
+        if (!next.ingestAuthMode) next.ingestAuthMode = String(conn?.config?.ingestAuthMode || conn?.ingestAuthMode || "integration_key");
+        if (!next.ingestCustomHeaderName && next.ingestAuthMode === "custom_header") {
+            next.ingestCustomHeaderName = String(conn?.config?.ingestCustomHeaderName || "X-Api-Key");
+        }
         if (!next.label) next.label = conn?.label || item.name;
         if (!conn) {
             if (!next.useCase) next.useCase = getRecommendedUseCaseForCategory(item.category);
@@ -434,6 +459,34 @@ function IntegrationsContent() {
         setTestResult(null);
         setPanelTab("status");
         try {
+            if (activeItem?.id === "clickup") {
+                const formListId = String(form.listId || "").trim();
+                const savedListId = String(activeConn.config?.listId || "").trim();
+                const formToken = String(form.apiToken || "").trim();
+                const listChanged = Boolean(formListId && formListId !== savedListId);
+                const tokenChanged = /^pk_/i.test(formToken);
+                if (listChanged || tokenChanged) {
+                    const saveRes = await apiRequest("/docs/integrations", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            providerId: activeItem.id,
+                            connectionId: activeConn.connectionId,
+                            label: form.label || activeConn.label || activeItem.name,
+                            direction: activeItem.directions,
+                            intervalMinutes: Number(form.intervalMinutes) || activeConn.intervalMinutes || 15,
+                            syncMode: form.syncMode || activeConn.syncMode || "interval",
+                            dailyAt: form.dailyAt || activeConn.dailyAt || "09:00",
+                            autoSyncEnabled: form.autoSyncEnabled !== "false",
+                            intervalAutoUpload: form.intervalAutoUpload === "true",
+                            fields: form,
+                        }),
+                    });
+                    const conn = saveRes?.data?.connection as Connection | undefined;
+                    if (conn?.ingestApiKey) setFreshIngestKey(conn.ingestApiKey);
+                    await loadConnections({ force: true });
+                }
+            }
+
             const res = await apiRequest(`/docs/integrations/${activeConn.connectionId}/test`, {
                 method: "POST",
             });
@@ -499,21 +552,31 @@ function IntegrationsContent() {
     };
 
     const copyIngestCurl = async (mode: "multipart" | "json") => {
-        if (!activeConn?.ingestUrl) {
+        const pushUrl = resolveConnectionPushUrl();
+        const url = pushUrl && !pushUrl.includes("••••") ? pushUrl : activeConn?.ingestUrl;
+        if (!url) {
             setError("Save the connection first to get an ingest URL");
             return;
         }
         const key = freshIngestKey || "YOUR_INGEST_KEY";
         const agent =
-            activeConn.config?.phase3Agent != null
+            activeConn?.config?.phase3Agent != null
                 ? String(activeConn.config.phase3Agent)
                 : "finance_agent";
-        const url = activeConn.ingestUrl;
-        const curl =
-            mode === "multipart"
-                ? `curl -X POST "${url}" \\\n  -H "X-Integration-Key: ${key}" \\\n  -F "file=@/path/to/document.pdf"`
-                : `curl -X POST "${url}" \\\n  -H "X-Integration-Key: ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"fileUrl":"https://example.com/report.pdf","filename":"report.pdf","phase3Agent":"${agent}"}'`;
-        await copyText(curl);
+        const authMode =
+            String(form.ingestAuthMode || activeConn?.config?.ingestAuthMode || activeConn?.ingestAuthMode || "integration_key");
+        const examples = buildIngestCurlExamples({
+            url,
+            key,
+            mode: authMode,
+            agent,
+            customHeaderName: String(form.ingestCustomHeaderName || activeConn?.config?.ingestCustomHeaderName || ""),
+            basicUsername: String(form.ingestBasicUsername || activeConn?.config?.ingestBasicUsername || ""),
+            basicPassword: form.ingestBasicPassword || "YOUR_PASSWORD",
+            bearerToken: form.ingestBearerToken || "",
+        });
+        await copyText(mode === "multipart" ? examples.multipart : examples.json);
+        setSuccess(examples.note);
     };
 
     const resolveClickUpWebhookUrl = (): string => {
@@ -550,6 +613,73 @@ function IntegrationsContent() {
         } finally {
             setSyncing(false);
         }
+    };
+
+    const browseClickUpLists = async () => {
+        if (!activeConn?.connectionId) {
+            setError("Save the connection with your API token first");
+            return;
+        }
+        setClickUpListsLoading(true);
+        setError(null);
+        setClickUpListHint(null);
+        try {
+            const res = await apiRequest(`/docs/integrations/${activeConn.connectionId}/clickup/lists`);
+            const rows = (res?.data?.lists || []) as ClickUpListOption[];
+            const hint = res?.data?.meta?.hint ? String(res.data.meta.hint) : null;
+            setClickUpLists(rows);
+            if (!rows.length) {
+                setClickUpListHint(
+                    hint ||
+                        "No lists found for this ClickUp token. Regenerate the token while logged into the same ClickUp account as your lists, or resolve from a task link below."
+                );
+                setError(null);
+            } else {
+                setSuccess(`Found ${rows.length} list(s). Click one to use its List ID.`);
+            }
+        } catch (e: any) {
+            setClickUpLists([]);
+            setClickUpListHint(null);
+            setError(e.message || "Could not load ClickUp lists");
+        } finally {
+            setClickUpListsLoading(false);
+        }
+    };
+
+    const resolveClickUpListFromTask = async () => {
+        if (!activeConn?.connectionId) {
+            setError("Save the connection with your API token first");
+            return;
+        }
+        const taskRef = clickUpTaskRef.trim();
+        if (!taskRef) {
+            setError("Paste a ClickUp task link from a task inside your HR list");
+            return;
+        }
+        setClickUpResolveLoading(true);
+        setError(null);
+        setSuccess(null);
+        try {
+            const res = await apiRequest(`/docs/integrations/${activeConn.connectionId}/clickup/resolve-list`, {
+                method: "POST",
+                body: JSON.stringify({ taskRef }),
+            });
+            const listId = String(res?.data?.listId || "");
+            if (listId) {
+                applyClickUpListId(listId);
+                setSuccess(res?.message || `List ID set to ${listId}`);
+            }
+        } catch (e: any) {
+            setError(e.message || "Could not resolve list from task");
+        } finally {
+            setClickUpResolveLoading(false);
+        }
+    };
+
+    const applyClickUpListId = (listId: string) => {
+        setForm((prev) => ({ ...prev, listId }));
+        setSuccess(`List ID set to ${listId}. Click Save changes, then Run test.`);
+        setPanelTab("setup");
     };
 
     const resolveConnectionPushUrl = (): string => {
@@ -640,6 +770,12 @@ function IntegrationsContent() {
                 {field.help && (
                     <p className="text-[11px] leading-relaxed text-foreground-muted">{field.help}</p>
                 )}
+                {field.key === "ingestAuthMode" && (
+                    <p className="text-[11px] leading-relaxed text-[var(--vb-blue-bright)]">
+                        {INGEST_AUTH_MODE_OPTIONS.find((o) => o.value === value)?.hint ||
+                            "Pick how your external system sends credentials."}
+                    </p>
+                )}
             </label>
         );
     };
@@ -693,6 +829,16 @@ function IntegrationsContent() {
             },
             { label: "Direction", value: activeConn.direction || activeItem.directions },
         ];
+        if (activeItem.id === "custom_webhook") {
+            rows.splice(1, 0, {
+                label: "Inbound auth",
+                value:
+                    activeConn.ingestAuthModeLabel ||
+                    ingestAuthModeLabel(
+                        String(activeConn.config?.ingestAuthMode || activeConn.ingestAuthMode || "integration_key")
+                    ),
+            });
+        }
         for (const field of activeItem.fields) {
             if (
                 [
@@ -728,7 +874,7 @@ function IntegrationsContent() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [panelTab, activeConn?.connectionId, activeConn?.providerId]);
 
-    if (!ready || hasActivePlan === null) {
+    if (!ready) {
         return (
             <div className="h-64 flex items-center justify-center">
                 <Loader2 className="h-8 w-8 animate-spin" style={{ color: colors.primary }} />
@@ -748,7 +894,7 @@ function IntegrationsContent() {
         );
     }
 
-    if (!hasActivePlan) {
+    if (hasActivePlan === false) {
         return (
             <div className="p-8 max-w-lg mx-auto text-center space-y-4">
                 <Plug className="mx-auto text-accent" size={28} />
@@ -775,6 +921,13 @@ function IntegrationsContent() {
                 title="Integrations"
                 subtitle="Connect factory ERP, MES, QMS, and file systems. Pull documents in and optionally push AI summaries back."
             />
+
+            {hasActivePlan === null && (
+                <div className="rounded-xl border border-border bg-surface-2/40 px-4 py-2.5 text-xs text-foreground-muted flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin shrink-0" />
+                    Checking subscription…
+                </div>
+            )}
 
             {/* Summary strip */}
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -1113,6 +1266,22 @@ function IntegrationsContent() {
                                         <div className="rounded-2xl border border-border bg-surface-2/30 p-4 space-y-4">
                                             {activeItem.fields
                                                 .filter((field) => {
+                                                    const caps = getProviderCapabilities(activeItem.id);
+                                                    if (
+                                                        !caps.pullSchedule &&
+                                                        SCHEDULE_FIELD_KEYS.has(field.key)
+                                                    ) {
+                                                        return false;
+                                                    }
+                                                    if (
+                                                        !shouldShowIngestAuthField(
+                                                            field.key,
+                                                            form.ingestAuthMode || "integration_key",
+                                                            activeItem.id
+                                                        )
+                                                    ) {
+                                                        return false;
+                                                    }
                                                     if (field.key === "intervalMinutes") {
                                                         return (form.syncMode || "interval") === "interval";
                                                     }
@@ -1128,6 +1297,91 @@ function IntegrationsContent() {
                                                     return true;
                                                 })
                                                 .map(renderField)}
+
+                                            {activeItem.id === "clickup" && isConnected && activeConn && (
+                                                <div className="rounded-xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-3 space-y-3">
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-foreground">
+                                                            Find the correct List ID
+                                                        </p>
+                                                        <p className="text-[10px] text-foreground-muted mt-1 leading-relaxed">
+                                                            The browser URL number is often a <strong>view</strong> or{" "}
+                                                            <strong>task</strong> ID, not the API list ID. Browse lists
+                                                            from your token, or in ClickUp right-click the list in the
+                                                            sidebar → <strong>Copy link</strong> → use the last number
+                                                            in that URL.
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={browseClickUpLists}
+                                                        disabled={clickUpListsLoading}
+                                                        className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
+                                                    >
+                                                        {clickUpListsLoading ? (
+                                                            <Loader2 size={11} className="animate-spin" />
+                                                        ) : (
+                                                            <Search size={11} />
+                                                        )}
+                                                        Browse lists from my ClickUp
+                                                    </button>
+                                                    {clickUpLists.length > 0 && (
+                                                        <div className="max-h-44 overflow-y-auto space-y-1">
+                                                            {clickUpLists.map((row) => (
+                                                                <button
+                                                                    key={row.listId}
+                                                                    type="button"
+                                                                    onClick={() => applyClickUpListId(row.listId)}
+                                                                    className="w-full text-left rounded-lg border border-border/70 bg-black/10 px-2.5 py-2 hover:bg-surface-2/80"
+                                                                >
+                                                                    <p className="text-[11px] font-semibold text-foreground">
+                                                                        {row.listName}{" "}
+                                                                        <span className="font-mono text-foreground-muted">
+                                                                            {row.listId}
+                                                                        </span>
+                                                                    </p>
+                                                                    <p className="text-[10px] text-foreground-muted mt-0.5">
+                                                                        {row.path}
+                                                                    </p>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {clickUpListHint && (
+                                                        <p className="text-[10px] text-amber-700 dark:text-amber-300 leading-relaxed">
+                                                            {clickUpListHint}
+                                                        </p>
+                                                    )}
+                                                    <div className="rounded-lg border border-border/70 bg-black/10 p-3 space-y-2">
+                                                        <p className="text-[10px] font-semibold text-foreground">
+                                                            Fallback: resolve from a task link
+                                                        </p>
+                                                        <p className="text-[10px] text-foreground-muted leading-relaxed">
+                                                            Open any task inside your HR list → Copy link → paste here.
+                                                            Visibility reads the real list ID from that task.
+                                                        </p>
+                                                        <input
+                                                            className="w-full rounded-lg border border-border bg-black/20 px-2.5 py-2 text-xs"
+                                                            placeholder="https://app.clickup.com/t/86abc123 or task link"
+                                                            value={clickUpTaskRef}
+                                                            onChange={(e) => setClickUpTaskRef(e.target.value)}
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={resolveClickUpListFromTask}
+                                                            disabled={clickUpResolveLoading}
+                                                            className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
+                                                        >
+                                                            {clickUpResolveLoading ? (
+                                                                <Loader2 size={11} className="animate-spin" />
+                                                            ) : (
+                                                                <Search size={11} />
+                                                            )}
+                                                            Resolve list from task
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="flex flex-col gap-2 pb-4">
@@ -1171,6 +1425,19 @@ function IntegrationsContent() {
                                                 </div>
                                             </div>
                                         </div>
+
+                                        {isErpProvider(activeItem.id) && (
+                                            <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 text-xs text-foreground-muted leading-relaxed">
+                                                <p className="font-semibold text-foreground mb-1">ERP push ingest</p>
+                                                <p>
+                                                    Visibility does not scheduled-pull from {activeItem.name} yet.
+                                                    Store credentials here for <strong className="text-foreground">Test connection</strong>{" "}
+                                                    and routing. Your SAP/CPI, Power Automate, or export job must{" "}
+                                                    <strong className="text-foreground">POST PDFs to the push URL</strong> below
+                                                    (unique per org connection).
+                                                </p>
+                                            </div>
+                                        )}
 
                                         {/* Test result */}
                                         <div
@@ -1420,6 +1687,19 @@ function IntegrationsContent() {
                                                 <div className="flex flex-wrap gap-2 pt-1">
                                                     <button
                                                         type="button"
+                                                        onClick={browseClickUpLists}
+                                                        disabled={clickUpListsLoading}
+                                                        className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
+                                                    >
+                                                        {clickUpListsLoading ? (
+                                                            <Loader2 size={11} className="animate-spin" />
+                                                        ) : (
+                                                            <Search size={11} />
+                                                        )}
+                                                        Browse lists
+                                                    </button>
+                                                    <button
+                                                        type="button"
                                                         onClick={syncClickUpListNow}
                                                         disabled={syncing}
                                                         className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
@@ -1453,8 +1733,18 @@ function IntegrationsContent() {
                                                         ""
                                                     )}
                                                 </strong>
-                                                . Point {activeItem?.name || "your system"} exports here (one URL per
-                                                connection — e.g. SAP AP vs MasterControl QC).
+                                                . Auth:{" "}
+                                                <strong>
+                                                    {activeConn.ingestAuthModeLabel ||
+                                                        ingestAuthModeLabel(
+                                                            String(
+                                                                activeConn.config?.ingestAuthMode ||
+                                                                    activeConn.ingestAuthMode ||
+                                                                    "integration_key"
+                                                            )
+                                                        )}
+                                                </strong>
+                                                . Point {activeItem?.name || "your system"} exports here.
                                             </p>
                                             {connectionsForActive.length > 0 && (
                                                 <div className="space-y-2">
@@ -1537,7 +1827,18 @@ function IntegrationsContent() {
                                                 </div>
                                             </div>
                                             <div className="space-y-1">
-                                                <p className="text-[11px] text-foreground-muted">X-Integration-Key</p>
+                                                <p className="text-[11px] text-foreground-muted">
+                                                    {String(activeConn.config?.ingestAuthMode || activeConn.ingestAuthMode || "integration_key") ===
+                                                    "bearer_token"
+                                                        ? "Bearer token (or ingest key if blank in Edit)"
+                                                        : String(activeConn.config?.ingestAuthMode || activeConn.ingestAuthMode) ===
+                                                            "basic_auth"
+                                                          ? "Basic auth username (password in Edit)"
+                                                          : String(activeConn.config?.ingestAuthMode || activeConn.ingestAuthMode) ===
+                                                              "custom_header"
+                                                            ? `Custom header: ${activeConn.config?.ingestCustomHeaderName || activeConn.ingestCustomHeaderName || "X-Api-Key"}`
+                                                            : "Ingest API key (X-Integration-Key / ?key=)"}
+                                                </p>
                                                 <div className="flex gap-2">
                                                     <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
                                                         {freshIngestKey || activeConn.ingestApiKeyMasked || "••••"}

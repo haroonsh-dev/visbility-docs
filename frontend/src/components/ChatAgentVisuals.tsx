@@ -16,7 +16,6 @@ import {
     YAxis,
     CartesianGrid,
     Tooltip,
-    Legend,
 } from "recharts";
 import type { ChatVisualSpec } from "@/types/chatVisuals";
 import { agentLabel } from "@/lib/documentAgents";
@@ -101,19 +100,24 @@ function SingleVisual({
 
     const useHorizontalBar =
         embedded && spec.kind === "bar" && spec.data.length > 0 && spec.data.length <= 20;
+    const isPie = spec.kind === "pie";
     const isEmpty =
         spec.data.length === 0 ||
         (spec.data.length === 1 &&
             spec.series.every((s) => !Number(spec.data[0]?.[s.key])) &&
             /^(no |none$|not extracted|unknown)/i.test(String(spec.data[0]?.[categoryKey] || "")));
     const emptyMessage = spec.emptyState || "No data extracted for this chart.";
-    const chartHeight = embedded
-        ? Math.max(280, Math.min(420, spec.data.length * (useHorizontalBar ? 36 : 48) + 80))
-        : spec.kind === "pie"
-          ? 220
+    const chartHeight = isPie
+        ? embedded
+            ? 200
+            : 220
+        : embedded
+          ? Math.max(280, Math.min(420, spec.data.length * (useHorizontalBar ? 36 : 48) + 80))
           : spec.kind === "table"
             ? Math.min(360, 48 + spec.data.length * 36)
             : 260;
+    const pieOuterRadius = embedded ? 68 : 80;
+    const pieInnerRadius = embedded ? 42 : 50;
 
     return (
         <div
@@ -208,18 +212,19 @@ function SingleVisual({
                     </table>
                 </div>
             ) : (
+            <>
             <div className="px-3 py-4" style={{ width: "100%", height: chartHeight }}>
                 <ResponsiveContainer width="100%" height="100%">
-                    {spec.kind === "pie" ? (
-                        <PieChart>
+                    {isPie ? (
+                        <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
                             <Pie
                                 data={spec.data}
                                 dataKey={primary?.key || "count"}
                                 nameKey={categoryKey}
                                 cx="50%"
                                 cy="50%"
-                                innerRadius={52}
-                                outerRadius={88}
+                                innerRadius={pieInnerRadius}
+                                outerRadius={pieOuterRadius}
                                 paddingAngle={2}
                                 onClick={(_, index) => {
                                     const row = spec.data[index];
@@ -232,7 +237,6 @@ function SingleVisual({
                                 ))}
                             </Pie>
                             <Tooltip content={<ChartTooltip currency={spec.currency} />} />
-                            <Legend wrapperStyle={{ fontSize: 11 }} />
                         </PieChart>
                     ) : spec.kind === "line" ? (
                         <LineChart data={spec.data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
@@ -340,6 +344,26 @@ function SingleVisual({
                     )}
                 </ResponsiveContainer>
             </div>
+            {isPie && !isEmpty ? (
+                <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 px-4 pb-4 pt-0">
+                    {spec.data.map((row, i) => (
+                        <span
+                            key={`${row[categoryKey]}-${i}`}
+                            className={`inline-flex items-center gap-1.5 text-[11px] ${
+                                isDark ? "text-slate-300" : "text-slate-600"
+                            }`}
+                        >
+                            <span
+                                className="h-2.5 w-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: PALETTE[i % PALETTE.length] }}
+                            />
+                            <span className="capitalize">{String(row[categoryKey] ?? "—")}</span>
+                            <span className="font-semibold tabular-nums">{String(row[primary?.key || "count"] ?? "")}</span>
+                        </span>
+                    ))}
+                </div>
+            ) : null}
+            </>
             )}
             {spec.footer ? (
                 <p className={`px-4 pb-2 text-[10px] leading-relaxed ${isDark ? "text-slate-500" : "text-slate-500"}`}>

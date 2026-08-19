@@ -22,6 +22,7 @@ import { apiRequest, ApiError } from "@/lib/apiClient";
 import { getRequestErrorMessage, CHAT_PROXY_TIMEOUT_MESSAGE, isChatProxyDrop } from "@/lib/apiErrors";
 import { usePermissions } from "@/context/PermissionsContext";
 import { resolveDocAgent, agentLabel } from "@/lib/documentAgents";
+import { agentWorkspacePath } from "@/lib/agentWorkspace";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { useToast } from "@/components/Toast";
 import ChatAnalyticsSidePanel, {
@@ -1875,23 +1876,33 @@ function ChatContent() {
                                 AI Chat
                             </h1>
                             {agentUrlParam && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.3)] bg-[rgba(56,182,255,0.1)] px-2.5 py-0.5 text-xs text-(--vb-blue-bright) font-semibold shrink-0">
-                                    <span>{agentLabel(agentUrlParam)}</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.delete("agent");
-                                            url.searchParams.delete("new");
-                                            window.history.replaceState({}, "", url.toString());
-                                            window.dispatchEvent(new Event("popstate"));
-                                        }}
-                                        className="hover:text-rose-400 text-slate-400 p-0.5"
-                                        title="Clear agent filter"
-                                    >
-                                        <X size={12} />
-                                    </button>
-                                </span>
+                                <>
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.3)] bg-[rgba(56,182,255,0.1)] px-2.5 py-0.5 text-xs text-(--vb-blue-bright) font-semibold shrink-0">
+                                        <span>{agentLabel(agentUrlParam)}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const url = new URL(window.location.href);
+                                                url.searchParams.delete("agent");
+                                                url.searchParams.delete("new");
+                                                window.history.replaceState({}, "", url.toString());
+                                                window.dispatchEvent(new Event("popstate"));
+                                            }}
+                                            className="hover:text-rose-400 text-slate-400 p-0.5"
+                                            title="Clear agent filter"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </span>
+                                    {ANALYTICS_AGENT_IDS.has(agentUrlParam) && (
+                                        <Link
+                                            href={agentWorkspacePath(agentUrlParam)}
+                                            className="hidden sm:inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-foreground-muted hover:text-accent hover:border-accent/40 transition-colors shrink-0"
+                                        >
+                                            <BarChart3 size={11} /> Insights
+                                        </Link>
+                                    )}
+                                </>
                             )}
                         </div>
                         <p className={`text-xs sm:text-sm ${colors.textMuted} truncate hidden sm:block`}>
@@ -2011,23 +2022,33 @@ function ChatContent() {
                         <div className="flex items-center gap-2">
                             <h1 className={`text-base sm:text-xl font-bold tracking-tight ${colors.textPrimary}`}>AI Chat</h1>
                             {agentUrlParam && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.3)] bg-[rgba(56,182,255,0.1)] px-2.5 py-0.5 text-xs text-(--vb-blue-bright) font-semibold shrink-0">
-                                    <span>Agent: {agentLabel(agentUrlParam)}</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.delete("agent");
-                                            url.searchParams.delete("new");
-                                            window.history.replaceState({}, "", url.toString());
-                                            window.dispatchEvent(new Event("popstate"));
-                                        }}
-                                        className="hover:text-rose-400 text-slate-400 p-0.5"
-                                        title="Clear agent filter"
-                                    >
-                                        <X size={12} />
-                                    </button>
-                                </span>
+                                <>
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.3)] bg-[rgba(56,182,255,0.1)] px-2.5 py-0.5 text-xs text-(--vb-blue-bright) font-semibold shrink-0">
+                                        <span>Agent: {agentLabel(agentUrlParam)}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const url = new URL(window.location.href);
+                                                url.searchParams.delete("agent");
+                                                url.searchParams.delete("new");
+                                                window.history.replaceState({}, "", url.toString());
+                                                window.dispatchEvent(new Event("popstate"));
+                                            }}
+                                            className="hover:text-rose-400 text-slate-400 p-0.5"
+                                            title="Clear agent filter"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </span>
+                                    {ANALYTICS_AGENT_IDS.has(agentUrlParam) && (
+                                        <Link
+                                            href={agentWorkspacePath(agentUrlParam)}
+                                            className="hidden sm:inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-foreground-muted hover:text-accent hover:border-accent/40 transition-colors shrink-0"
+                                        >
+                                            <BarChart3 size={11} /> Insights
+                                        </Link>
+                                    )}
+                                </>
                             )}
                         </div>
                         <p className={`text-xs sm:text-sm ${colors.textMuted} truncate hidden sm:block`}>

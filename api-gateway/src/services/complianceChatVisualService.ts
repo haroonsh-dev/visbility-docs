@@ -6,6 +6,7 @@ import { applyAgentVisualPolicy, wantsAgentAnalyticsVisual, wantsAgentTextOnlyEx
 import {
     COMPLIANCE_AGENT,
     buildCertStatusVisual,
+    buildComplianceRegisterVisual,
     buildComplianceStatusVisual,
     buildExpiryTimelineVisual,
     buildFindingsSeverityVisual,
@@ -109,6 +110,8 @@ export async function executeComplianceAnalytics(
         visuals.push(buildCertStatusVisual(snapshots));
         const expiry = buildExpiryTimelineVisual(snapshots);
         if (expiry.data.length) visuals.push(expiry);
+        const register = buildComplianceRegisterVisual(snapshots);
+        if (register.data.length) visuals.push(register);
     }
     if (intent === 'findings' || intent === 'overview') {
         const findings = buildFindingsSeverityVisual(snapshots);

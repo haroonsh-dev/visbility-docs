@@ -37,6 +37,11 @@ import {
     detectHrSectionPdf,
     detectHrRescoreCvs,
 } from './hrChatReportService';
+import {
+    detectHrCandidateEmail,
+    tryHrCandidateEmailCommand,
+} from './hrCandidateEmailService';
+import type { Request } from 'express';
 
 export type HrWorkTool =
     | 'report'
@@ -65,6 +70,7 @@ export type HrWorkTool =
     | 'cv_overview'
     | 'section_pdf'
     | 'rescore_cvs'
+    | 'candidate_email'
     | 'qa';
 
 export type HrWorkClassification = {
@@ -180,6 +186,12 @@ export function classifyHrWorkIntent(
     }
     if (detectHrSectionPdf(question, onHr ? HR_AGENT : phase3Agent)) {
         return { tool: 'section_pdf', confidence: 0.9, reason: 'section_pdf' };
+    }
+    if (
+        detectHrCandidateEmail(question, onHr ? HR_AGENT : phase3Agent) ||
+        (onHr && /\b(send|email|mail)\b/.test(q) && /\b(candidate|candidates|shortlist|interview\s+invite)\b/.test(q))
+    ) {
+        return { tool: 'candidate_email', confidence: 0.92, reason: 'candidate_email' };
     }
     if (
         detectHrShortlistExport(question, onHr ? HR_AGENT : phase3Agent) ||
@@ -307,6 +319,7 @@ export async function tryHrDynamicAgent(params: {
     question: string;
     phase3Agent?: string;
     documentIds?: string[];
+    req?: Request;
 }): Promise<HrDynamicResult> {
     if (params.phase3Agent && params.phase3Agent !== HR_AGENT) {
         return { handled: false };
@@ -340,6 +353,10 @@ export async function tryHrDynamicAgent(params: {
     }
     if (tool === 'shortlist') {
         const r = await tryHrShortlistExport({ ...params, phase3Agent: HR_AGENT });
+        if (r.handled) return { ...r, tool };
+    }
+    if (tool === 'candidate_email') {
+        const r = await tryHrCandidateEmailCommand({ ...params, phase3Agent: HR_AGENT, req: params.req });
         if (r.handled) return { ...r, tool };
     }
     if (tool === 'cv_table') {

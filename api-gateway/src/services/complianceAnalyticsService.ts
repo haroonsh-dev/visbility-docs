@@ -618,6 +618,49 @@ export function buildComplianceStatusVisual(snapshots: ComplianceDocSnapshot[]):
     };
 }
 
+export function buildComplianceRegisterVisual(snapshots: ComplianceDocSnapshot[]): ChatVisualSpec {
+    const rows = [...snapshots]
+        .filter(
+            (s) =>
+                s.expiryDate != null ||
+                s.certStatus !== 'UNKNOWN' ||
+                Boolean(s.certificateNumber) ||
+                Boolean(s.standardOrRegulation)
+        )
+        .sort((a, b) => {
+            const da = a.daysUntilExpiry ?? 99999;
+            const db = b.daysUntilExpiry ?? 99999;
+            return da - db;
+        })
+        .slice(0, 50);
+
+    return {
+        id: 'compliance_cert_register',
+        agentId: COMPLIANCE_AGENT,
+        kind: 'table',
+        title: 'Certificate & license register',
+        subtitle: 'Sorted by soonest expiry',
+        categoryKey: 'filename',
+        series: [
+            { key: 'filename', label: 'Document' },
+            { key: 'standard', label: 'Standard' },
+            { key: 'expiry', label: 'Expiry' },
+            { key: 'daysLeft', label: 'Days left' },
+            { key: 'status', label: 'Status' },
+        ],
+        data: rows.map((s) => ({
+            filename: truncateLabel(s.filename, 40),
+            standard: truncateLabel(s.standardOrRegulation || '—', 28),
+            expiry: s.expiryDate ? s.expiryDate.toISOString().slice(0, 10) : '—',
+            daysLeft: s.daysUntilExpiry != null ? String(s.daysUntilExpiry) : '—',
+            status: s.certStatus.replace(/_/g, ' '),
+            _documentIds: s.documentId,
+        })),
+        emptyState: rows.length ? undefined : 'No certificate expiry or standard fields extracted.',
+        sourceDocumentIds: rows.map((s) => s.documentId),
+    };
+}
+
 export function computeComplianceCoverage(
     snapshots: ComplianceDocSnapshot[],
     docsInScope: number

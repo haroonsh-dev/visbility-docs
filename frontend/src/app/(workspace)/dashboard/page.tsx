@@ -102,6 +102,7 @@ function DashboardContent() {
     const [showCompanyModal, setShowCompanyModal] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [showAnalytics, setShowAnalytics] = useState(false);
 
     // Identity comes from PermissionsContext (already cached + refreshed in background) —
     // no second /auth/me round trip on the dashboard critical path.
@@ -301,8 +302,8 @@ function DashboardContent() {
                     title="Dashboard"
                     subtitle={
                         isAdminView
-                            ? "Organization-wide document intelligence and workspace activity."
-                            : `Your documents, processing progress, and recent activity${displayName ? `, ${displayName}` : ""}.`
+                            ? "Organization overview — documents, uploads, team activity, and analytics."
+                            : `Your documents, processing status, and activity${displayName ? ` — ${displayName}` : ""}.`
                     }
                     actions={
                         <div className="flex flex-wrap gap-2">
@@ -760,6 +761,24 @@ function DashboardContent() {
                 </motion.div>
             )}
 
+            <div className="pt-2">
+                <button
+                    type="button"
+                    onClick={() => setShowAnalytics((v) => !v)}
+                    className="w-full flex items-center justify-between rounded-2xl border border-border bg-surface/40 px-4 py-3 text-left hover:bg-surface-2 transition-colors"
+                >
+                    <div>
+                        <p className="text-sm font-semibold text-foreground">Document analytics</p>
+                        <p className="text-xs text-foreground-muted">
+                            Upload trends, department breakdown, and insights
+                        </p>
+                    </div>
+                    <span className="text-xs font-medium text-accent">{showAnalytics ? "Hide" : "Show"}</span>
+                </button>
+            </div>
+
+            {showAnalytics && (
+                <>
             <DashboardStats stats={data.stats} />
 
             <DashboardCharts
@@ -778,6 +797,8 @@ function DashboardContent() {
                 loading={loading}
                 isAdminView={isAdminView}
             />
+                </>
+            )}
 
             <motion.div variants={stagger} initial="hidden" animate="show">
                 <h3 className="text-sm font-bold text-slate-800 mb-4">Quick Actions</h3>
@@ -795,8 +816,8 @@ function DashboardContent() {
                         {
                             href: "/chat",
                             icon: MessageSquare,
-                            title: "AI Chat",
-                            desc: "Chat with your documents using AI",
+                            title: "AI Workspaces",
+                            desc: "Insights and chat per Finance, HR, Legal, and more",
                             gradient: "from-blue-500 to-[rgba(63,116,255,0.06)]",
                             shadow: "shadow-[var(--vb-glow)]",
                             allow: canAccessPage("chat"),

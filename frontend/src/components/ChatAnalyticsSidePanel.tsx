@@ -37,6 +37,7 @@ export type AnalyticsPanelView =
     | "obligations"
     | "po_spend"
     | "po_status"
+    | "po_match"
     | "doc_mix"
     | "missing";
 
@@ -59,6 +60,9 @@ type Props = {
     onApplyChatScope?: (documentIds: string[]) => void;
     scopeDocCount?: number;
     visualsKey?: string;
+    layout?: "panel" | "page";
+    /** Hide in-panel coverage banners (shown in workspace shell instead) */
+    suppressCoverageBanner?: boolean;
     onVisualAction?: (action: {
         label: string;
         kind: "reprocess" | "open_document" | "ask";
@@ -148,6 +152,7 @@ const PROCUREMENT_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "po_spend", label: "Spend" },
     { id: "po_status", label: "Status" },
+    { id: "po_match", label: "3-way match" },
 ];
 
 const OTHER_VIEWS: { id: AnalyticsPanelView; label: string }[] = [
@@ -230,6 +235,8 @@ export default function ChatAnalyticsSidePanel({
     onApplyChatScope,
     scopeDocCount,
     visualsKey,
+    layout = "panel",
+    suppressCoverageBanner = false,
     onVisualAction,
 }: Props) {
     const [drillDown, setDrillDown] = useState<VisualDataPointClick | null>(null);
@@ -268,20 +275,31 @@ export default function ChatAnalyticsSidePanel({
         chartedFileIds.length > 0 ? chartedFileIds.length : scopeDocCount;
 
     const scopeBadge =
-        effectiveScopeCount != null && effectiveScopeCount > 0
-            ? chartedFileIds.length === 1
-                ? `Charted · 1 named file`
-                : `Chat scope · ${effectiveScopeCount} file${effectiveScopeCount === 1 ? "" : "s"}`
-            : "Chat scope";
+        layout === "page"
+            ? effectiveScopeCount != null && effectiveScopeCount > 0
+                ? `All documents · ${effectiveScopeCount} file${effectiveScopeCount === 1 ? "" : "s"}`
+                : "All documents"
+            : effectiveScopeCount != null && effectiveScopeCount > 0
+              ? chartedFileIds.length === 1
+                  ? `Charted · 1 named file`
+                  : `Chat scope · ${effectiveScopeCount} file${effectiveScopeCount === 1 ? "" : "s"}`
+              : "Chat scope";
 
     const handleExport = () => downloadVisualsCsv(visuals, `visibility-analytics-${agentId || "export"}.csv`);
 
+    const shellClass =
+        layout === "page"
+            ? suppressCoverageBanner
+                ? "flex flex-col min-h-0 min-w-0 flex-1 overflow-hidden"
+                : "flex flex-col min-h-0 min-w-0 flex-1 bg-surface rounded-2xl border border-border overflow-hidden"
+            : "hidden lg:flex flex-col min-h-0 min-w-0 h-full bg-surface border-l border-border";
+
     return (
         <aside
-            className={`hidden lg:flex flex-col min-h-0 min-w-0 h-full bg-surface border-l border-border`}
-            aria-label="Analytics workspace"
+            className={shellClass}
+            aria-label={layout === "page" ? "Agent analytics dashboard" : "Analytics workspace"}
         >
-            {!unifiedHeader && (
+            {!unifiedHeader && layout === "panel" && (
                 <div className={`${WORKSPACE_SPLIT_HEADER} justify-between gap-y-2`}>
                     <div className="min-w-0">
                         <h2 className="text-sm font-bold tracking-tight truncate">Analytics</h2>
@@ -395,10 +413,12 @@ export default function ChatAnalyticsSidePanel({
                     <AnalyticsSkeleton />
                 ) : visuals.length > 0 ? (
                     <div key={visualsKey || "visuals"} className="p-4 sm:p-5 lg:p-6 space-y-5">
-                        {coverage && agentId === "finance_agent" && "documentsWithAmount" in coverage && (
+                        {coverage && !suppressCoverageBanner && agentId === "finance_agent" && "documentsWithAmount" in coverage && (
                             <div className="rounded-xl border border-border bg-surface-2/40 px-3 py-2.5 text-[11px] text-foreground-muted leading-relaxed space-y-2">
                                 <p className="text-foreground">
-                                    <span className="font-semibold">Chat-scoped finance: </span>
+                                    <span className="font-semibold">
+                                        {layout === "page" ? "Portfolio: " : "Chat-scoped finance: "}
+                                    </span>
                                     <span className="tabular-nums font-semibold">{coverage.documentsInScope}</span>{" "}
                                     file(s);{" "}
                                     <span className="tabular-nums font-semibold">{coverage.documentsWithAmount}</span>{" "}
@@ -462,7 +482,7 @@ export default function ChatAnalyticsSidePanel({
                                 )}
                             </div>
                         )}
-                        {coverage && agentId === "compliance_agent" && "documentsWithExpiry" in coverage && (
+                        {coverage && !suppressCoverageBanner && agentId === "compliance_agent" && "documentsWithExpiry" in coverage && (
                             <div className="rounded-xl border border-border bg-surface-2/40 px-3 py-2.5 text-[11px] text-foreground-muted leading-relaxed space-y-2">
                                 <p className="text-foreground">
                                     <span className="font-semibold">Chat-scoped compliance: </span>
@@ -504,6 +524,7 @@ export default function ChatAnalyticsSidePanel({
                             </div>
                         )}
                         {coverage &&
+                            !suppressCoverageBanner &&
                             coverage.documentsInScope != null &&
                             agentId !== "finance_agent" &&
                             agentId !== "compliance_agent" && (
@@ -654,11 +675,15 @@ export default function ChatAnalyticsSidePanel({
                         <p className="text-xs mt-2 max-w-sm leading-relaxed text-foreground-muted">
                             {loading
                                 ? "Pulling metrics from your document library."
-                                : agentId === "finance_agent"
-                                  ? "Select invoices in chat scope or ask a question—charts update for those files only."
-                                  : agentId === "compliance_agent"
-                                    ? "Select certificates or audit reports in scope, or ask *chart certificate expiry* in chat."
-                                    : "No chart data yet. Finish document extraction, refresh, or run a prompt in chat."}
+                                : layout === "page"
+                                  ? documentCount && documentCount > 0
+                                      ? "Charts appear when extractions include structured data. Try another tab above or ask a question in chat."
+                                      : "Upload documents for this agent, connect an integration, or assign files in the vault — then refresh."
+                                  : agentId === "finance_agent"
+                                    ? "Select invoices in chat scope or ask a question—charts update for those files only."
+                                    : agentId === "compliance_agent"
+                                      ? "Select certificates or audit reports in scope, or ask *chart certificate expiry* in chat."
+                                      : "No chart data yet. Finish document extraction, refresh, or run a prompt in chat."}
                         </p>
                         {prompts.length > 0 && onRunPrompt && !loading && (
                             <div className="mt-6 flex flex-col gap-2 w-full max-w-sm">

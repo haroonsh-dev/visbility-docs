@@ -96,6 +96,9 @@ const USE_CASE_FIELD: IntegrationField = {
 
 const COMMON_TAIL: IntegrationField[] = [SCHEDULE_FIELD, USE_CASE_FIELD, AGENT_FIELD, OUTBOUND_FIELD];
 
+/** ERP / middleware connectors — no scheduled pull in Visibility today */
+const PUSH_ONLY_TAIL: IntegrationField[] = [USE_CASE_FIELD, AGENT_FIELD, OUTBOUND_FIELD];
+
 /** Default agent when user leaves “Default AI agent” on Auto-detect. */
 export const CATEGORY_DEFAULT_AGENT: Record<IntegrationCategory, string> = {
     file_cloud: "other_agent",
@@ -165,8 +168,26 @@ function guide(software: string, whereKeys: string, mapHint: string, verifyHint:
     ];
 }
 
+/** ERP / middleware — push ingest only (no scheduled pull from Visibility). */
+function erpGuide(software: string, credHint: string, pushHint: string, verifyHint: string): string[] {
+    return [
+        credHint,
+        `Set Use case (AP, AR, PO, …) and Default AI agent so files route to Finance, Procurement, or Compliance.`,
+        `Save the connection, then copy the per-connection push URL + ingest key from the Status tab.`,
+        pushHint,
+        `Configure ${software} (or CPI / Power Automate / custom middleware) to POST invoice PDFs to that URL with the key.`,
+        `Optional: add an Outbound webhook URL — after AI extraction, use Send from Documents to POST JSON back to ${software}.`,
+        `Run Test connection — validates ${software} credentials when API access is configured.`,
+        verifyHint,
+        `Monitor Connected systems on the agent workspace and Activity for ingest events.`,
+    ];
+}
+
 const outboundNote = (system: string) =>
     `Bidirectional: inbound pulls documents into Visibility Docs; outbound can POST JSON summaries (documentId, filename, status, extracted fields, AI summary) to your webhook so ${system} or middleware can update tickets, quality records, or dashboards.`;
+
+const erpOutboundNote = (system: string) =>
+    `Push ingest today: ${system} or your middleware POSTs files to the unique push URL + key. Visibility extracts and charts them. Optional outbound webhook receives AI summaries when you click Send — not automatic ledger posting.`;
 
 /**
  * Curated catalog — factory / enterprise connectors.
@@ -400,7 +421,8 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         id: "dynamics365",
         name: "Microsoft Dynamics 365",
         category: "erp",
-        description: "Finance & Supply Chain or Business Central document sync via Dataverse / BC APIs.",
+        description:
+            "Store Dynamics credentials + routing. Documents ingest via push URL (middleware/CPI) — OAuth test validates Azure app access.",
         directions: "both",
         fields: [
             { key: "tenantId", label: "Azure Tenant ID", type: "text", required: true },
@@ -413,21 +435,22 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
                 type: "text",
                 placeholder: "companies(...)/purchaseInvoices",
             },
-            ...COMMON_TAIL,
+            ...PUSH_ONLY_TAIL,
         ],
-        guideSteps: guide(
+        guideSteps: erpGuide(
             "Dynamics 365",
             "Register an Azure AD app, grant Dynamics/Business Central API permissions, and create a client secret.",
-            "Enter environmentUrl and the entity path for attachments or document exports.",
-            "Export one purchase invoice PDF and verify ingest."
+            "Use Power Automate or an export job to POST purchase invoice PDFs to your push URL.",
+            "POST a sample invoice PDF, then confirm it appears under Documents and Finance → Connected systems."
         ),
-        setupNotes: outboundNote("Dataverse / Power Automate"),
+        setupNotes: erpOutboundNote("Dynamics 365 / Dataverse"),
     },
     {
         id: "sap",
         name: "SAP (S/4HANA / Business One)",
         category: "erp",
-        description: "Connect SAP exports or OData / B1 Service Layer for invoices, POs, and quality docs.",
+        description:
+            "Store SAP credentials + routing. Documents ingest via push URL from CPI, IDoc wrapper, or scheduled export — Test validates Service Layer / OData reachability.",
         directions: "both",
         fields: [
             { key: "baseUrl", label: "SAP API / Service Layer base URL", type: "url", required: true },
@@ -440,36 +463,37 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
                 type: "text",
                 placeholder: "Attachments2 or /export/pdf",
             },
-            ...COMMON_TAIL,
+            ...PUSH_ONLY_TAIL,
         ],
-        guideSteps: guide(
+        guideSteps: erpGuide(
             "SAP",
-            "Work with your SAP Basis/IT team to enable Service Layer (B1) or OData APIs (S/4). Create a technical user with read access to attachments/exports.",
-            "Prefer scheduled PDF/CSV export to a folder if API access is restricted — then also configure Shared Folder. Otherwise paste Service Layer URL and credentials here.",
-            "Trigger a sample invoice/PO attachment export and verify the file in Documents with Finance or Procurement agent."
+            "Work with SAP Basis to enable Service Layer (B1) or OData (S/4). Create a technical user with read access.",
+            "Prefer CPI or a nightly PDF export job that POSTs to your push URL. Shared Folder is an alternative if exports land on disk.",
+            "Trigger one invoice export to the push URL and verify Documents + Finance workspace."
         ),
-        setupNotes: outboundNote("SAP (via middleware / CPI / RFC wrapper)"),
+        setupNotes: erpOutboundNote("SAP"),
     },
     {
         id: "odoo",
         name: "Odoo",
         category: "erp",
-        description: "Odoo XML-RPC / JSON-RPC for attachments from Accounting, Inventory, and Quality apps.",
+        description:
+            "Store Odoo credentials + routing. Documents ingest via push URL — Test validates JSON-RPC login.",
         directions: "both",
         fields: [
             { key: "baseUrl", label: "Odoo base URL", type: "url", required: true },
             { key: "database", label: "Database name", type: "text", required: true },
             { key: "username", label: "Username", type: "text", required: true },
             { key: "apiKey", label: "API key / password", type: "password", required: true, secret: true },
-            ...COMMON_TAIL,
+            ...PUSH_ONLY_TAIL,
         ],
-        guideSteps: guide(
+        guideSteps: erpGuide(
             "Odoo",
-            "In Odoo → Preferences / Users, enable API keys for a technical user with access to Attachments (ir.attachment).",
-            "Paste base URL, database, and API key; map agent (Finance for invoices, Compliance for QC).",
-            "Attach a sample PDF to an Odoo record and confirm Documents."
+            "In Odoo, create an API key for a technical user with attachment read access.",
+            "Use an Odoo automated action or external script to POST accounting PDFs to your push URL.",
+            "Attach a sample invoice PDF via push and confirm Documents + agent workspace."
         ),
-        setupNotes: outboundNote("Odoo webhook / automated action"),
+        setupNotes: erpOutboundNote("Odoo"),
     },
 
     // —— MES ——
@@ -591,7 +615,7 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
                 type: "text",
                 required: true,
                 placeholder: "901234567890",
-                help: "Open the list in ClickUp — the ID is in the URL after /l/",
+                help: "Do not paste the workspace ID (first number in browser URL) or slug (e.g. 2kzmz6c0-318). After saving, use Browse lists in Edit to pick the correct numeric API list ID.",
             },
             AGENT_FIELD,
             OUTBOUND_FIELD,
@@ -612,7 +636,8 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
         id: "custom_webhook",
         name: "Custom Webhook / REST API",
         category: "generic",
-        description: "Universal inbound HTTP — POST a file (multipart) or JSON with fileUrl. Create one connection per system + default agent.",
+        description:
+            "Universal inbound HTTP — choose how your system authenticates (API key, Bearer, Basic, custom header). One connection per external system.",
         directions: "both",
         fields: [
             {
@@ -620,22 +645,69 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
                 label: "Connection label",
                 type: "text",
                 required: true,
-                placeholder: "Plant A line 2",
+                placeholder: "SAP AP — Plant 1",
             },
+            {
+                key: "ingestAuthMode",
+                label: "Inbound auth method",
+                type: "select",
+                options: [
+                    { value: "integration_key", label: "API key header — X-Integration-Key (default)" },
+                    { value: "bearer_token", label: "Bearer token — Authorization: Bearer …" },
+                    { value: "basic_auth", label: "Basic auth — username + password" },
+                    { value: "custom_header", label: "Custom header — you choose name + secret" },
+                    { value: "query_key", label: "Query string only — ?key= on URL" },
+                ],
+                help: "How your ERP, middleware, or webhook sender proves identity when POSTing files.",
+            },
+            {
+                key: "ingestBearerToken",
+                label: "Bearer token (optional)",
+                type: "password",
+                secret: true,
+                placeholder: "Leave blank to use ingest API key as Bearer token",
+                help: "Your middleware sends Authorization: Bearer <this token>. Rotate from Status tab anytime.",
+            },
+            {
+                key: "ingestBasicUsername",
+                label: "Basic auth username",
+                type: "text",
+                placeholder: "integration_user",
+            },
+            {
+                key: "ingestBasicPassword",
+                label: "Basic auth password",
+                type: "password",
+                secret: true,
+            },
+            {
+                key: "ingestCustomHeaderName",
+                label: "Custom header name",
+                type: "text",
+                placeholder: "X-Api-Key",
+                help: "Header your system sends, e.g. X-Secret-Token or X-Api-Key",
+            },
+            {
+                key: "ingestCustomHeaderValue",
+                label: "Custom header secret",
+                type: "password",
+                secret: true,
+            },
+            USE_CASE_FIELD,
             AGENT_FIELD,
             OUTBOUND_FIELD,
         ],
         guideSteps: [
-            "Create one connection per external system (e.g. SAP Finance, HR ATS, Legal CLM) — each gets its own ingest URL + API key.",
-            "Set Default AI agent on each connection (Finance, HR, Legal, …) so files route to the right agent automatically.",
-            "Inbound option A — multipart file POST: curl -X POST \"$INGEST_URL\" -H \"X-Integration-Key: $KEY\" -F \"file=@report.pdf\" -F \"phase3Agent=finance_agent\"",
-            "Inbound option B — JSON URL fetch (ClickUp/Jira/SaaS webhooks): curl -X POST \"$INGEST_URL\" -H \"X-Integration-Key: $KEY\" -H \"Content-Type: application/json\" -d '{\"fileUrl\":\"https://…/invoice.pdf\",\"filename\":\"invoice.pdf\",\"phase3Agent\":\"finance_agent\",\"externalRef\":{\"taskId\":\"123\"}}'",
-            "Optional outbound: set Outbound results webhook URL to receive AI summaries after processing.",
-            "Confirm the uploaded file appears under Documents with metadata.source = custom_webhook.",
-            "Rotate the key anytime from Status / rotate key.",
+            "Create one connection per external system (SAP AP, HR ATS, Legal CLM, …).",
+            "Open Edit → pick Inbound auth method (API key, Bearer, Basic, custom header, or query key).",
+            "Set Use case + Default AI agent so files route to Finance, HR, Procurement, etc.",
+            "Save → Status tab → copy push URL and credential examples for your auth method.",
+            "POST a file (multipart) or JSON fileUrl from your middleware — Visibility validates the auth you configured.",
+            "Optional outbound webhook: receive AI summaries when you click Send from Documents.",
+            "Rotate ingest key from Status anytime; update your middleware if you use the default API key.",
         ],
         setupNotes:
-            "Live today: multipart file ingest + JSON fileUrl fetch (smart webhook). One connection per system recommended — assign a default agent per connection. Outbound: use Send from library to POST summaries to your webhook.",
+            "Like Claude connectors: pick the auth style your system already uses. Visibility accepts API key header, Bearer token, Basic auth, custom header, or URL query key on the same push endpoint.",
     },
     {
         id: "sql_csv_drop",

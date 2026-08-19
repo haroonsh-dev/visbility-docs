@@ -4,6 +4,7 @@
  */
 import {
     buildClickUpWebhookUrl,
+    extractClickUpTaskId,
     type ClickUpWebhookPayload,
 } from '../services/clickupBridgeService';
 import { buildConnectionPushUrl } from '../services/integrationIngestService';
@@ -47,6 +48,16 @@ assert(
         '/connections/int_sap_ap/push?key=vdint_key'
     ),
     'connection push URL builder'
+);
+
+assert(
+    extractClickUpTaskId('https://app.clickup.com/t/90182752640/z8m132xx6f') === 'z8m132xx6f',
+    'modern task URL extracts custom task id'
+);
+
+assert(
+    extractClickUpTaskId('https://app.clickup.com/t/86abc123') === '86abc123',
+    'classic task URL extracts task id'
 );
 
 console.log(process.exitCode ? 'Some ClickUp bridge checks failed' : 'All ClickUp bridge checks passed');

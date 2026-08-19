@@ -3,6 +3,13 @@ import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import IntegrationConnection, { IntegrationSyncMode } from '../models/IntegrationConnection';
 import { INTEGRATION_PROVIDER_IDS, SECRET_FIELD_KEYS } from '../constants/integrations';
+import { getProviderCapabilities } from '../constants/integrationCapabilities';
+import {
+    resolveIngestConnectionFromRequest,
+    validateIngestAuth,
+    ingestAuthModeLabel,
+} from '../services/integrationIngestAuth';
+import { testRemoteProviderConnection } from '../services/integrationProviderTests';
 import { getActiveSubscription } from '../services/planService';
 import { recordActivityFromReq } from '../services/activityLog';
 import {
@@ -28,7 +35,10 @@ import {
     buildClickUpWebhookUrl,
     processClickUpWebhook,
     syncClickUpList,
+    listClickUpAccessibleLists,
+    resolveClickUpListFromTaskRef,
     verifyClickUpToken,
+    verifyClickUpList,
 } from '../services/clickupBridgeService';
 import fs from 'fs';
 
@@ -64,6 +74,16 @@ function splitPayload(raw: Record<string, unknown>) {
 
 function generateIngestKey(): string {
     return `vdint_${crypto.randomBytes(24).toString('hex')}`;
+}
+
+function secureIngestKeyMatch(stored: string, provided: string): boolean {
+    const a = Buffer.from(String(stored || ''), 'utf8');
+    const b = Buffer.from(String(provided || ''), 'utf8');
+    if (a.length !== b.length) {
+        if (a.length) crypto.timingSafeEqual(a, a);
+        return false;
+    }
+    return crypto.timingSafeEqual(a, b);
 }
 
 function parseSyncMode(raw: unknown): IntegrationSyncMode {
@@ -161,6 +181,11 @@ function publicConnection(doc: any, req: Request) {
             ? String(doc.config.outboundWebhookUrl)
             : null,
         defaultPhase3Agent: doc.config?.phase3Agent ? String(doc.config.phase3Agent) : null,
+        ingestAuthMode: doc.config?.ingestAuthMode ? String(doc.config.ingestAuthMode) : 'integration_key',
+        ingestAuthModeLabel: ingestAuthModeLabel(doc.config?.ingestAuthMode),
+        ingestCustomHeaderName: doc.config?.ingestCustomHeaderName
+            ? String(doc.config.ingestCustomHeaderName)
+            : null,
         hasOutboundWebhook: Boolean(String(doc.config?.outboundWebhookUrl || '').trim()),
         outboundFolderId: doc.config?.outboundFolderId
             ? String(doc.config.outboundFolderId)
@@ -233,6 +258,13 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
         if (fields.folderId) config.folderId = normalizeFolderId(String(fields.folderId));
         if (fields.listId) config.listId = String(fields.listId).trim();
         if (fields.clickupListId) config.listId = String(fields.clickupListId).trim();
+        if (fields.ingestAuthMode != null) config.ingestAuthMode = String(fields.ingestAuthMode);
+        if (fields.ingestCustomHeaderName != null) {
+            config.ingestCustomHeaderName = String(fields.ingestCustomHeaderName).trim();
+        }
+        if (fields.ingestBasicUsername != null) {
+            config.ingestBasicUsername = String(fields.ingestBasicUsername).trim();
+        }
 
         // Normalize Google service-account JSON/PEM so OpenSSL can read the stored key
         if (providerId === 'google_drive' && secrets.privateKey) {
@@ -430,7 +462,41 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
             }
             try {
                 const info = await verifyClickUpToken(doc.secrets.apiToken);
-                doc.lastStatus = `test_ok: ClickUp ${info.user} (${info.teams} team(s))`;
+                const listId = String(doc.config?.listId || doc.config?.clickupListId || '').trim();
+                let listName: string | null = null;
+                if (listId) {
+                    try {
+                        const listInfo = await verifyClickUpList(listId, doc.secrets.apiToken);
+                        listName = listInfo.listName;
+                    } catch (listErr: any) {
+                        let message = listErr?.message || 'ClickUp list not found';
+                        try {
+                            const discovery = await listClickUpAccessibleLists(doc.secrets.apiToken);
+                            const accessible = discovery.lists;
+                            if (accessible.length) {
+                                const preview = accessible
+                                    .slice(0, 6)
+                                    .map((l) => `"${l.listName}" (${l.listId})`)
+                                    .join(', ');
+                                message += ` Your token can access: ${preview}${
+                                    accessible.length > 6 ? '…' : ''
+                                }. Use Browse lists in Edit to pick the correct List ID.`;
+                            }
+                        } catch {
+                            /* optional */
+                        }
+                        doc.lastStatus = `test_failed: ${message}`;
+                        await doc.save();
+                        return res.status(400).json({
+                            success: false,
+                            message,
+                            data: { ok: false, listId },
+                        });
+                    }
+                }
+                doc.lastStatus = listName
+                    ? `test_ok: ClickUp ${info.user} · list "${listName}"`
+                    : `test_ok: ClickUp ${info.user} (${info.teams} team(s))`;
                 doc.lastSyncAt = new Date();
                 await doc.save();
                 const base =
@@ -444,14 +510,16 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
                 );
                 return res.json({
                     success: true,
-                    message:
-                        'ClickUp token valid. Paste the webhook URL into ClickUp → Integrations → Webhooks. Task attachments ingest automatically.',
+                    message: listName
+                        ? `ClickUp OK — token valid and list "${listName}" found. Paste the webhook URL into ClickUp → Integrations → Webhooks, then use Sync now to pull CV attachments.`
+                        : 'ClickUp token valid. Add a List ID and save, then Run test again. Paste the webhook URL into ClickUp → Integrations → Webhooks.',
                     data: {
                         ok: true,
                         clickupUser: info.user,
                         clickupWebhookUrl,
                         defaultPhase3Agent: doc.config?.phase3Agent || null,
-                        listId: doc.config?.listId || null,
+                        listId: listId || null,
+                        listName,
                     },
                 });
             } catch (e: any) {
@@ -460,6 +528,38 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
                 return res.status(400).json({
                     success: false,
                     message: e?.message || 'ClickUp test failed',
+                    data: { ok: false },
+                });
+            }
+        }
+
+        if (getProviderCapabilities(doc.providerId).remoteTest) {
+            try {
+                const summary = await testRemoteProviderConnection(doc);
+                doc.lastStatus = `test_ok: ${summary}`;
+                doc.lastSyncAt = new Date();
+                await doc.save();
+                const base =
+                    process.env.PUBLIC_API_URL ||
+                    process.env.API_PUBLIC_URL ||
+                    `${req.protocol}://${req.get('host')}`;
+                const pushUrl = buildConnectionPushUrl(base, doc.connectionId, doc.ingestApiKey);
+                return res.json({
+                    success: true,
+                    message: `${summary}. Copy the push URL from Status — documents ingest via HTTP POST, not scheduled ERP pull.`,
+                    data: {
+                        ok: true,
+                        lastStatus: doc.lastStatus,
+                        connectionPushUrl: pushUrl,
+                        defaultPhase3Agent: doc.config?.phase3Agent || null,
+                    },
+                });
+            } catch (e: any) {
+                doc.lastStatus = `test_failed: ${e?.message || e}`;
+                await doc.save();
+                return res.status(e?.statusCode || 400).json({
+                    success: false,
+                    message: e?.message || 'Remote connection test failed',
                     data: { ok: false },
                 });
             }
@@ -514,7 +614,7 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
 
         res.json({
             success: true,
-            message: `Connection fields look valid.${webhookHint}`,
+            message: `Configuration saved.${webhookHint} Remote API not verified for this provider — use Test after adding credentials, or POST a file to the push URL.`,
             data: {
                 ok: true,
                 lastStatus: doc.lastStatus,
@@ -564,6 +664,72 @@ export const listIntegrationFiles = async (req: Request, res: Response, next: Ne
     }
 };
 
+export const listClickUpListsForConnection = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const orgId = await requireAdminWithActivePlan(req, res);
+        if (!orgId) return;
+
+        const doc = await IntegrationConnection.findOne({
+            connectionId: req.params.id,
+            organizationId: orgId,
+        });
+        if (!doc || doc.providerId !== 'clickup') {
+            return res.status(404).json({ success: false, message: 'ClickUp connection not found' });
+        }
+        const apiToken = String(doc.secrets?.apiToken || '').trim();
+        if (!apiToken) {
+            return res.status(400).json({ success: false, message: 'Save your ClickUp API token first' });
+        }
+
+        const discovery = await listClickUpAccessibleLists(apiToken);
+        return res.json({
+            success: true,
+            data: {
+                lists: discovery.lists,
+                meta: discovery.meta,
+                currentListId: doc.config?.listId ? String(doc.config.listId) : null,
+            },
+        });
+    } catch (error: any) {
+        return res.status(400).json({
+            success: false,
+            message: error?.message || 'Failed to list ClickUp lists',
+        });
+    }
+};
+
+export const resolveClickUpListForConnection = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const orgId = await requireAdminWithActivePlan(req, res);
+        if (!orgId) return;
+
+        const doc = await IntegrationConnection.findOne({
+            connectionId: req.params.id,
+            organizationId: orgId,
+        });
+        if (!doc || doc.providerId !== 'clickup') {
+            return res.status(404).json({ success: false, message: 'ClickUp connection not found' });
+        }
+        const apiToken = String(doc.secrets?.apiToken || '').trim();
+        if (!apiToken) {
+            return res.status(400).json({ success: false, message: 'Save your ClickUp API token first' });
+        }
+
+        const taskRef = String(req.body?.taskRef || req.body?.taskUrl || req.body?.taskId || '').trim();
+        const resolved = await resolveClickUpListFromTaskRef(taskRef, apiToken);
+        return res.json({
+            success: true,
+            message: `Found list "${resolved.listName}" from task "${resolved.taskName}". Save this List ID and Run test.`,
+            data: resolved,
+        });
+    } catch (error: any) {
+        return res.status(400).json({
+            success: false,
+            message: error?.message || 'Failed to resolve list from task',
+        });
+    }
+};
+
 export const syncIntegrationFiles = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const orgId = await requireAdminWithActivePlan(req, res);
@@ -579,7 +745,7 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
 
         if (doc.providerId === 'clickup') {
             const result = await syncClickUpList(doc);
-            const summary = `ingested=${result.ingested}, skipped=${result.skipped}, failed=${result.failed}, tasks=${result.taskCount}`;
+            const summary = `ingested=${result.ingested}, skipped=${result.skipped}, failed=${result.failed}, tasks=${result.taskCount}, attachments=${result.attachmentCount ?? 0}`;
             doc.lastSyncAt = new Date();
             doc.lastStatus = result.failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
             doc.lastSyncSummary = summary;
@@ -1099,16 +1265,16 @@ export const uploadFileViaIntegration = async (req: Request, res: Response, next
     }
 };
 
-/** Public ingest endpoint — authenticated via X-Integration-Key */
+/** Public ingest endpoint — supports API key, Bearer, Basic, or custom header auth */
 export const ingestViaIntegration = async (req: Request, res: Response, next: NextFunction) => {
     let multipartTmp = '';
     try {
-        const apiKey = String(req.headers['x-integration-key'] || req.body?.apiKey || '').trim();
-        const connection = await resolveIngestConnection(apiKey);
+        const connection = await resolveIngestConnectionFromRequest(req);
         if (!connection) {
             return res.status(401).json({
                 success: false,
-                message: apiKey ? 'Invalid integration key' : 'Missing X-Integration-Key header',
+                message:
+                    'Invalid or missing ingest credentials. Check your auth method (API key header, Bearer token, Basic auth, or custom header) in Integrations → Edit.',
             });
         }
 
@@ -1144,17 +1310,22 @@ export const pushViaConnection = async (req: Request, res: Response, next: NextF
     let multipartTmp = '';
     try {
         const connectionId = String(req.params.id || '').trim();
-        const key = String(req.query.key || req.headers['x-integration-key'] || req.body?.apiKey || '').trim();
-        if (!connectionId || !key) {
+        if (!connectionId) {
             return res.status(401).json({
                 success: false,
-                message: 'Missing connection id or key (query ?key= or X-Integration-Key header)',
+                message: 'Missing connection id',
             });
         }
 
         const connection = await IntegrationConnection.findOne({ connectionId, isActive: true });
-        if (!connection || connection.ingestApiKey !== key) {
-            return res.status(401).json({ success: false, message: 'Invalid connection push key' });
+        if (!connection) {
+            return res.status(404).json({ success: false, message: 'Connection not found' });
+        }
+        if (!validateIngestAuth(connection, req)) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid connection or ingest credentials for this auth method',
+            });
         }
 
         if (req.file) multipartTmp = req.file.path;
@@ -1201,8 +1372,11 @@ export const clickUpWebhook = async (req: Request, res: Response, next: NextFunc
             isActive: true,
             providerId: 'clickup',
         });
-        if (!connection || connection.ingestApiKey !== key) {
+        if (!connection || !secureIngestKeyMatch(connection.ingestApiKey, key)) {
             return res.status(401).json({ success: false, message: 'Invalid ClickUp webhook key' });
+        }
+        if (!validateIngestAuth(connection, req)) {
+            return res.status(401).json({ success: false, message: 'Invalid ClickUp webhook credentials' });
         }
 
         const result = await processClickUpWebhook(connection, req.body || {});

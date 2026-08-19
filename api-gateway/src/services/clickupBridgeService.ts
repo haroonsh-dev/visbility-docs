@@ -29,10 +29,80 @@ export type ClickUpWebhookPayload = {
 };
 
 function clickUpHeaders(apiToken: string) {
+    let token = String(apiToken || '').trim();
+    if (/^bearer\s+/i.test(token)) token = token.replace(/^bearer\s+/i, '').trim();
     return {
-        Authorization: String(apiToken || '').trim(),
+        Authorization: token,
         'Content-Type': 'application/json',
     };
+}
+
+type ClickUpApiErrorContext = 'list' | 'task' | 'user' | 'generic';
+
+function explainInvalidClickUpListId(raw: string): string | null {
+    const v = String(raw || '').trim();
+    if (!v) return null;
+
+    if (/^https?:\/\//i.test(v) || v.includes('app.clickup.com')) {
+        const teamMatch = v.match(/app\.clickup\.com\/(\d+)/i);
+        const slugMatch = v.match(/\/v\/l\/([^/?#]+)/i);
+        const parts: string[] = [];
+        if (teamMatch?.[1]) {
+            parts.push(`"${teamMatch[1]}" is your workspace ID, not the list ID`);
+        }
+        if (slugMatch?.[1] && !/^\d+$/.test(slugMatch[1])) {
+            parts.push(`"${slugMatch[1]}" is a ClickUp URL slug — the API needs the numeric list ID`);
+        }
+        if (parts.length) {
+            return `${parts.join('. ')}. Use Browse lists in Admin, or right-click the list in ClickUp → Copy link.`;
+        }
+    }
+
+    if (/^[a-z0-9]+-[0-9]+$/i.test(v)) {
+        return `"${v}" is a ClickUp URL slug (like 2kzmz6c0-318), not an API list ID. Use Browse lists to pick the correct numeric ID.`;
+    }
+
+    // List IDs from the ClickUp API are numeric. Alphanumeric values are task/custom IDs.
+    if (!/^\d+$/.test(v)) {
+        return `"${v}" looks like a ClickUp task ID, not a list ID. Use Browse lists and pick your list (e.g. Project 1).`;
+    }
+
+    return null;
+}
+
+function formatClickUpApiError(err: unknown, context: ClickUpApiErrorContext): Error {
+    const ax = err as {
+        response?: { status?: number; data?: { ECODE?: string; err?: string } };
+        message?: string;
+    };
+    const status = ax?.response?.status;
+    if (status === 404) {
+        const msg =
+            context === 'list'
+                ? 'ClickUp list not found — open your list in ClickUp and copy the List ID from the URL (number after /l/ or /li/). Do not use Space or Folder ID.'
+                : context === 'task'
+                  ? 'ClickUp task not found — it may have been deleted or your token cannot access it.'
+                  : 'ClickUp resource not found — check List ID and workspace access.';
+        return Object.assign(new Error(msg), { statusCode: 400 });
+    }
+    if (status === 401 || status === 403) {
+        const msg =
+            context === 'user'
+                ? 'ClickUp API token rejected (401). In ClickUp → Settings → Apps, regenerate your token, paste the full pk_… key in Edit (do not leave blank), Save, then Run test again.'
+                : 'ClickUp API token invalid or lacks access to this workspace/list.';
+        return Object.assign(new Error(msg), { statusCode: 400 });
+    }
+    const ecode = String(ax?.response?.data?.ECODE || '');
+    const detail = ax?.response?.data?.err || ax?.message || 'ClickUp API request failed';
+    if (ecode === 'validateListIDEx' || /list id invalid/i.test(String(detail))) {
+        return Object.assign(
+            new Error(
+                'ClickUp list ID invalid — click Browse lists, pick your list (e.g. Project 1), Save changes, then Run test. Do not use workspace ID, task ID, or URL slug.'
+            ),
+            { statusCode: 400 }
+        );
+    }
+    return Object.assign(new Error(String(detail)), { statusCode: 400 });
 }
 
 export async function verifyClickUpToken(apiToken: string): Promise<{ user: string; teams: number }> {
@@ -40,40 +110,334 @@ export async function verifyClickUpToken(apiToken: string): Promise<{ user: stri
     if (!token) {
         throw Object.assign(new Error('ClickUp API token is required'), { statusCode: 400 });
     }
-    const res = await axios.get(`${CLICKUP_API}/user`, {
-        headers: clickUpHeaders(token),
+    try {
+        const res = await axios.get(`${CLICKUP_API}/user`, {
+            headers: clickUpHeaders(token),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        const user = res.data?.user?.username || res.data?.user?.email || 'ok';
+        const teams = Array.isArray(res.data?.teams) ? res.data.teams.length : 0;
+        return { user: String(user), teams };
+    } catch (err) {
+        throw formatClickUpApiError(err, 'user');
+    }
+}
+
+export async function verifyClickUpList(
+    listId: string,
+    apiToken: string
+): Promise<{ listId: string; listName: string }> {
+    const id = String(listId || '').trim();
+    if (!id) {
+        throw Object.assign(new Error('ClickUp List ID is required'), { statusCode: 400 });
+    }
+    const invalidHint = explainInvalidClickUpListId(id);
+    if (invalidHint) {
+        throw Object.assign(new Error(invalidHint), { statusCode: 400 });
+    }
+    try {
+        const res = await axios.get(`${CLICKUP_API}/list/${encodeURIComponent(id)}`, {
+            headers: clickUpHeaders(apiToken),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        return { listId: id, listName: String(res.data?.name || 'list') };
+    } catch (err) {
+        throw formatClickUpApiError(err, 'list');
+    }
+}
+
+export type ClickUpAccessibleList = {
+    listId: string;
+    listName: string;
+    folderName?: string;
+    spaceName: string;
+    teamName: string;
+    teamId: string;
+    path: string;
+};
+
+export type ClickUpListDiscovery = {
+    lists: ClickUpAccessibleList[];
+    meta: {
+        clickupUser: string;
+        teamCount: number;
+        teams: Array<{ id: string; name: string }>;
+        spaceCount: number;
+        folderCount: number;
+        hint?: string;
+    };
+};
+
+async function fetchClickUpTeams(apiToken: string): Promise<Array<{ id: string; name: string }>> {
+    try {
+        const res = await axios.get(`${CLICKUP_API}/team`, {
+            headers: clickUpHeaders(apiToken),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        const teams = Array.isArray(res.data?.teams) ? res.data.teams : [];
+        if (teams.length) {
+            return teams
+                .map((t: { id?: string | number; name?: string }) => ({
+                    id: String(t.id || ''),
+                    name: String(t.name || 'Workspace'),
+                }))
+                .filter((t) => t.id);
+        }
+    } catch {
+        /* fall through to /user */
+    }
+
+    const userRes = await axios.get(`${CLICKUP_API}/user`, {
+        headers: clickUpHeaders(apiToken),
         timeout: CLICKUP_TIMEOUT_MS,
     });
-    const user = res.data?.user?.username || res.data?.user?.email || 'ok';
-    const teams = Array.isArray(res.data?.teams) ? res.data.teams.length : 0;
-    return { user: String(user), teams };
+    const teams = Array.isArray(userRes.data?.teams) ? userRes.data.teams : [];
+    return teams
+        .map((t: { id?: string | number; name?: string }) => ({
+            id: String(t.id || ''),
+            name: String(t.name || 'Workspace'),
+        }))
+        .filter((t) => t.id);
+}
+
+function pushUniqueLists(rows: ClickUpAccessibleList[], seen: Set<string>, next: ClickUpAccessibleList[]) {
+    for (const row of next) {
+        if (seen.has(row.listId)) continue;
+        seen.add(row.listId);
+        rows.push(row);
+    }
+}
+
+async function fetchListsInSpace(
+    token: string,
+    teamId: string,
+    teamName: string,
+    spaceId: string,
+    spaceName: string,
+    includeArchived: boolean
+): Promise<{ folderless: ClickUpAccessibleList[]; folderLists: ClickUpAccessibleList[]; folderCount: number }> {
+    const folderless: ClickUpAccessibleList[] = [];
+    const folderLists: ClickUpAccessibleList[] = [];
+    let folderCount = 0;
+
+    const listsRes = await axios.get(`${CLICKUP_API}/space/${encodeURIComponent(spaceId)}/list`, {
+        headers: clickUpHeaders(token),
+        timeout: CLICKUP_TIMEOUT_MS,
+        params: { archived: includeArchived },
+    });
+    const lists = Array.isArray(listsRes.data?.lists) ? listsRes.data.lists : [];
+    for (const list of lists) {
+        const listId = String((list as { id?: string | number }).id || '');
+        const listName = String((list as { name?: string }).name || 'List');
+        if (!listId) continue;
+        folderless.push({
+            listId,
+            listName,
+            spaceName,
+            teamName,
+            teamId,
+            path: `${teamName} → ${spaceName} → ${listName}`,
+        });
+    }
+
+    const foldersRes = await axios.get(`${CLICKUP_API}/space/${encodeURIComponent(spaceId)}/folder`, {
+        headers: clickUpHeaders(token),
+        timeout: CLICKUP_TIMEOUT_MS,
+        params: { archived: includeArchived },
+    });
+    const folders = Array.isArray(foldersRes.data?.folders) ? foldersRes.data.folders : [];
+    folderCount += folders.length;
+    for (const folder of folders) {
+        const folderId = String((folder as { id?: string | number }).id || '');
+        const folderName = String((folder as { name?: string }).name || 'Folder');
+        if (!folderId) continue;
+        const folderListRes = await axios.get(`${CLICKUP_API}/folder/${encodeURIComponent(folderId)}/list`, {
+            headers: clickUpHeaders(token),
+            timeout: CLICKUP_TIMEOUT_MS,
+            params: { archived: includeArchived },
+        });
+        const folderListRows = Array.isArray(folderListRes.data?.lists) ? folderListRes.data.lists : [];
+        for (const list of folderListRows) {
+            const listId = String((list as { id?: string | number }).id || '');
+            const listName = String((list as { name?: string }).name || 'List');
+            if (!listId) continue;
+            folderLists.push({
+                listId,
+                listName,
+                folderName,
+                spaceName,
+                teamName,
+                teamId,
+                path: `${teamName} → ${spaceName} → ${folderName} → ${listName}`,
+            });
+        }
+    }
+
+    return { folderless, folderLists, folderCount };
+}
+
+export async function listClickUpAccessibleLists(apiToken: string): Promise<ClickUpListDiscovery> {
+    const token = String(apiToken || '').trim();
+    if (!token) {
+        throw Object.assign(new Error('ClickUp API token is required'), { statusCode: 400 });
+    }
+
+    let clickupUser = 'unknown';
+    try {
+        const userRes = await axios.get(`${CLICKUP_API}/user`, {
+            headers: clickUpHeaders(token),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        clickupUser = String(userRes.data?.user?.username || userRes.data?.user?.email || 'ok');
+    } catch (err) {
+        throw formatClickUpApiError(err, 'user');
+    }
+
+    const teams = await fetchClickUpTeams(token);
+    const rows: ClickUpAccessibleList[] = [];
+    const seen = new Set<string>();
+    let spaceCount = 0;
+    let folderCount = 0;
+
+    for (const team of teams) {
+        for (const includeArchived of [false, true]) {
+            let spaces: Array<{ id?: string | number; name?: string }> = [];
+            try {
+                const spacesRes = await axios.get(`${CLICKUP_API}/team/${encodeURIComponent(team.id)}/space`, {
+                    headers: clickUpHeaders(token),
+                    timeout: CLICKUP_TIMEOUT_MS,
+                    params: { archived: includeArchived },
+                });
+                spaces = Array.isArray(spacesRes.data?.spaces) ? spacesRes.data.spaces : [];
+            } catch {
+                continue;
+            }
+
+            for (const space of spaces) {
+                const spaceId = String(space.id || '');
+                const spaceName = String(space.name || 'Space');
+                if (!spaceId) continue;
+                spaceCount += 1;
+                try {
+                    const batch = await fetchListsInSpace(
+                        token,
+                        team.id,
+                        team.name,
+                        spaceId,
+                        spaceName,
+                        includeArchived
+                    );
+                    folderCount += batch.folderCount;
+                    pushUniqueLists(rows, seen, batch.folderless);
+                    pushUniqueLists(rows, seen, batch.folderLists);
+                } catch {
+                    /* optional */
+                }
+            }
+        }
+    }
+
+    const meta = {
+        clickupUser,
+        teamCount: teams.length,
+        teams,
+        spaceCount,
+        folderCount,
+        hint: undefined as string | undefined,
+    };
+
+    if (!teams.length) {
+        meta.hint =
+            'This API token cannot see any ClickUp workspace. Log into ClickUp in your browser, open Settings → Apps → regenerate API Token, then save it here.';
+    } else if (!rows.length) {
+        const teamPreview = teams.map((t) => `${t.name} (${t.id})`).join(', ');
+        meta.hint = `Token user "${clickupUser}" sees workspace(s): ${teamPreview}, but the API returned 0 lists. Common causes: Guest role (need Member/Admin), private Space access, or wrong ClickUp account. Try resolving from a task link below.`;
+    }
+
+    return { lists: rows.sort((a, b) => a.path.localeCompare(b.path)), meta };
+}
+
+export function extractClickUpTaskId(raw: string): string {
+    const v = String(raw || '').trim();
+    if (!v) return '';
+
+    // New ClickUp task URLs: /t/{workspace_id}/{custom_task_id}
+    const modern = v.match(/\/t\/\d+\/([a-zA-Z0-9-]+)/);
+    if (modern?.[1]) return modern[1];
+
+    const patterns = [
+        /\/t\/([a-zA-Z0-9-]+)/,
+        /[?&]task_id=([a-zA-Z0-9-]+)/,
+        /\/task\/([a-zA-Z0-9-]+)/,
+    ];
+    for (const re of patterns) {
+        const m = v.match(re);
+        if (m?.[1]) return m[1];
+    }
+    return v;
+}
+
+export async function resolveClickUpListFromTaskRef(
+    taskRef: string,
+    apiToken: string
+): Promise<{ listId: string; listName: string; taskId: string; taskName: string; teamId?: string }> {
+    const taskId = extractClickUpTaskId(taskRef);
+    if (!taskId) {
+        throw Object.assign(new Error('Paste a ClickUp task link or task ID from a task inside your HR list.'), {
+            statusCode: 400,
+        });
+    }
+    const task = await fetchClickUpTask(taskId, apiToken);
+    const list = task.list as { id?: string | number; name?: string } | undefined;
+    const listId = String(list?.id || '');
+    if (!listId) {
+        throw Object.assign(new Error('Could not read list ID from that task. Try another task in your hiring list.'), {
+            statusCode: 400,
+        });
+    }
+    const team = task.team_id ?? (task.team as { id?: string | number } | undefined)?.id;
+    return {
+        listId,
+        listName: String(list?.name || 'list'),
+        taskId: String(task.id || taskId),
+        taskName: String(task.name || 'task'),
+        teamId: team != null ? String(team) : undefined,
+    };
 }
 
 export async function fetchClickUpTask(taskId: string, apiToken: string): Promise<Record<string, unknown>> {
-    const res = await axios.get(`${CLICKUP_API}/task/${encodeURIComponent(taskId)}`, {
-        headers: clickUpHeaders(apiToken),
-        timeout: CLICKUP_TIMEOUT_MS,
-        params: { include_subtasks: false },
-    });
-    return res.data || {};
+    try {
+        const res = await axios.get(`${CLICKUP_API}/task/${encodeURIComponent(taskId)}`, {
+            headers: clickUpHeaders(apiToken),
+            timeout: CLICKUP_TIMEOUT_MS,
+            params: { include_subtasks: false },
+        });
+        return res.data || {};
+    } catch (err) {
+        throw formatClickUpApiError(err, 'task');
+    }
 }
 
 export async function fetchClickUpListTasks(listId: string, apiToken: string): Promise<Array<Record<string, unknown>>> {
     const tasks: Array<Record<string, unknown>> = [];
     let page = 0;
     const maxPages = 20;
-    while (page < maxPages) {
-        const res = await axios.get(`${CLICKUP_API}/list/${encodeURIComponent(listId)}/task`, {
-            headers: clickUpHeaders(apiToken),
-            timeout: CLICKUP_TIMEOUT_MS,
-            params: { page, include_closed: true, subtasks: false },
-        });
-        const batch = Array.isArray(res.data?.tasks) ? res.data.tasks : [];
-        tasks.push(...batch);
-        if (batch.length < 100) break;
-        page += 1;
+    try {
+        while (page < maxPages) {
+            const res = await axios.get(`${CLICKUP_API}/list/${encodeURIComponent(listId)}/task`, {
+                headers: clickUpHeaders(apiToken),
+                timeout: CLICKUP_TIMEOUT_MS,
+                params: { page, include_closed: true, subtasks: false },
+            });
+            const batch = Array.isArray(res.data?.tasks) ? res.data.tasks : [];
+            tasks.push(...batch);
+            if (batch.length < 100) break;
+            page += 1;
+        }
+        return tasks;
+    } catch (err) {
+        throw formatClickUpApiError(err, 'list');
     }
-    return tasks;
 }
 
 function taskListId(task: Record<string, unknown>): string {
@@ -269,25 +633,25 @@ export async function syncClickUpList(connection: IIntegrationConnection) {
     let ingested = 0;
     let skipped = 0;
     let failed = 0;
+    let attachmentCount = 0;
     const details: Array<Record<string, unknown>> = [];
 
+    // List tasks API returns lightweight rows — attachments only appear on GET /task/{id}.
     for (const task of tasks) {
         const taskId = String(task.id || '');
         if (!taskId) continue;
-        const attachments = taskAttachments(task);
-        for (const att of attachments) {
-            try {
-                const out = await ingestClickUpAttachment({ connection, task, attachment: att, apiToken });
-                if (out.skipped) {
-                    skipped += 1;
-                } else {
-                    ingested += 1;
-                    details.push({ taskId, documentId: out.result.documentId, filename: out.result.filename });
-                }
-            } catch (e: any) {
-                failed += 1;
-                details.push({ taskId, attachmentId: att.id, error: e?.message || 'failed' });
+        try {
+            const summary = await ingestAttachmentsFromTask(connection, taskId);
+            ingested += summary.ingested;
+            skipped += summary.skipped;
+            failed += summary.failed;
+            attachmentCount += summary.attachmentCount ?? 0;
+            if (summary.details?.length) {
+                details.push(...summary.details.map((d) => ({ taskId, ...d })));
             }
+        } catch (e: any) {
+            failed += 1;
+            details.push({ taskId, status: 'failed', error: e?.message || 'task sync failed' });
         }
     }
 
@@ -296,6 +660,7 @@ export async function syncClickUpList(connection: IIntegrationConnection) {
         skipped,
         failed,
         taskCount: tasks.length,
+        attachmentCount,
         details: details.slice(0, 50),
     };
 }

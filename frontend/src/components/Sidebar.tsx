@@ -11,6 +11,10 @@ import { usePermissions } from "@/context/PermissionsContext";
 import { clearAuthState, getStoredUser } from "@/lib/authSession";
 import { apiRequest } from "@/lib/apiClient";
 import LogoDark from "@/assets/Logo/visibility docs dark bg.png";
+import {
+    agentWorkspacePath,
+    getAgentWorkspaceMeta,
+} from "@/lib/agentWorkspace";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { cn } from "@/lib/utils";
 
@@ -86,8 +90,8 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
         },
         { href: "/admin/documents", label: "Document Vault", roles: ["superAdmin"] },
         {
-            href: "/chat",
-            label: "AI Assistant",
+            href: "/agents",
+            label: "AI Workspaces",
             roles: ["superAdmin", "admin", "team", "service_account"],
             allow: () => role === "admin" || role === "superAdmin" || canAccessPage("chat"),
         },
@@ -132,8 +136,10 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
             "/admin/settings",
             "/admin/integrations",
             "/documents",
+            "/agents",
             "/chat",
             "/dashboard",
+            ...agentOptions.map((a) => agentWorkspacePath(a.value)),
         ];
         for (const href of [...new Set(hrefs)]) {
             try {
@@ -142,7 +148,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                 /* ignore */
             }
         }
-    }, [mounted, ready, router, visibleNav]);
+    }, [mounted, ready, router, visibleNav, agentOptions]);
 
     useEffect(() => {
         if (!open) return;
@@ -190,9 +196,12 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                 {/* Navigation */}
                 <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto relative z-1">
                     {visibleNav.map(({ href, label }) => {
-                        const active = pathname === href || pathname?.startsWith(`${href}/`);
+                        const active =
+                            pathname === href ||
+                            pathname?.startsWith(`${href}/`) ||
+                            (href === "/agents" && (pathname?.startsWith("/agents/") || pathname?.startsWith("/chat")));
                         const showDeptDropdown = href === "/documents" && canSeeDepts && departments.length > 0;
-                        const showAgentDropdown = href === "/chat" && agentOptions.length > 0;
+                                    const showAgentDropdown = href === "/agents" && agentOptions.length > 0;
 
                         return (
                             <div key={href}>
@@ -241,23 +250,59 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                     </div>
                                 )}
                                 {showAgentDropdown && agentOpen && (
-                                    <div className="ml-4 pl-3 border-l border-white/6 space-y-0.5 mb-1 mt-0.5">
+                                    <div className="ml-3 pl-2.5 border-l border-white/6 space-y-0.5 mb-1 mt-1">
+                                        <Link
+                                            href="/chat?new=1"
+                                            onClick={() => onClose?.()}
+                                            className={cn(
+                                                "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
+                                                pathname?.startsWith("/chat") && !currentAgent
+                                                    ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.12)]"
+                                                    : "text-slate-400 hover:text-white hover:bg-white/5"
+                                            )}
+                                        >
+                                            Quick chat
+                                        </Link>
+                                        <Link
+                                            href="/agents"
+                                            onClick={() => onClose?.()}
+                                            className={cn(
+                                                "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
+                                                pathname === "/agents"
+                                                    ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.12)]"
+                                                    : "text-slate-400 hover:text-white hover:bg-white/5"
+                                            )}
+                                        >
+                                            All workspaces
+                                        </Link>
                                         {agentOptions.map((ag) => {
-                                            const isSelected = currentAgent === ag.value;
+                                            const meta = getAgentWorkspaceMeta(ag.value);
+                                            const Icon = meta?.icon;
+                                            const wsPath = agentWorkspacePath(ag.value);
+                                            const active =
+                                                pathname === wsPath ||
+                                                (pathname?.startsWith("/chat") && currentAgent === ag.value);
                                             return (
                                                 <Link
                                                     key={ag.value}
-                                                    href={`/chat?agent=${ag.value}&new=1`}
+                                                    href={wsPath}
                                                     onClick={() => onClose?.()}
                                                     className={cn(
-                                                        "block px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors truncate",
-                                                        isSelected
-                                                            ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.2)] font-semibold border border-[rgba(56,182,255,0.3)]"
-                                                            : "text-slate-400 hover:text-[var(--vb-blue-bright)] hover:bg-white/5"
+                                                        "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors min-w-0",
+                                                        active
+                                                            ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.15)] font-semibold"
+                                                            : "text-slate-400 hover:text-white hover:bg-white/5"
                                                     )}
-                                                    title={`Start new chat with ${ag.label}`}
+                                                    title={meta?.tagline || ag.label}
                                                 >
-                                                    {ag.label}
+                                                    {Icon && (
+                                                        <Icon
+                                                            size={13}
+                                                            className="shrink-0 opacity-80"
+                                                            style={active && meta ? { color: meta.accent } : undefined}
+                                                        />
+                                                    )}
+                                                    <span className="truncate">{meta?.shortName || ag.label}</span>
                                                 </Link>
                                             );
                                         })}

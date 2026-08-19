@@ -669,14 +669,37 @@ async function resolveLetterTargets(params: {
     };
 }
 
+const HR_NON_RESUME_TYPES = new Set([
+    'offer_letter',
+    'experience_letter',
+    'joining_letter',
+    'internship_letter',
+    'promotion_letter',
+    'warning_letter',
+    'relieving_letter',
+    'training_certificate',
+    'hr_shortlist',
+    'employee_record',
+    'employment_contract',
+    'leave_application',
+    'attendance',
+    'payroll',
+    'performance_review',
+    'transcript',
+]);
+
 function isResumeLike(doc: { classification?: string | null; originalFilename?: string }): boolean {
-    const inferred = inferDocumentTypeFromFilename(doc.originalFilename || '');
+    const filename = doc.originalFilename || '';
+    const inferred = inferDocumentTypeFromFilename(filename);
     if (inferred && inferred !== 'resume') return false;
     if (inferred === 'resume') return true;
     const c = String(doc.classification || '').toLowerCase();
-    if (c === 'offer_letter' || c === 'experience_letter' || c === 'transcript') return false;
+    if (HR_NON_RESUME_TYPES.has(c) || /\bletter\b/.test(c)) return false;
     if (c === 'resume' || c === 'cv') return true;
-    return /\b(cv|cvs|resume|curriculum|biodata)\b/i.test(doc.originalFilename || '');
+    if (/\b(joining|offer|experience|promotion|relieving|internship|warning)\b.*\bletter\b/i.test(filename)) {
+        return false;
+    }
+    return /\b(cv|cvs|resume|curriculum|biodata)\b/i.test(filename);
 }
 
 async function resolveCvScoreForResume(
