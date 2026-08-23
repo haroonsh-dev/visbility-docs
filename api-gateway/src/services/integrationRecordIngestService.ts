@@ -200,11 +200,23 @@ async function findExistingStructuredRecord(
     connectionId: string,
     recordId: string
 ) {
+    const clickupTaskId = String(recordId || '')
+        .replace(/^clickup:task:/i, '')
+        .trim();
+
     return Document.findOne({
         organizationId,
         'metadata.integrationConnectionId': connectionId,
-        'metadata.integrationExternalRef.recordId': recordId,
         'metadata.ingestKind': 'structured_record',
+        $or: [
+            { 'metadata.integrationExternalRef.recordId': recordId },
+            ...(clickupTaskId
+                ? [
+                      { 'metadata.integrationExternalRef.clickupTaskId': clickupTaskId },
+                      { 'metadata.integrationExternalRef.recordId': `clickup:task:${clickupTaskId}` },
+                  ]
+                : []),
+        ],
     });
 }
 

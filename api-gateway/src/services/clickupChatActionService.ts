@@ -28,6 +28,13 @@ export type ClickUpChatResult = {
     }>;
 };
 
+/** Product agent names — never treat as ClickUp task-name filters. */
+const AGENT_PRODUCT_NAMES =
+    /\b(hr|finance|legal|compliance|procurement|other)\s*agents?\b|\bagents?\s+(hr|finance|legal|compliance)\b/i;
+
+const HR_TASK_HINTS =
+    /\b(candidate|candidates|resume|cv|hiring|recruit|interview|employee|hr|engineer|offer|onboard)\b/i;
+
 function normalizeAssignee(raw: unknown): string {
     if (!raw || typeof raw !== 'object') return '';
     const o = raw as Record<string, unknown>;
@@ -58,6 +65,20 @@ function formatDueDate(raw: unknown): string {
     return s || '—';
 }
 
+function readStructuredPayload(meta: Record<string, unknown>): Record<string, unknown> {
+    const data = meta.structuredData ?? meta.structuredPayload ?? meta.data;
+    return data && typeof data === 'object' && !Array.isArray(data)
+        ? (data as Record<string, unknown>)
+        : {};
+}
+
+function readExternalRef(meta: Record<string, unknown>): Record<string, unknown> {
+    const ext = meta.integrationExternalRef ?? meta.externalRef;
+    return ext && typeof ext === 'object' && !Array.isArray(ext)
+        ? (ext as Record<string, unknown>)
+        : {};
+}
+
 export function parseClickUpTaskFromDoc(doc: {
     documentId: string;
     originalFilename?: string | null;
@@ -65,12 +86,10 @@ export function parseClickUpTaskFromDoc(doc: {
     updatedAt?: Date;
 }): ClickUpTaskRow | null {
     const meta = (doc.metadata || {}) as Record<string, unknown>;
-    const data = (meta.structuredData || {}) as Record<string, unknown>;
-    const ext = (meta.integrationExternalRef || {}) as Record<string, unknown>;
+    const data = readStructuredPayload(meta);
+    const ext = readExternalRef(meta);
 
-    const taskId = String(
-        data.taskId || ext.clickupTaskId || ext.recordId || ''
-    )
+    const taskId = String(data.taskId || data.id || ext.clickupTaskId || ext.recordId || '')
         .replace(/^clickup:task:/i, '')
         .trim();
     const name =
@@ -85,36 +104,62 @@ export function parseClickUpTaskFromDoc(doc: {
         listObj?.name || ext.clickupListName || meta.integrationLabel || '—'
     ).trim();
 
+    const statusRaw = data.status;
+    let status = '—';
+    if (typeof statusRaw === 'string') status = statusRaw.trim() || '—';
+    else if (statusRaw && typeof statusRaw === 'object') {
+        status = String((statusRaw as { status?: string }).status || '').trim() || '—';
+    }
+
     return {
         documentId: doc.documentId,
         taskId: taskId || doc.documentId,
         name,
-        status: String(data.status || '—').trim() || '—',
+        status,
         assignees: formatClickUpAssignees(data.assignees),
-        dueDate: formatDueDate(data.due_date),
+        dueDate: formatDueDate(data.due_date ?? data.dueDate),
         listName,
         url: String(data.url || '').trim(),
         updatedAt: doc.updatedAt ? doc.updatedAt.toISOString().slice(0, 10) : '—',
     };
 }
 
-/** Detect asks about synced ClickUp tasks, assignees, or list status. */
-export function detectClickUpTaskAsk(question: string): boolean {
+function isHrAgentContext(phase3Agent?: string, question?: string): boolean {
+    if ((phase3Agent || '').toLowerCase() === 'hr_agent') return true;
+    return /\bhr\s*agent\b|\bhr\b.*\b(task|tasks|clickup)\b|\b(task|tasks|clickup)\b.*\bhr\b/i.test(
+        question || ''
+    );
+}
+
+/** Detect asks about synced ClickUp tasks (incl. HR Agent task questions). */
+export function detectClickUpTaskAsk(question: string, phase3Agent?: string): boolean {
     const q = question.toLowerCase().trim();
     if (!q) return false;
 
-    if (/\bclick\s*up\b/.test(q) || /\bclickup\b/.test(q)) {
-        return (
-            /\b(task|tasks|assign|assigned|assignee|list|status|sync|ticket|tickets|project)\b/.test(q) ||
-            /\b(what|show|list|check|who|which|give|tell)\b/.test(q)
-        );
-    }
-
-    if (/\b(integration\s+record|synced\s+task)\b/.test(q)) return true;
+    if (/\bclick\s*up\b/.test(q) || /\bclickup\b/.test(q)) return true;
+    if (/\b(integration\s+record|synced\s+task|synced\s+tasks)\b/.test(q)) return true;
 
     if (
         /\b(who\s+is\s+assigned|assigned\s+to|assignees?|my\s+tasks)\b/.test(q) &&
-        /\b(task|tasks|clickup|list)\b/.test(q)
+        /\b(task|tasks|list|ticket)\b/.test(q)
+    ) {
+        return true;
+    }
+
+    if (
+        /\b(task|tasks|tickets?)\b/.test(q) &&
+        /\b(show|list|what|any|all|find|check|give|tell|which)\b/.test(q)
+    ) {
+        return true;
+    }
+
+    if (AGENT_PRODUCT_NAMES.test(q) && /\b(task|tasks|ticket|tickets)\b/.test(q)) {
+        return true;
+    }
+
+    if (
+        isHrAgentContext(phase3Agent, question) &&
+        /\b(candidate|candidates|hiring|recruit|interview|synced|integration)\b/.test(q)
     ) {
         return true;
     }
@@ -123,6 +168,7 @@ export function detectClickUpTaskAsk(question: string): boolean {
 }
 
 function parseAssigneeNeedle(question: string): string | null {
+    if (AGENT_PRODUCT_NAMES.test(question)) return null;
     const patterns = [
         /tasks?\s+(?:for|assigned\s+to|of)\s+([A-Za-z][A-Za-z\s.'-]{1,40})/i,
         /assigned\s+to\s+([A-Za-z][A-Za-z\s.'-]{1,40})/i,
@@ -131,16 +177,91 @@ function parseAssigneeNeedle(question: string): string | null {
     for (const re of patterns) {
         const m = question.match(re);
         const raw = m?.[1]?.trim();
-        if (raw && raw.length >= 2 && !/^(click|clickup|the|all|my|what|show|list|check)$/i.test(raw)) {
-            return raw.replace(/\b(tasks?|clickup|list)\b.*$/i, '').trim();
+        if (
+            raw &&
+            raw.length >= 2 &&
+            !/^(click|clickup|the|all|my|what|show|list|check|hr|agent)$/i.test(raw)
+        ) {
+            return raw.replace(/\b(tasks?|clickup|list|agent)\b.*$/i, '').trim();
         }
     }
     return null;
 }
 
 function parseTaskNameNeedle(question: string): string | null {
+    if (AGENT_PRODUCT_NAMES.test(question) && !/task\s+(?:named|called|title)\s+/i.test(question)) {
+        return null;
+    }
     const m = question.match(/task\s+(?:named|called|title)\s+["']?([^"'\n.]+)/i);
-    return m?.[1]?.trim() || null;
+    const raw = m?.[1]?.trim() || null;
+    if (raw && AGENT_PRODUCT_NAMES.test(raw)) return null;
+    return raw;
+}
+
+function isHrRelevantTask(row: ClickUpTaskRow): boolean {
+    return HR_TASK_HINTS.test(`${row.name} ${row.listName}`);
+}
+
+function rowQualityScore(row: ClickUpTaskRow): number {
+    let score = 0;
+    if (row.status && row.status !== '—') score += 3;
+    if (row.listName && row.listName !== '—' && !/^clickup$/i.test(row.listName)) score += 2;
+    if (row.assignees && row.assignees !== 'Unassigned') score += 1;
+    if (row.dueDate && row.dueDate !== '—') score += 1;
+    if (row.url) score += 1;
+    return score;
+}
+
+/** Prefer richer row when the same ClickUp task was synced twice. */
+export function dedupeClickUpTaskRows(rows: ClickUpTaskRow[]): ClickUpTaskRow[] {
+    const byTaskId = new Map<string, ClickUpTaskRow>();
+    const noId: ClickUpTaskRow[] = [];
+
+    for (const row of rows) {
+        const id = String(row.taskId || '')
+            .replace(/^clickup:task:/i, '')
+            .trim()
+            .toLowerCase();
+        if (!id || id === row.documentId.toLowerCase()) {
+            noId.push(row);
+            continue;
+        }
+        const prev = byTaskId.get(id);
+        if (!prev || rowQualityScore(row) > rowQualityScore(prev)) {
+            byTaskId.set(id, row);
+        }
+    }
+
+    const merged = [...byTaskId.values(), ...noId];
+    const byName = new Map<string, ClickUpTaskRow>();
+    for (const row of merged) {
+        const key = row.name.trim().toLowerCase().replace(/\s+/g, ' ');
+        const prev = byName.get(key);
+        if (!prev) {
+            byName.set(key, row);
+            continue;
+        }
+        const prevWeak = prev.status === '—' || /^clickup$/i.test(prev.listName);
+        const rowWeak = row.status === '—' || /^clickup$/i.test(row.listName);
+        if (prevWeak !== rowWeak) {
+            byName.set(key, rowWeak ? prev : row);
+        } else if (rowQualityScore(row) > rowQualityScore(prev)) {
+            byName.set(key, row);
+        }
+    }
+
+    return [...byName.values()];
+}
+
+function structuredRecordMatch(): Record<string, unknown> {
+    return {
+        $or: [
+            { 'metadata.ingestKind': 'structured_record' },
+            { mimeType: 'application/json', 'metadata.source': 'clickup' },
+            { mimeType: 'application/json', 'metadata.recordType': 'task' },
+            { 'metadata.integrationExternalRef.clickupTaskId': { $exists: true, $ne: '' } },
+        ],
+    };
 }
 
 export async function loadClickUpTaskRows(
@@ -153,13 +274,19 @@ export async function loadClickUpTaskRows(
     const docs = await Document.find({
         ...filter,
         status: 'ready',
-        'metadata.ingestKind': 'structured_record',
-        $or: [
-            { 'metadata.source': 'clickup' },
-            { 'metadata.integrationExternalRef.clickupTaskId': { $exists: true, $ne: '' } },
+        $and: [
+            structuredRecordMatch(),
+            {
+                $or: [
+                    { 'metadata.source': 'clickup' },
+                    { 'metadata.integrationExternalRef.clickupTaskId': { $exists: true, $ne: '' } },
+                    { 'metadata.recordType': 'task' },
+                    { classification: 'integration_record' },
+                ],
+            },
         ],
     })
-        .select('documentId originalFilename metadata updatedAt')
+        .select('documentId originalFilename metadata updatedAt mimeType classification')
         .sort({ updatedAt: -1 })
         .limit(limit * 2)
         .lean();
@@ -189,16 +316,16 @@ export async function loadClickUpTaskRows(
         rows = rows.filter((r) => r.name.toLowerCase().includes(nameNeedle));
     }
 
-    return rows.slice(0, limit);
+    return dedupeClickUpTaskRows(rows).slice(0, limit);
 }
 
 function buildTaskTable(rows: ClickUpTaskRow[]): string {
     const header = '| Task | Status | Assignee(s) | Due | List |';
     const sep = '| --- | --- | --- | --- | --- |';
-    const body = rows.map(
-        (r) =>
-            `| ${r.name.replace(/\|/g, '/')} | ${r.status.replace(/\|/g, '/')} | ${r.assignees.replace(/\|/g, '/')} | ${r.dueDate} | ${r.listName.replace(/\|/g, '/')} |`
-    );
+    const body = rows.map((r) => {
+        const status = r.status === '—' ? 'unknown' : r.status;
+        return `| ${r.name.replace(/\|/g, '/')} | ${status.replace(/\|/g, '/')} | ${r.assignees.replace(/\|/g, '/')} | ${r.dueDate} | ${r.listName.replace(/\|/g, '/')} |`;
+    });
     return [header, sep, ...body].join('\n');
 }
 
@@ -207,10 +334,11 @@ export async function tryClickUpTaskCommand(params: {
     question: string;
     phase3Agent?: string;
 }): Promise<ClickUpChatResult> {
-    if (!detectClickUpTaskAsk(params.question)) {
+    if (!detectClickUpTaskAsk(params.question, params.phase3Agent)) {
         return { handled: false };
     }
 
+    const hrContext = isHrAgentContext(params.phase3Agent, params.question);
     const assigneeNeedle = parseAssigneeNeedle(params.question);
     const nameNeedle = parseTaskNameNeedle(params.question);
     const rows = await loadClickUpTaskRows(params.user, {
@@ -238,33 +366,59 @@ export async function tryClickUpTaskCommand(params: {
                 formatAgentHeading('ClickUp tasks', 2),
                 '',
                 formatAgentIntro([
+                    hrContext
+                        ? '**HR Agent** is the Visibility assistant — it is not a ClickUp task name.'
+                        : '',
                     `No synced ClickUp task records found${filterHint} in your portfolio.`,
                     '**To load tasks:** Admin → Integrations → ClickUp → **Sync now** (or add the webhook for live updates).',
-                    'Each task in your connected list is stored with assignees, status, and custom fields.',
+                    hrContext
+                        ? 'For hiring work, also upload resumes in **Documents** — HR Agent analyzes files there. ClickUp sync is for task/status data.'
+                        : 'Each task in your connected list is stored with assignees, status, and custom fields.',
                 ]),
             ].join('\n'),
             citations: [],
         };
     }
 
-    const byAssignee = new Map<string, ClickUpTaskRow[]>();
-    for (const row of rows) {
-        const key = row.assignees === 'Unassigned' ? 'Unassigned' : row.assignees;
-        const bucket = byAssignee.get(key) || [];
-        bucket.push(row);
-        byAssignee.set(key, bucket);
-    }
-
     const q = params.question.toLowerCase();
     const wantsByAssignee =
-        /\b(assign|assigned|assignee|who)\b/.test(q) || Boolean(assigneeNeedle);
+        Boolean(assigneeNeedle) ||
+        /\b(who\s+is\s+assigned|assigned\s+to|assignees?|by\s+assignee)\b/.test(q);
 
     let answer = formatAgentHeading('ClickUp tasks', 2);
-    answer += `\n\n${formatAgentIntro([
-        `${rows.length} task(s) from your synced ClickUp connection(s).`,
-    ])}\n\n`;
 
-    if (wantsByAssignee && byAssignee.size > 1) {
+    if (hrContext) {
+        answer += `\n\n${formatAgentIntro([
+            '**HR Agent** is this Visibility assistant — not a task inside ClickUp.',
+            `Here are **${rows.length}** synced ClickUp task(s) for HR / hiring context.`,
+        ])}\n\n`;
+
+        const hrish = rows.filter(isHrRelevantTask);
+        if (hrish.length) {
+            answer += '**Closest to HR / hiring:**\n\n';
+            for (const t of hrish.slice(0, 8)) {
+                const status = t.status === '—' ? 'unknown' : t.status;
+                answer += `- **${t.name}** — ${status} · ${t.assignees}\n`;
+            }
+            answer += '\n';
+        } else {
+            answer +=
+                '_No task titles look explicitly HR-related (candidate / hiring / interview). Full list below — say which task to focus on._\n\n';
+        }
+    } else {
+        answer += `\n\n${formatAgentIntro([
+            `${rows.length} task(s) from your synced ClickUp connection(s).`,
+        ])}\n\n`;
+    }
+
+    if (wantsByAssignee) {
+        const byAssignee = new Map<string, ClickUpTaskRow[]>();
+        for (const row of rows) {
+            const key = row.assignees === 'Unassigned' ? 'Unassigned' : row.assignees;
+            const bucket = byAssignee.get(key) || [];
+            bucket.push(row);
+            byAssignee.set(key, bucket);
+        }
         answer += '**By assignee:**\n\n';
         for (const [assignee, tasks] of [...byAssignee.entries()].sort((a, b) =>
             a[0].localeCompare(b[0])
@@ -283,8 +437,13 @@ export async function tryClickUpTaskCommand(params: {
         answer += `\n\n_Showing 25 of ${rows.length} tasks. Narrow with e.g. "tasks assigned to Ahmed"._`;
     }
 
-    answer +=
-        '\n\n_Sync again from Admin → Integrations → ClickUp → **Sync now** to refresh._';
+    if (hrContext) {
+        answer +=
+            '\n\n_Tip: Upload CVs in Documents for scoring/shortlist. Ask “tasks assigned to …” to filter ClickUp._';
+    } else {
+        answer +=
+            '\n\n_Sync again from Admin → Integrations → ClickUp → **Sync now** to refresh._';
+    }
 
     return { handled: true, answer, citations };
 }
