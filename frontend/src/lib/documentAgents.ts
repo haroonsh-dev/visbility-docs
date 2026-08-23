@@ -267,6 +267,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
     certificate_of_compliance: "Certificate of compliance",
     unclassified: "Unclassified",
     other: "Other",
+    integration_record: "Integration record",
 };
 
 /** Options for search / filter dropdowns */

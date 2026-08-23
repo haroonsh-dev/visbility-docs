@@ -1437,3 +1437,332 @@ export async function tryHrRescoreCvsCommand(params: {
 
 /** Expose format helpers for tests / chat answers */
 export { formatCertExpiryList, formatOnboardingList, formatEmployeeDirectory };
+
+export type HrStructuredActionId =
+    | 'full_report'
+    | 'shortlist'
+    | 'cert_report'
+    | 'leave_report'
+    | 'payroll_report'
+    | 'performance_report'
+    | 'joining_letter'
+    | 'internship_letter'
+    | 'training_certificate';
+
+export type HrLetterContext = {
+    candidateName?: string;
+    companyName?: string;
+    jobTitle?: string;
+    department?: string;
+    effectiveDate?: string;
+    trainingName?: string;
+    duration?: string;
+};
+
+export type HrReportExecuteResult = {
+    ok: boolean;
+    message: string;
+    documentId?: string;
+    filename?: string;
+    classification?: string;
+};
+
+const SECTION_BY_ACTION: Partial<Record<HrStructuredActionId, HrSectionPdfKind>> = {
+    cert_report: 'certs',
+    leave_report: 'leave',
+    payroll_report: 'payroll',
+    performance_report: 'performance',
+};
+
+const LETTER_BY_ACTION: Partial<Record<HrStructuredActionId, HrLetterKind>> = {
+    joining_letter: 'joining',
+    internship_letter: 'internship',
+    training_certificate: 'training_certificate',
+};
+
+export const HR_STRUCTURED_ACTION_IDS: HrStructuredActionId[] = [
+    'full_report',
+    'shortlist',
+    'cert_report',
+    'leave_report',
+    'payroll_report',
+    'performance_report',
+    'joining_letter',
+    'internship_letter',
+    'training_certificate',
+];
+
+function actionResultToExecute(result: HrReportActionResult): HrReportExecuteResult {
+    if (!result.handled) {
+        return { ok: false, message: 'Report action could not be completed.' };
+    }
+    const citation = result.citations?.[0];
+    const plain = String(result.answer || '')
+        .replace(/\*\*/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .trim();
+    if (citation?.documentId) {
+        return {
+            ok: true,
+            message: plain.split('\n').find(Boolean) || 'PDF ready.',
+            documentId: citation.documentId,
+            filename: citation.filename,
+            classification: citation.documentType,
+        };
+    }
+    return { ok: false, message: plain || 'No PDF was generated.' };
+}
+
+async function assertHrAgentAccess(user: AuthUser): Promise<HrReportExecuteResult | null> {
+    if (user.role === 'superAdmin') return null;
+    const check = await requireAllowedAgent(user, HR_AGENT);
+    if (!check.ok) return { ok: false, message: check.message || 'HR agent not available on your plan.' };
+    return null;
+}
+
+async function generateHrWorkforceReportDirect(
+    user: AuthUser,
+    documentIds?: string[]
+): Promise<HrReportExecuteResult> {
+    const scopedIds = documentIds?.filter(Boolean);
+    const bundle = await loadHrSnapshotBundle(user, {
+        documentIds: scopedIds?.length ? scopedIds : undefined,
+        maxDocs: 150,
+    });
+    const resumes = await listTopResumesForUser(user, 25, scopedIds?.length ? scopedIds : undefined);
+
+    const hasAny =
+        bundle.employees.length ||
+        bundle.certs.length ||
+        bundle.onboarding.length ||
+        bundle.leave.length ||
+        bundle.payroll.length ||
+        bundle.attendance.length ||
+        bundle.performance.length ||
+        bundle.transcripts.length ||
+        resumes.length;
+    if (!hasAny) {
+        return {
+            ok: false,
+            message:
+                'No ready HR documents with extractable data in scope. Upload employee records, certificates, leave, payroll, attendance, performance reviews, transcripts, or resumes first.',
+        };
+    }
+
+    const { html } = buildHrReportHtml({ bundle, resumes });
+    const stamp = new Date().toISOString().slice(0, 10);
+    const generatedPdf = await generateComplianceReportPdf({
+        html,
+        filename: `HR_Workforce_Report_${stamp}.pdf`,
+    });
+    if (!generatedPdf.pdf_base64) {
+        throw new Error('HR PDF generation failed (pdf_base64 missing).');
+    }
+
+    const sourceIds = [
+        ...new Set([
+            ...bundle.employees.map((e) => e.documentId),
+            ...bundle.certs.map((c) => c.documentId),
+            ...bundle.onboarding.map((o) => o.documentId),
+            ...bundle.leave.map((l) => l.documentId),
+            ...bundle.payroll.map((p) => p.documentId),
+            ...bundle.attendance.map((a) => a.documentId),
+            ...bundle.performance.map((p) => p.documentId),
+            ...bundle.transcripts.map((t) => t.documentId),
+            ...resumes.map((r) => r.documentId),
+        ]),
+    ];
+
+    const reportDoc = await saveGeneratedPdf(
+        user,
+        generatedPdf.pdf_base64,
+        `HR_Workforce_Report_${stamp}`,
+        'hr_report',
+        sourceIds
+    );
+
+    return {
+        ok: true,
+        message: 'HR workforce report ready.',
+        documentId: reportDoc.documentId,
+        filename: reportDoc.originalFilename,
+        classification: 'hr_report',
+    };
+}
+
+async function generateHrShortlistDirect(
+    user: AuthUser,
+    limit: number,
+    documentIds?: string[]
+): Promise<HrReportExecuteResult> {
+    const scopedIds = documentIds?.filter(Boolean);
+    const resumes = await listTopResumesForUser(
+        user,
+        limit,
+        scopedIds?.length ? scopedIds : undefined
+    );
+    const scored = resumes.filter((r) => Number.isFinite(r.cvScore));
+    if (!scored.length) {
+        return {
+            ok: false,
+            message:
+                'No scored resumes in scope for a shortlist export. Upload CVs, wait for scores, then try again.',
+        };
+    }
+
+    const { html } = buildShortlistHtml(scored.slice(0, limit));
+    const stamp = new Date().toISOString().slice(0, 10);
+    const generatedPdf = await generateComplianceReportPdf({
+        html,
+        filename: `HR_Shortlist_${stamp}.pdf`,
+    });
+    if (!generatedPdf.pdf_base64) {
+        throw new Error('Shortlist PDF generation failed.');
+    }
+
+    const doc = await saveGeneratedPdf(
+        user,
+        generatedPdf.pdf_base64,
+        `HR_Shortlist_Top${Math.min(limit, scored.length)}_${stamp}`,
+        'hr_shortlist',
+        scored.map((r) => r.documentId)
+    );
+
+    return {
+        ok: true,
+        message: `Shortlist PDF — top ${Math.min(limit, scored.length)} by CV score.`,
+        documentId: doc.documentId,
+        filename: doc.originalFilename,
+        classification: 'hr_shortlist',
+    };
+}
+
+async function generateHrSectionReportDirect(
+    user: AuthUser,
+    kind: HrSectionPdfKind,
+    documentIds?: string[]
+): Promise<HrReportExecuteResult> {
+    const scopedIds = documentIds?.filter(Boolean);
+    const bundle = await loadHrSnapshotBundle(user, {
+        documentIds: scopedIds?.length ? scopedIds : undefined,
+        maxDocs: 150,
+    });
+    const { html, empty } = buildSectionPdfHtml(kind, bundle);
+    if (empty) {
+        return {
+            ok: false,
+            message: `No ${kind} data in scope to put in a PDF. Upload related HR documents and try again.`,
+        };
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const generatedPdf = await generateComplianceReportPdf({
+        html,
+        filename: `HR_${kind}_${stamp}.pdf`,
+    });
+    if (!generatedPdf.pdf_base64) {
+        throw new Error('Section PDF generation failed.');
+    }
+
+    const sourceIds = [
+        ...bundle.certs,
+        ...bundle.transcripts,
+        ...bundle.performance,
+        ...bundle.leave,
+        ...bundle.onboarding,
+        ...bundle.attendance,
+        ...bundle.payroll,
+    ].map((r) => r.documentId);
+
+    const doc = await saveGeneratedPdf(
+        user,
+        generatedPdf.pdf_base64,
+        `HR_${kind}_report_${stamp}`,
+        'hr_report',
+        [...new Set(sourceIds)]
+    );
+
+    return {
+        ok: true,
+        message: `${kind} PDF report ready.`,
+        documentId: doc.documentId,
+        filename: doc.originalFilename,
+        classification: 'hr_report',
+    };
+}
+
+function buildStructuredLetterQuestion(
+    actionId: HrStructuredActionId,
+    ctx: HrLetterContext
+): string | null {
+    const name = ctx.candidateName?.trim();
+    if (!name) return null;
+    const company = ctx.companyName?.trim() || 'Visibility Bots';
+    const kind = LETTER_BY_ACTION[actionId];
+    if (kind === 'joining') {
+        return `Generate joining letter for ${name}. Company ${company}, title ${ctx.jobTitle || 'Software Engineer'}, joining ${ctx.effectiveDate || '2026-09-01'}, department ${ctx.department || 'Engineering'}`;
+    }
+    if (kind === 'internship') {
+        return `Generate internship letter for ${name}. Company ${company}, title ${ctx.jobTitle || 'Intern'}, joining ${ctx.effectiveDate || '2026-09-01'}, duration ${ctx.duration || '3 months'}`;
+    }
+    if (kind === 'training_certificate') {
+        return `Generate training certificate for ${name}. Company ${company}, training ${ctx.trainingName || 'Professional Development'}, duration ${ctx.duration || '4 weeks'}`;
+    }
+    return null;
+}
+
+/** Structured HR report/letter generation — explicit action id, no chat regex routing. */
+export async function executeHrReportAction(params: {
+    user: AuthUser;
+    actionId: HrStructuredActionId;
+    documentIds?: string[];
+    shortlistLimit?: number;
+    letterContext?: HrLetterContext;
+}): Promise<HrReportExecuteResult> {
+    const denied = await assertHrAgentAccess(params.user);
+    if (denied) return denied;
+
+    const scopedIds = params.documentIds?.filter(Boolean);
+
+    switch (params.actionId) {
+        case 'full_report':
+            return generateHrWorkforceReportDirect(params.user, scopedIds);
+        case 'shortlist':
+            return generateHrShortlistDirect(
+                params.user,
+                Math.min(50, Math.max(1, params.shortlistLimit ?? 10)),
+                scopedIds
+            );
+        case 'cert_report':
+        case 'leave_report':
+        case 'payroll_report':
+        case 'performance_report': {
+            const kind = SECTION_BY_ACTION[params.actionId];
+            if (!kind) return { ok: false, message: 'Unknown section report.' };
+            return generateHrSectionReportDirect(params.user, kind, scopedIds);
+        }
+        case 'joining_letter':
+        case 'internship_letter':
+        case 'training_certificate': {
+            const question = buildStructuredLetterQuestion(
+                params.actionId,
+                params.letterContext || {}
+            );
+            if (!question) {
+                return {
+                    ok: false,
+                    message: 'Candidate name is required for letter generation.',
+                };
+            }
+            const letterResult = await tryHrExtraLetterCommand({
+                user: params.user,
+                question,
+                phase3Agent: HR_AGENT,
+                documentIds: scopedIds,
+            });
+            return actionResultToExecute(letterResult);
+        }
+        default:
+            return { ok: false, message: 'Unknown report action.' };
+    }
+}

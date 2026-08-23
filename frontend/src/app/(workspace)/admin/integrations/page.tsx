@@ -30,6 +30,7 @@ import {
     INGEST_AUTH_MODE_OPTIONS,
     shouldShowIngestAuthField,
 } from "@/lib/integrationIngestAuth";
+import { structuredRecordPushBodyExample } from "@/lib/integrationRecordIngest";
 
 type Connection = {
     connectionId: string;
@@ -1641,7 +1642,8 @@ function IntegrationsContent() {
                                         {activeConn.providerId === "clickup" && (
                                             <div className="rounded-2xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-4 space-y-3">
                                                 <p className="text-xs font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)]">
-                                                    ClickUp webhook (auto-ingest attachments)
+                                                    ClickUp sync imports <strong className="text-foreground">task fields + attachments</strong>.
+                                                    Task data is stored as structured JSON records; CV PDFs still go through OCR.
                                                 </p>
                                                 <p className="text-[11px] text-foreground-muted leading-relaxed">
                                                     Paste this URL in ClickUp → Settings → Integrations → Webhooks.
@@ -1803,7 +1805,28 @@ function IntegrationsContent() {
                                                 </div>
                                             </div>
                                             <p className="text-[11px] text-foreground-muted">
-                                                Multipart: <code className="text-[10px]">-F file=@doc.pdf</code> · JSON:{" "}
+                                                <strong className="text-foreground">Structured data (all agents):</strong> POST JSON{" "}
+                                                <code className="text-[10px]">{`{"recordType":"…","data":{…}}`}</code>
+                                                . Routes to HR, Finance, Procurement, Compliance, or Legal by{" "}
+                                                <code className="text-[10px]">recordType</code>, connection agent default, or{" "}
+                                                <code className="text-[10px]">phase3Agent</code>.
+                                            </p>
+                                            <pre className="text-[10px] rounded-lg bg-black/20 border border-border px-2.5 py-2 overflow-x-auto text-foreground-muted max-h-32">
+                                                {structuredRecordPushBodyExample(
+                                                    String(
+                                                        form.phase3Agent ||
+                                                            activeConn.config?.phase3Agent ||
+                                                            (activeItem
+                                                                ? getRecommendedAgentForIntegration(
+                                                                      activeItem,
+                                                                      String(form.useCase || "")
+                                                                  )
+                                                                : "")
+                                                    )
+                                                )}
+                                            </pre>
+                                            <p className="text-[11px] text-foreground-muted">
+                                                File ingest: multipart <code className="text-[10px]">-F file=@doc.pdf</code> · JSON{" "}
                                                 <code className="text-[10px]">{`{"fileUrl":"https://…/doc.pdf"}`}</code>
                                             </p>
                                             <div className="space-y-1">

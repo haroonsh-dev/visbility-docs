@@ -51,6 +51,7 @@ export type CertRegisterRow = {
     status: string;
     statusTone: "valid" | "expiring" | "expired" | "unknown";
     documentId?: string;
+    agentAction: string;
 };
 
 const PILLAR_TYPES: Record<CompPillarId, string[]> = {
@@ -140,6 +141,12 @@ export function extractCertRegister(visuals: ChatVisualSpec[], limit = 12): Cert
                 status: status.replace(/_/g, " "),
                 statusTone: statusTone(status),
                 documentId: row._documentIds ? String(row._documentIds).split(",")[0] : undefined,
+                agentAction:
+                    statusTone(status) === "expired"
+                        ? "Renew"
+                        : statusTone(status) === "expiring"
+                          ? "Plan renewal"
+                          : "Review",
             };
         });
     }
@@ -160,6 +167,7 @@ export function extractCertRegister(visuals: ChatVisualSpec[], limit = 12): Cert
             status: tone === "expired" ? "EXPIRED" : tone === "expiring" ? "EXPIRING SOON" : "VALID",
             statusTone: tone,
             documentId: row._documentIds ? String(row._documentIds).split(",")[0] : undefined,
+            agentAction: tone === "expired" ? "Renew" : tone === "expiring" ? "Plan renewal" : "Review",
         };
     });
 }

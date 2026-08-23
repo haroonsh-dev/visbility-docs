@@ -2,9 +2,9 @@
  * HR candidate outreach — list scored CVs with emails and send templated messages.
  */
 import Document from '../models/Document';
-import { AuthUser } from './accessScope';
+import { AuthUser, buildDocumentFilter } from './accessScope';
 import { getDocumentExtractions, getOfferLetterPrefill, resolveAiOrganizationId } from './aiServiceClient';
-import { listTopResumesForUser } from './hrChatActionService';
+import { isResumeLike, listTopResumesForUser, resolveCvScoreForResume } from './hrChatActionService';
 import { sendHtmlEmail, isEmailConfigured } from './emailService';
 import { requireAllowedAgent } from './planService';
 import { HR_AGENT } from './offerLetterGenerationService';
@@ -510,4 +510,251 @@ export async function tryHrCandidateEmailCommand(params: {
     }
 
     return { handled: true, answer: lines.join('\n') };
+}
+
+export type HrShortlistRow = {
+    rank: number;
+    documentId: string;
+    candidateName: string;
+    filename: string;
+    cvScore: number;
+    email: string | null;
+    pipelineStatus: string;
+    agentAction: string;
+    scoreSource: 'ai' | 'hr_approved';
+};
+
+export type HrPendingShortlistRow = {
+    documentId: string;
+    candidateName: string;
+    filename: string;
+};
+
+function shortlistLabels(score: number): { pipelineStatus: string; agentAction: string } {
+    if (score >= 80) return { pipelineStatus: 'Shortlisted', agentAction: 'Shortlist' };
+    if (score >= 60) return { pipelineStatus: 'Under review', agentAction: 'Review CV' };
+    return { pipelineStatus: 'Low match', agentAction: 'Archive' };
+}
+
+const MANUAL_SHORTLIST_SCORE = 80;
+
+/** HR approves pending CV(s) into the ranked shortlist (uses AI score when available). */
+export async function approveCandidatesToShortlist(
+    user: AuthUser,
+    documentIds: string[],
+    req?: Request
+): Promise<{ approved: Array<{ documentId: string; candidateName: string; cvScore: number }> }> {
+    const check = await requireAllowedAgent(user, HR_AGENT);
+    if (!check.ok) {
+        throw Object.assign(new Error(check.message || 'HR agent not available'), { statusCode: 403 });
+    }
+
+    const ids = [...new Set(documentIds.map((id) => String(id || '').trim()).filter(Boolean))];
+    if (!ids.length) {
+        throw Object.assign(new Error('documentIds required'), { statusCode: 400 });
+    }
+
+    const filter = await buildDocumentFilter(user, {});
+    const approved: Array<{ documentId: string; candidateName: string; cvScore: number }> = [];
+
+    for (const documentId of ids) {
+        const doc = await Document.findOne({ ...filter, documentId })
+            .select('documentId originalFilename classification metadata pythonDocumentId')
+            .lean();
+        if (!doc || !isResumeLike(doc)) continue;
+
+        const meta = (doc.metadata || {}) as {
+            shortlistApproved?: boolean;
+            cvScore?: number;
+            pipelineStatus?: string;
+        };
+
+        if (meta.shortlistApproved) {
+            const existingScore =
+                Number.isFinite(Number(meta.cvScore)) && Number(meta.cvScore) > 0
+                    ? Number(meta.cvScore)
+                    : MANUAL_SHORTLIST_SCORE;
+            approved.push({
+                documentId,
+                candidateName: candidateNameFromRow({ originalFilename: doc.originalFilename }),
+                cvScore: existingScore,
+            });
+            continue;
+        }
+
+        let score = await resolveCvScoreForResume(user, doc);
+        const scoreSource: 'ai' | 'hr_approved' =
+            Number.isFinite(score) && score > 0 ? 'ai' : 'hr_approved';
+        if (!Number.isFinite(score) || score <= 0) {
+            score = MANUAL_SHORTLIST_SCORE;
+        }
+
+        await Document.updateOne(
+            { documentId },
+            {
+                $set: {
+                    'metadata.cvScore': score,
+                    'metadata.shortlistApproved': true,
+                    'metadata.pipelineStatus': 'Shortlisted',
+                    'metadata.shortlistApprovedAt': new Date().toISOString(),
+                    'metadata.scoreSource': scoreSource,
+                },
+            }
+        );
+
+        approved.push({
+            documentId,
+            candidateName: candidateNameFromRow({ originalFilename: doc.originalFilename }),
+            cvScore: score,
+        });
+    }
+
+    if (!approved.length) {
+        throw Object.assign(new Error('No valid CV documents found in your portfolio'), { statusCode: 404 });
+    }
+
+    if (req) {
+        recordActivityFromReq(req, {
+            action: 'hr.shortlist.approve',
+            category: 'chat',
+            message: `Shortlisted ${approved.length} candidate CV(s)`,
+            metadata: {
+                phase3Agent: HR_AGENT,
+                documentIds: approved.map((a) => a.documentId),
+                candidates: approved.map((a) => a.candidateName),
+            },
+        });
+    }
+
+    return { approved };
+}
+
+/** Stable ranked CV shortlist — backed by resume documents + CV scores, not chart heuristics. */
+export async function listHrCandidateShortlist(
+    user: AuthUser,
+    opts?: { limit?: number; documentIds?: string[] }
+): Promise<{
+    rows: HrShortlistRow[];
+    pendingRows: HrPendingShortlistRow[];
+    totalScored: number;
+    totalResumes: number;
+    pendingDocumentIds: string[];
+}> {
+    const limit = Math.min(100, Math.max(1, opts?.limit ?? 25));
+    const pool = await listTopResumesForUser(user, Math.max(limit, 50), opts?.documentIds);
+
+    const filter = await buildDocumentFilter(user, {});
+    const approvedQuery: Record<string, unknown> = {
+        ...filter,
+        'metadata.shortlistApproved': true,
+    };
+    if (opts?.documentIds?.length) {
+        approvedQuery.documentId = { $in: opts.documentIds };
+    }
+    const approvedDocs = await Document.find(approvedQuery)
+        .select('documentId originalFilename classification metadata pythonDocumentId')
+        .limit(100)
+        .lean();
+
+    const poolById = new Map(
+        pool.map((r) => [
+            r.documentId,
+            {
+                documentId: r.documentId,
+                originalFilename: r.originalFilename,
+                cvScore: r.cvScore,
+                pythonDocumentId: r.pythonDocumentId,
+            },
+        ])
+    );
+
+    for (const doc of approvedDocs) {
+        if (poolById.has(doc.documentId)) continue;
+        const metaScore = Number((doc.metadata as { cvScore?: number } | null)?.cvScore);
+        poolById.set(doc.documentId, {
+            documentId: doc.documentId,
+            originalFilename: doc.originalFilename,
+            cvScore: Number.isFinite(metaScore) && metaScore > 0 ? metaScore : MANUAL_SHORTLIST_SCORE,
+            pythonDocumentId: doc.pythonDocumentId,
+        });
+    }
+
+    const mergedPool = [...poolById.values()].sort((a, b) => {
+        const sa = Number.isFinite(a.cvScore) ? a.cvScore : -1;
+        const sb = Number.isFinite(b.cvScore) ? b.cvScore : -1;
+        return sb - sa;
+    });
+
+    const allDocIds = mergedPool.map((r) => r.documentId);
+    const docs = allDocIds.length
+        ? await Document.find({ documentId: { $in: allDocIds } })
+              .select('documentId originalFilename metadata')
+              .lean()
+        : [];
+    const docById = new Map(docs.map((d) => [d.documentId, d]));
+
+    const pendingDocumentIds = mergedPool
+        .filter((row) => {
+            const meta = docById.get(row.documentId)?.metadata as {
+                shortlistApproved?: boolean;
+            } | null;
+            if (meta?.shortlistApproved) return false;
+            return !Number.isFinite(row.cvScore) || row.cvScore <= 0;
+        })
+        .map((row) => row.documentId);
+
+    const pendingRows: HrPendingShortlistRow[] = pendingDocumentIds.map((documentId) => {
+        const doc = docById.get(documentId);
+        const row = mergedPool.find((r) => r.documentId === documentId);
+        const filename = doc?.originalFilename || row?.originalFilename || '';
+        return {
+            documentId,
+            candidateName: candidateNameFromRow({ originalFilename: filename }),
+            filename,
+        };
+    });
+
+    const scoredPool = mergedPool.filter((r) => Number.isFinite(r.cvScore) && r.cvScore > 0);
+    const top = scoredPool.slice(0, limit);
+
+    const rows: HrShortlistRow[] = top.map((row, i) => {
+        const doc = docById.get(row.documentId);
+        const meta = doc?.metadata as {
+            candidateEmail?: string;
+            outreachEmail?: string;
+            shortlistApproved?: boolean;
+            pipelineStatus?: string;
+            scoreSource?: 'ai' | 'hr_approved';
+        } | null;
+        const emailRaw = meta?.candidateEmail || meta?.outreachEmail;
+        const email = typeof emailRaw === 'string' && emailRaw.trim() ? emailRaw.trim() : null;
+        const labels = meta?.shortlistApproved
+            ? { pipelineStatus: meta.pipelineStatus || 'Shortlisted', agentAction: 'Shortlist' }
+            : shortlistLabels(row.cvScore);
+        const scoreSource: 'ai' | 'hr_approved' =
+            meta?.scoreSource === 'hr_approved' ||
+            (meta?.shortlistApproved && row.cvScore === MANUAL_SHORTLIST_SCORE && meta?.scoreSource !== 'ai')
+                ? 'hr_approved'
+                : 'ai';
+        return {
+            rank: i + 1,
+            documentId: row.documentId,
+            candidateName: candidateNameFromRow({
+                originalFilename: doc?.originalFilename || row.originalFilename,
+            }),
+            filename: row.originalFilename,
+            cvScore: row.cvScore,
+            email,
+            scoreSource,
+            ...labels,
+        };
+    });
+
+    return {
+        rows,
+        pendingRows,
+        totalScored: scoredPool.length,
+        totalResumes: mergedPool.length,
+        pendingDocumentIds,
+    };
 }

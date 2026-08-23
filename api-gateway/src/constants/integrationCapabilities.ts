@@ -8,6 +8,8 @@ export type IntegrationProviderCapabilities = {
     pullManual: boolean;
     /** Accept inbound HTTP push (multipart / fileUrl) */
     pushIngest: boolean;
+    /** Accept JSON structured records (recordType + data) without OCR */
+    recordIngest: boolean;
     /** Run test validates remote credentials (not just "form filled") */
     remoteTest: boolean;
     /** ERP / middleware — documents arrive via customer push job */
@@ -18,6 +20,7 @@ const DEFAULT: IntegrationProviderCapabilities = {
     pullSchedule: false,
     pullManual: false,
     pushIngest: true,
+    recordIngest: true,
     remoteTest: false,
     middlewarePush: true,
 };
@@ -27,6 +30,7 @@ export const PROVIDER_CAPABILITIES: Record<IntegrationProviderId, IntegrationPro
         pullSchedule: true,
         pullManual: true,
         pushIngest: true,
+        recordIngest: true,
         remoteTest: true,
         middlewarePush: false,
     },
@@ -44,6 +48,7 @@ export const PROVIDER_CAPABILITIES: Record<IntegrationProviderId, IntegrationPro
         pullSchedule: true,
         pullManual: true,
         pushIngest: true,
+        recordIngest: true,
         remoteTest: true,
         middlewarePush: false,
     },
@@ -51,6 +56,7 @@ export const PROVIDER_CAPABILITIES: Record<IntegrationProviderId, IntegrationPro
         pullSchedule: false,
         pullManual: false,
         pushIngest: true,
+        recordIngest: true,
         remoteTest: false,
         middlewarePush: false,
     },

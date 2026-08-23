@@ -13,8 +13,10 @@ import type {
 import {
     HR_ANALYTICS_GROUPS,
     deriveHrViewKpis,
-    extractCvShortlist,
     hrGroupForView,
+    resolveCvShortlist,
+    type CvPendingShortlistRow,
+    type CvShortlistRow,
     type HrAnalyticsGroupId,
     type HrWorkforceSnapshot,
 } from "@/lib/agentWorkspaceHr";
@@ -34,6 +36,13 @@ type Props = {
     onRunPrompt: (prompt: string) => void;
     onClose: () => void;
     onOpenOutreach?: () => void;
+    hrShortlist?: CvShortlistRow[];
+    hrPendingShortlistRows?: CvPendingShortlistRow[];
+    hrPendingShortlistIds?: string[];
+    hrShortlistLoading?: boolean;
+    hrShortlistApproving?: boolean;
+    hrShortlistApprovingId?: string | null;
+    onApproveShortlist?: (documentIds: string[]) => void | Promise<void>;
 };
 
 export default function AgentHrAnalyticsPanel({
@@ -50,14 +59,23 @@ export default function AgentHrAnalyticsPanel({
     onRunPrompt,
     onClose,
     onOpenOutreach,
+    hrShortlist,
+    hrPendingShortlistRows,
+    hrPendingShortlistIds,
+    hrShortlistLoading,
+    hrShortlistApproving,
+    hrShortlistApprovingId,
+    onApproveShortlist,
 }: Props) {
     const [group, setGroup] = useState<HrAnalyticsGroupId>(() => hrGroupForView(view));
 
     const activeGroup = HR_ANALYTICS_GROUPS.find((g) => g.id === group) || HR_ANALYTICS_GROUPS[0];
-    const kpis = useMemo(() => deriveHrViewKpis(visuals, view), [visuals, view]);
-    const shortlist = useMemo(() => extractCvShortlist(visuals, 10), [visuals]);
+    const kpis = useMemo(() => deriveHrViewKpis(visuals, view, hrShortlist), [visuals, view, hrShortlist]);
+    const shortlist = useMemo(() => resolveCvShortlist(hrShortlist, visuals, 10), [hrShortlist, visuals]);
+    const hasPending = (hrPendingShortlistRows?.length ?? 0) > 0;
     const showShortlist =
-        shortlist.length > 0 && (view === "scores" || view === "overview" || group === "hiring");
+        (shortlist.length > 0 || hasPending) &&
+        (view === "scores" || view === "overview" || group === "hiring");
 
     const selectGroup = (id: HrAnalyticsGroupId) => {
         setGroup(id);
@@ -66,7 +84,7 @@ export default function AgentHrAnalyticsPanel({
     };
 
     return (
-        <div className="min-h-[520px] flex flex-col rounded-2xl border border-border bg-surface/30 overflow-hidden">
+        <div className="flex flex-col rounded-2xl border border-border bg-surface/30 overflow-hidden">
             <div className="shrink-0 border-b border-border bg-surface/40 px-4 sm:px-5 py-4 space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -127,10 +145,24 @@ export default function AgentHrAnalyticsPanel({
                 <div className="shrink-0 px-4 sm:px-5 py-3 border-b border-border">
                     <AgentHrShortlistTable
                         rows={shortlist}
+                        pendingRows={hrPendingShortlistRows}
                         accent={accent}
-                        maxRows={5}
+                        maxRows={8}
+                        loading={hrShortlistLoading}
                         onAsk={onRunPrompt}
                         onOpenOutreach={onOpenOutreach}
+                        onApproveOne={
+                            onApproveShortlist
+                                ? (documentId) => onApproveShortlist([documentId])
+                                : undefined
+                        }
+                        onApproveAllPending={
+                            onApproveShortlist && hrPendingShortlistIds?.length
+                                ? () => onApproveShortlist(hrPendingShortlistIds)
+                                : undefined
+                        }
+                        approving={hrShortlistApproving}
+                        approvingDocumentId={hrShortlistApprovingId}
                         compact
                     />
                 </div>

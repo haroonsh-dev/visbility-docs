@@ -22,16 +22,11 @@ import {
 import ChatAnalyticsSidePanel, { type AnalyticsPanelView } from "@/components/ChatAnalyticsSidePanel";
 import AgentWorkspaceNav from "@/components/AgentWorkspaceNav";
 import AgentWorkspaceChatRail, { type AgentWorkspaceChatRailHandle } from "@/components/AgentWorkspaceChatRail";
-import AgentWorkspaceActivityFeed from "@/components/AgentWorkspaceActivityFeed";
-import AgentOnboardingChecklist from "@/components/AgentOnboardingChecklist";
-import AgentWorkspaceHeroBanner from "@/components/AgentWorkspaceHeroBanner";
-import AgentChartPreviews from "@/components/AgentChartPreviews";
+import AgentWorkspaceTabs, { MOBILE_ASK_TAB, type WorkspaceTabId } from "@/components/AgentWorkspaceTabs";
+import AgentWorkspacePulse from "@/components/AgentWorkspacePulse";
 import AgentPortfolioPanel from "@/components/AgentPortfolioPanel";
 import AgentReportsPanel from "@/components/AgentReportsPanel";
 import AgentAnalyticsEmptyState from "@/components/AgentAnalyticsEmptyState";
-import AgentWorkspaceStatusBar from "@/components/AgentWorkspaceStatusBar";
-import AgentWorkspaceTabs, { MOBILE_ASK_TAB, type WorkspaceTabId } from "@/components/AgentWorkspaceTabs";
-import AgentWorkspacePulse from "@/components/AgentWorkspacePulse";
 import type {
     AgentAnalyticsCoverage,
     ChatVisualSpec,
@@ -40,42 +35,38 @@ import type {
 } from "@/types/chatVisuals";
 import type { AnalyticsAgentId } from "@/lib/documentAgents";
 import { agentChatPath } from "@/lib/documentAgents";
-import { AGENT_QUICK_ASKS, type AgentWorkspaceMeta } from "@/lib/agentWorkspace";
+import { type AgentWorkspaceMeta } from "@/lib/agentWorkspace";
 import {
     deriveAttentionItems,
     deriveWorkspaceMetrics,
     getSkippedFiles,
 } from "@/lib/agentWorkspaceInsights";
 import {
-    AGENT_CHART_SHORTCUTS,
     deriveSpotlightKpis,
     mergePortfolioFiles,
-    type SpotlightKpi,
 } from "@/lib/agentWorkspaceKpis";
 import { useAgentPortfolio } from "@/hooks/useAgentPortfolio";
 import type { PlanAgentOption } from "@/hooks/usePlanAgents";
 import { downloadVisualsCsv } from "@/lib/analyticsExport";
-import { deriveWorkspaceHero } from "@/lib/agentWorkspaceHero";
 import { deriveWorkspacePulse } from "@/lib/agentWorkspacePulse";
 import type { WorkspaceIntegration } from "@/lib/integrationConnections";
 import AgentConnectedSystemsPanel from "@/components/AgentConnectedSystemsPanel";
+import AgentCommandDashboard from "@/components/AgentCommandDashboard";
 import { deriveHrWorkforceSnapshot } from "@/lib/agentWorkspaceHr";
+import { useHrShortlist } from "@/hooks/useHrShortlist";
 import { deriveProcurementSnapshot } from "@/lib/agentWorkspaceProcurement";
 import { deriveComplianceSnapshot } from "@/lib/agentWorkspaceCompliance";
 import { deriveFinanceSnapshot } from "@/lib/agentWorkspaceFinance";
-import AgentFinanceCommandPanel from "@/components/AgentFinanceCommandPanel";
 import AgentFinanceAnalyticsPanel from "@/components/AgentFinanceAnalyticsPanel";
 import AgentFinancePortfolioPanel from "@/components/AgentFinancePortfolioPanel";
 import AgentFinanceReportsPanel from "@/components/AgentFinanceReportsPanel";
-import AgentHrCommandPanel from "@/components/AgentHrCommandPanel";
 import AgentHrAnalyticsPanel from "@/components/AgentHrAnalyticsPanel";
 import AgentHrPortfolioPanel from "@/components/AgentHrPortfolioPanel";
 import AgentHrOutreachPanel from "@/components/AgentHrOutreachPanel";
-import AgentProcurementCommandPanel from "@/components/AgentProcurementCommandPanel";
+import AgentHrReportsPanel from "@/components/AgentHrReportsPanel";
 import AgentProcurementAnalyticsPanel from "@/components/AgentProcurementAnalyticsPanel";
 import AgentProcurementPortfolioPanel from "@/components/AgentProcurementPortfolioPanel";
 import AgentProcurementReviewPanel from "@/components/AgentProcurementReviewPanel";
-import AgentComplianceCommandPanel from "@/components/AgentComplianceCommandPanel";
 import AgentComplianceAnalyticsPanel from "@/components/AgentComplianceAnalyticsPanel";
 import AgentCompliancePortfolioPanel from "@/components/AgentCompliancePortfolioPanel";
 import AgentComplianceReportsPanel from "@/components/AgentComplianceReportsPanel";
@@ -113,26 +104,6 @@ const DESKTOP_TABS: { id: WorkspaceTab; label: string; icon: React.ElementType }
     { id: "fix", label: "Fix", icon: Wrench },
 ];
 
-function KpiCard({ kpi, accent }: { kpi: SpotlightKpi; accent: string }) {
-    const toneClass =
-        kpi.tone === "success"
-            ? "text-emerald-600 dark:text-emerald-400"
-            : kpi.tone === "warn"
-              ? "text-amber-600 dark:text-amber-400"
-              : kpi.tone === "accent"
-                ? "text-accent"
-                : "text-foreground";
-
-    return (
-        <div className="rounded-2xl border border-border/80 bg-background/60 backdrop-blur-sm p-4 min-h-[84px] flex flex-col justify-between shadow-sm">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">{kpi.label}</p>
-            <p className={cn("text-xl font-bold tabular-nums truncate mt-1", toneClass)}>{kpi.value}</p>
-            {kpi.hint && <p className="text-[10px] text-foreground-muted mt-1 truncate">{kpi.hint}</p>}
-            <div className="h-0.5 w-10 rounded-full mt-2 opacity-70" style={{ backgroundColor: accent }} />
-        </div>
-    );
-}
-
 export default function AgentWorkspaceShell({
     agentId,
     meta,
@@ -157,6 +128,7 @@ export default function AgentWorkspaceShell({
     const router = useRouter();
     const chatRef = useRef<AgentWorkspaceChatRailHandle>(null);
     const [tab, setTab] = useState<WorkspaceTab>(initialTab);
+    const [hrReportsView, setHrReportsView] = useState<"reports" | "outreach">("reports");
     const Icon = meta.icon;
     const { docs: vaultDocs, loading: portfolioLoading, refresh: refreshPortfolio } = useAgentPortfolio(agentId);
 
@@ -193,11 +165,8 @@ export default function AgentWorkspaceShell({
         [agentId, coverage, metrics.totalDocs, documentCount]
     );
     const skippedFiles = useMemo(() => getSkippedFiles(coverage), [coverage]);
-    const quickAsks = AGENT_QUICK_ASKS[agentId] || [];
-    const chartShortcuts = AGENT_CHART_SHORTCUTS[agentId] || [];
     const plainSummary = summary.replace(/\*\*/g, "").trim();
     const fixCount = metrics.skippedDocs;
-    const hero = useMemo(() => deriveWorkspaceHero(agentId, visuals, metrics), [agentId, visuals, metrics]);
     const pulse = useMemo(
         () =>
             deriveWorkspacePulse(agentId, metrics, portfolio, visuals.length, integrations),
@@ -210,12 +179,29 @@ export default function AgentWorkspaceShell({
         else if (pulse.primaryAction === "upload") router.push("/documents");
     };
 
+    const {
+        rows: hrShortlist,
+        pendingRows: hrPendingShortlistRows,
+        pendingDocumentIds: hrPendingShortlistIds,
+        loading: hrShortlistLoading,
+        approving: hrShortlistApproving,
+        approvingDocumentId: hrShortlistApprovingId,
+        note: hrShortlistNote,
+        refresh: refreshHrShortlist,
+        approve: approveHrShortlist,
+        clearNote: clearHrShortlistNote,
+    } = useHrShortlist(agentId === "hr_agent");
+
     const hrSnapshot = useMemo(
         () =>
             agentId === "hr_agent"
-                ? deriveHrWorkforceSnapshot(vaultDocs, portfolio, visuals, coverage, metrics)
+                ? deriveHrWorkforceSnapshot(vaultDocs, portfolio, visuals, coverage, metrics, {
+                      shortlist: hrShortlist,
+                      pendingShortlistIds: hrPendingShortlistIds,
+                      pendingShortlistRows: hrPendingShortlistRows,
+                  })
                 : null,
-        [agentId, vaultDocs, portfolio, visuals, coverage, metrics]
+        [agentId, vaultDocs, portfolio, visuals, coverage, metrics, hrShortlist, hrPendingShortlistIds, hrPendingShortlistRows]
     );
 
     const procSnapshot = useMemo(
@@ -267,6 +253,13 @@ export default function AgentWorkspaceShell({
     const handleRefresh = () => {
         onRefresh();
         void refreshPortfolio();
+        if (agentId === "hr_agent") void refreshHrShortlist();
+    };
+
+    const handleApproveShortlist = async (documentIds: string[]) => {
+        await approveHrShortlist(documentIds);
+        void refreshPortfolio();
+        onRefresh();
     };
 
     const openChartView = (viewId: string) => {
@@ -310,241 +303,61 @@ export default function AgentWorkspaceShell({
         />
     );
 
-    const renderHome = () => {
-        if (agentId === "finance_agent" && financeSnapshot) {
-            return (
-                <div className="space-y-5 animate-in fade-in duration-300">
-                    <AgentFinanceCommandPanel
-                        snapshot={financeSnapshot}
-                        accent={meta.accent}
-                        accentMuted={meta.accentMuted}
-                        visuals={visuals}
-                        attention={attention}
-                        onOpenChart={openChartView}
-                        onAsk={(p) => void runInChat(p)}
-                        onOpenReports={() => setTab("reports")}
-                        onOpenFix={() => setTab("fix")}
-                        onNavigate={(href) => router.push(href)}
-                    />
-                    {renderConnectedSystems()}
-                </div>
-            );
-        }
+    const agentSnapshot =
+        financeSnapshot || hrSnapshot || procSnapshot || compSnapshot || null;
 
-        if (agentId === "hr_agent" && hrSnapshot) {
-            return (
-                <div className="space-y-5 animate-in fade-in duration-300">
-                    <AgentHrCommandPanel
-                        snapshot={hrSnapshot}
-                        accent={meta.accent}
-                        accentMuted={meta.accentMuted}
-                        visuals={visuals}
-                        attention={attention}
-                        onOpenChart={openChartView}
-                        onAsk={(p) => void runInChat(p)}
-                        onOpenReports={() => setTab("reports")}
-                        onOpenFix={() => setTab("fix")}
-                        onNavigate={(href) => router.push(href)}
-                    />
-                    {renderConnectedSystems()}
-                </div>
-            );
-        }
-
-        if (agentId === "procurement_agent" && procSnapshot) {
-            return (
-                <div className="space-y-5 animate-in fade-in duration-300">
-                    <AgentProcurementCommandPanel
-                        snapshot={procSnapshot}
-                        accent={meta.accent}
-                        visuals={visuals}
-                        attention={attention}
-                        onOpenChart={openChartView}
-                        onAsk={(p) => void runInChat(p)}
-                        onOpenReports={() => setTab("reports")}
-                        onOpenFix={() => setTab("fix")}
-                        onNavigate={(href) => router.push(href)}
-                    />
-                    {renderConnectedSystems()}
-                </div>
-            );
-        }
-
-        if (agentId === "compliance_agent" && compSnapshot) {
-            return (
-                <div className="space-y-5 animate-in fade-in duration-300">
-                    <AgentComplianceCommandPanel
-                        snapshot={compSnapshot}
-                        accent={meta.accent}
-                        visuals={visuals}
-                        attention={attention}
-                        onOpenChart={openChartView}
-                        onAsk={(p) => void runInChat(p)}
-                        onOpenReports={() => setTab("reports")}
-                        onOpenFix={() => setTab("fix")}
-                        onNavigate={(href) => router.push(href)}
-                    />
-                    {renderConnectedSystems()}
-                </div>
-            );
-        }
-
-        return (
-        <div className="space-y-5 animate-in fade-in duration-300">
-            {hero.variant === "highlight" && (
-                <AgentWorkspaceHeroBanner hero={hero} accent={meta.accent} accentMuted={meta.accentMuted} />
-            )}
-
-            {hero.variant === "empty" && (
-                <AgentWorkspaceHeroBanner hero={hero} accent={meta.accent} accentMuted={meta.accentMuted} />
-            )}
-
-            <AgentOnboardingChecklist
-                metrics={metrics}
-                integrationCount={integrations.length}
-                chartCount={visuals.length}
-                accent={meta.accent}
-            />
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-                {spotlight.map((kpi) => (
-                    <KpiCard key={kpi.label} kpi={kpi} accent={meta.accent} />
-                ))}
-            </div>
-
-            {plainSummary && (
-                <div
-                    className="rounded-2xl border px-4 py-3 text-sm text-foreground-muted leading-relaxed"
-                    style={{ borderColor: `${meta.accent}33`, backgroundColor: meta.accentMuted }}
-                >
-                    {plainSummary.slice(0, 360)}
-                    {plainSummary.length > 360 ? "…" : ""}
-                </div>
-            )}
-
-            {visuals.length > 0 && (
-                <AgentChartPreviews visuals={visuals} maxCharts={3} onOpenCharts={() => setTab("charts")} />
-            )}
-
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                <section className="xl:col-span-2 rounded-2xl border border-border bg-surface/40 p-4">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted mb-3">
-                        Needs attention
-                    </p>
-                    <div className="space-y-2">
-                        {attention.slice(0, 4).map((item) => (
-                            <button
-                                key={item.id}
-                                type="button"
-                                onClick={() => {
-                                    if (item.href) router.push(item.href);
-                                    else if (item.prompt) void runInChat(item.prompt);
-                                    else setTab("fix");
-                                }}
-                                className={cn(
-                                    "w-full text-left rounded-xl border px-3 py-2.5 flex gap-2 transition-colors",
-                                    item.severity === "warning"
-                                        ? "border-amber-500/25 bg-amber-500/5 hover:bg-amber-500/10"
-                                        : "border-border hover:bg-surface-2"
-                                )}
-                            >
-                                {item.severity === "warning" ? (
-                                    <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                                ) : (
-                                    <CheckCircle2 size={14} className="text-emerald-500 shrink-0 mt-0.5" />
-                                )}
-                                <div className="min-w-0">
-                                    <p className="text-xs font-semibold truncate">{item.title}</p>
-                                    {item.detail && (
-                                        <p className="text-[10px] text-foreground-muted line-clamp-2">{item.detail}</p>
-                                    )}
-                                </div>
-                            </button>
-                        ))}
-                    </div>
-                </section>
-
-                <section className="rounded-2xl border border-border bg-surface/40 p-4">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted mb-3 flex items-center gap-1.5">
-                        <Zap size={12} /> Quick actions
-                    </p>
-                    <div className="flex flex-col gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setTab("reports")}
-                            className="text-left rounded-xl border border-border bg-background/60 px-3 py-2.5 text-xs font-semibold hover:border-accent/40"
-                        >
-                            Open reports & PDF tasks →
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setTab("charts")}
-                            className="text-left rounded-xl border border-border bg-background/60 px-3 py-2.5 text-xs font-semibold hover:border-accent/40"
-                        >
-                            View full analytics →
-                        </button>
-                        {fixCount > 0 && (
-                            <button
-                                type="button"
-                                onClick={() => setTab("fix")}
-                                className="text-left rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-xs font-semibold text-amber-800 dark:text-amber-300"
-                            >
-                                Fix {fixCount} file{fixCount === 1 ? "" : "s"} →
-                            </button>
-                        )}
-                    </div>
-                    <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border">
-                        {quickAsks.slice(0, 4).map((p) => (
-                            <button
-                                key={p}
-                                type="button"
-                                onClick={() => void runInChat(p)}
-                                className="rounded-full border border-border bg-background px-3 py-1.5 text-[11px] font-medium hover:border-accent/40"
-                            >
-                                {p}
-                            </button>
-                        ))}
-                    </div>
-                    {chartShortcuts.length > 0 && (
-                        <div className="flex flex-wrap gap-2 pt-3 mt-3 border-t border-border">
-                            {chartShortcuts.map((s) => (
-                                <button
-                                    key={s.view}
-                                    type="button"
-                                    onClick={() => openChartView(s.view)}
-                                    className="rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-medium hover:bg-surface-2"
-                                >
-                                    {s.label}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                    <div className="flex gap-2 mt-4 pt-4 border-t border-border">
-                        <Link
-                            href="/documents"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-surface-2"
-                        >
-                            <Upload size={13} /> Upload
-                        </Link>
-                        <Link
-                            href="/admin/integrations"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-surface-2"
-                        >
-                            <Plug size={13} /> Connect
-                        </Link>
-                    </div>
-                </section>
-            </div>
-
-            <AgentWorkspaceActivityFeed agentId={agentId} />
-
-            {renderConnectedSystems()}
-        </div>
-        );
+    const openHrReports = () => {
+        setTab("reports");
+        setHrReportsView("reports");
+    };
+    const openHrOutreach = () => {
+        setTab("reports");
+        setHrReportsView("outreach");
     };
 
+    const renderHome = () => (
+        <AgentCommandDashboard
+            agentId={agentId}
+            agentName={meta.shortName}
+            tagline={meta.tagline}
+            accent={meta.accent}
+            accentMuted={meta.accentMuted}
+            kpis={spotlight}
+            metrics={metrics}
+            attention={attention}
+            plainSummary={plainSummary}
+            visuals={visuals}
+            skippedFiles={portfolio.filter((f) => !f.inCharts)}
+            loading={loading}
+            lastUpdated={lastUpdated}
+            headline={agentSnapshot?.headline}
+            subline={agentSnapshot?.subline}
+            pillars={agentSnapshot?.pillars}
+            priorities={agentSnapshot?.priorities}
+            integrations={integrations}
+            onAsk={(p) => void runInChat(p)}
+            onOpenChart={openChartView}
+            onOpenFix={() => setTab("fix")}
+            onOpenReports={agentId === "hr_agent" ? openHrReports : () => setTab("reports")}
+            onOpenOutreach={agentId === "hr_agent" ? openHrOutreach : undefined}
+            onOpenAnalytics={() => setTab("charts")}
+            onRefresh={handleRefresh}
+            onApproveShortlist={agentId === "hr_agent" ? handleApproveShortlist : undefined}
+            shortlistApproving={agentId === "hr_agent" ? hrShortlistApproving : false}
+            shortlistNote={agentId === "hr_agent" ? hrShortlistNote : null}
+            onDismissShortlistNote={agentId === "hr_agent" ? clearHrShortlistNote : undefined}
+            onSyncConnection={onSyncIntegration ? handleIntegrationSync : undefined}
+            footer={renderConnectedSystems()}
+            hrShortlist={agentId === "hr_agent" ? hrShortlist : undefined}
+            hrPendingShortlistRows={agentId === "hr_agent" ? hrPendingShortlistRows : undefined}
+            hrPendingShortlistIds={agentId === "hr_agent" ? hrPendingShortlistIds : undefined}
+            hrShortlistLoading={agentId === "hr_agent" ? hrShortlistLoading : undefined}
+            hrShortlistApprovingId={agentId === "hr_agent" ? hrShortlistApprovingId : undefined}
+        />
+    );
+
     const renderCharts = () => (
-        <div className="min-h-[520px] flex flex-col">
+        <div className="flex flex-col">
             {agentId === "finance_agent" && financeSnapshot ? (
                 <AgentFinanceAnalyticsPanel
                     accent={meta.accent}
@@ -574,7 +387,14 @@ export default function AgentWorkspaceShell({
                     onRefresh={handleRefresh}
                     onRunPrompt={(p) => void runInChat(p)}
                     onClose={() => setTab("home")}
-                    onOpenOutreach={() => setTab("reports")}
+                    onOpenOutreach={openHrOutreach}
+                    hrShortlist={hrShortlist}
+                    hrPendingShortlistRows={hrPendingShortlistRows}
+                    hrPendingShortlistIds={hrPendingShortlistIds}
+                    hrShortlistLoading={hrShortlistLoading}
+                    hrShortlistApproving={hrShortlistApproving}
+                    hrShortlistApprovingId={hrShortlistApprovingId}
+                    onApproveShortlist={handleApproveShortlist}
                 />
             ) : agentId === "procurement_agent" && procSnapshot ? (
                 <AgentProcurementAnalyticsPanel
@@ -684,7 +504,7 @@ export default function AgentWorkspaceShell({
         );
 
     const renderReports = () => (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {agentId === "finance_agent" && financeSnapshot && (
                 <AgentFinanceReportsPanel
                     snapshot={financeSnapshot}
@@ -693,12 +513,51 @@ export default function AgentWorkspaceShell({
                     onRunInChat={(p) => void runInChat(p)}
                 />
             )}
-            {agentId === "hr_agent" && (
-                <AgentHrOutreachPanel
-                    accent={meta.accent}
-                    accentMuted={meta.accentMuted}
-                    onRunInChat={(p) => void runInChat(p)}
-                />
+            {agentId === "hr_agent" && hrSnapshot && (
+                <>
+                    <div className="flex gap-1 p-1 rounded-xl border border-border bg-surface/40 w-fit">
+                        <button
+                            type="button"
+                            onClick={() => setHrReportsView("reports")}
+                            className={cn(
+                                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                                hrReportsView === "reports"
+                                    ? "bg-accent-muted text-accent shadow-sm"
+                                    : "text-foreground-muted hover:text-foreground"
+                            )}
+                        >
+                            Reports & PDFs
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setHrReportsView("outreach")}
+                            className={cn(
+                                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                                hrReportsView === "outreach"
+                                    ? "bg-accent-muted text-accent shadow-sm"
+                                    : "text-foreground-muted hover:text-foreground"
+                            )}
+                        >
+                            Candidate outreach
+                        </button>
+                    </div>
+                    {hrReportsView === "reports" ? (
+                        <AgentHrReportsPanel
+                            snapshot={hrSnapshot}
+                            accent={meta.accent}
+                            visuals={visuals}
+                            hrShortlist={hrShortlist}
+                            onOpenOutreach={() => setHrReportsView("outreach")}
+                            onRunInChat={(p) => void runInChat(p)}
+                        />
+                    ) : (
+                        <AgentHrOutreachPanel
+                            accent={meta.accent}
+                            accentMuted={meta.accentMuted}
+                            onRunInChat={(p) => void runInChat(p)}
+                        />
+                    )}
+                </>
             )}
             {agentId === "procurement_agent" && procSnapshot && (
                 <AgentProcurementReviewPanel
@@ -716,15 +575,17 @@ export default function AgentWorkspaceShell({
                     onRunInChat={(p) => void runInChat(p)}
                 />
             )}
-            <AgentReportsPanel
-                agentId={agentId}
-                accent={meta.accent}
-                accentMuted={meta.accentMuted}
-                shortName={meta.shortName}
-                visuals={visuals}
-                onRunInChat={(p) => void runInChat(p)}
-                onOpenFullChat={goAsk}
-            />
+            {agentId !== "hr_agent" && (
+                <AgentReportsPanel
+                    agentId={agentId}
+                    accent={meta.accent}
+                    accentMuted={meta.accentMuted}
+                    shortName={meta.shortName}
+                    visuals={visuals}
+                    onRunInChat={(p) => void runInChat(p)}
+                    onOpenFullChat={goAsk}
+                />
+            )}
         </div>
     );
 
@@ -815,8 +676,10 @@ export default function AgentWorkspaceShell({
         </>
     );
 
+    const showPulse = tab === "files" || tab === "reports" || tab === "fix";
+
     return (
-        <div className="flex flex-col min-h-[calc(100vh-3.5rem)] bg-background relative">
+        <div className="flex flex-col h-full min-h-0 bg-background relative lg:overflow-hidden">
             <div
                 className="pointer-events-none absolute inset-0 opacity-[0.35]"
                 style={{
@@ -825,7 +688,7 @@ export default function AgentWorkspaceShell({
             />
 
             <header className="relative shrink-0 border-b border-border bg-surface/40 backdrop-blur-md">
-                <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-4 pb-3 space-y-3">
+                <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-2.5 pb-2 space-y-2">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="flex items-center gap-3">
                             <Link
@@ -876,16 +739,16 @@ export default function AgentWorkspaceShell({
                         </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-3">
                         <div
-                            className="h-12 w-12 rounded-2xl flex items-center justify-center shrink-0"
+                            className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0"
                             style={{ backgroundColor: meta.accentMuted }}
                         >
-                            <Icon size={22} style={{ color: meta.accent }} />
+                            <Icon size={18} style={{ color: meta.accent }} />
                         </div>
                         <div className="flex-1 min-w-0">
-                            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">{meta.shortName} workspace</h1>
-                            <p className="text-xs text-foreground-muted">{meta.tagline}</p>
+                            <h1 className="text-lg font-bold tracking-tight">{meta.shortName} workspace</h1>
+                            <p className="text-[11px] text-foreground-muted line-clamp-1">{meta.tagline}</p>
                         </div>
                     </div>
 
@@ -893,8 +756,8 @@ export default function AgentWorkspaceShell({
                 </div>
             </header>
 
-            <div className="relative shrink-0 border-b border-border bg-surface/20 py-2">
-                <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="relative shrink-0 border-b border-border bg-surface/20 py-1.5">
+                <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-2">
                     <AgentWorkspaceTabs
                         tabs={DESKTOP_TABS}
                         mobileTabs={[...DESKTOP_TABS, MOBILE_ASK_TAB]}
@@ -903,44 +766,53 @@ export default function AgentWorkspaceShell({
                         fixCount={fixCount}
                         onChange={setTab}
                     />
+                    <div className="hidden sm:flex items-center gap-3 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
+                        {metrics.skippedDocs > 0 && (
+                            <span className="text-amber-700 dark:text-amber-400 tabular-nums normal-case">
+                                {metrics.skippedDocs} issue{metrics.skippedDocs === 1 ? "" : "s"}
+                            </span>
+                        )}
+                        {live !== undefined && (
+                            <span className={live ? "text-emerald-600 dark:text-emerald-400" : ""}>
+                                {live ? "● Live" : "Paused"}
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
-                <div className="shrink-0 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-3 pb-2">
-                    <AgentWorkspacePulse
-                        shortName={meta.shortName}
-                        metrics={metrics}
-                        pulse={pulse}
-                        accent={meta.accent}
-                        live={live}
-                        lastUpdated={lastUpdated}
-                        onPrimaryAction={pulse.primaryAction !== "none" ? handlePulsePrimaryAction : undefined}
-                    />
-                </div>
-                <div className="max-w-[1600px] mx-auto w-full flex-1 min-h-0 px-4 sm:px-6 lg:px-8 py-2">
-                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(300px,380px)_1fr] gap-4 h-full min-h-[560px]">
-                        <div className="hidden lg:flex flex-col min-h-0 h-full max-h-[calc(100vh-22rem)]">
+            <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+                {showPulse && (
+                    <div className="shrink-0 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-1">
+                        <AgentWorkspacePulse
+                            shortName={meta.shortName}
+                            metrics={metrics}
+                            pulse={pulse}
+                            accent={meta.accent}
+                            live={live}
+                            lastUpdated={lastUpdated}
+                            onPrimaryAction={pulse.primaryAction !== "none" ? handlePulsePrimaryAction : undefined}
+                        />
+                    </div>
+                )}
+                <div className="flex-1 min-h-0 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-2 overflow-hidden">
+                    <div className="h-full min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(272px,300px)_1fr] gap-3 overflow-hidden">
+                        <div className="hidden lg:flex flex-col min-h-0 h-full">
                             <AgentWorkspaceChatRail
                                 ref={chatRef}
                                 agentId={agentId}
                                 shortName={meta.shortName}
                                 accent={meta.accent}
                                 onAnalyticsReply={handleRefresh}
-                                className="flex-1 min-h-0"
+                                className="flex-1 min-h-0 h-full"
                             />
                         </div>
-                        <div className="min-h-0 overflow-y-auto lg:max-h-[calc(100vh-22rem)]">{mainContent}</div>
+                        <div className="min-h-0 h-full overflow-y-auto overscroll-contain pr-0.5">
+                            {mainContent}
+                        </div>
                     </div>
                 </div>
             </div>
-
-            <AgentWorkspaceStatusBar
-                metrics={metrics}
-                accent={meta.accent}
-                live={live}
-                activeTab={tab}
-            />
         </div>
     );
 }

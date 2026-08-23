@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
     AlertCircle,
     CheckCircle2,
+    ChevronLeft,
+    ChevronRight,
     Eye,
     Loader2,
     Mail,
@@ -13,6 +15,7 @@ import {
     Settings2,
 } from "lucide-react";
 import { useHrCandidates, type HrCandidateOutreachRow, type OutreachTemplateId } from "@/hooks/useHrCandidates";
+import { emailValidationMessage, isValidEmail } from "@/lib/emailValidation";
 import { cn } from "@/lib/utils";
 
 const TEMPLATES: Array<{ id: OutreachTemplateId; label: string; hint: string }> = [
@@ -64,7 +67,9 @@ function CandidateRow({
     savingEmail: boolean;
 }) {
     const hasEmail = Boolean(row.email);
-    const canSelect = hasEmail || Boolean(draftEmail?.trim());
+    const draftTrimmed = draftEmail?.trim() || "";
+    const draftError = !hasEmail && draftTrimmed ? emailValidationMessage(draftTrimmed) : null;
+    const canSelect = hasEmail || (Boolean(draftTrimmed) && !draftError);
 
     return (
         <tr
@@ -105,12 +110,18 @@ function CandidateRow({
                             value={draftEmail || ""}
                             onChange={(e) => onDraftEmail(e.target.value)}
                             placeholder="Add email manually"
-                            className="w-full rounded-lg border border-amber-500/30 bg-surface px-2 py-1 text-[11px]"
+                            className={cn(
+                                "w-full rounded-lg border bg-surface px-2 py-1 text-[11px]",
+                                draftError ? "border-red-500/50" : "border-amber-500/30"
+                            )}
                         />
+                        {draftError && (
+                            <p className="text-[10px] text-red-600 dark:text-red-400">{draftError}</p>
+                        )}
                         <button
                             type="button"
                             onClick={onSaveEmail}
-                            disabled={savingEmail || !draftEmail?.trim()}
+                            disabled={savingEmail || !draftTrimmed || Boolean(draftError)}
                             className="text-[10px] font-semibold hover:underline disabled:opacity-50"
                             style={{ color: accent }}
                         >
@@ -157,12 +168,31 @@ export default function AgentHrOutreachPanel({ accent, accentMuted, onRunInChat 
         "We would like to invite you to an interview. Please reply with your availability for next week."
     );
     const [error, setError] = useState<string | null>(null);
-    const [preview, setPreview] = useState<{ subject: string; body: string; name: string } | null>(null);
+    const [preview, setPreview] = useState<{
+        subject: string;
+        body: string;
+        name: string;
+        email: string | null;
+        documentId: string;
+    } | null>(null);
     const [previewLoading, setPreviewLoading] = useState(false);
+    const [previewIndex, setPreviewIndex] = useState(0);
+    const previewAbortRef = useRef<AbortController | null>(null);
+    const previewRequestRef = useRef(0);
 
     const readyCandidates = useMemo(
-        () => candidates.filter((c) => c.email || emailDrafts[c.documentId]?.trim()),
+        () =>
+            candidates.filter((c) => {
+                if (c.email) return true;
+                const draft = emailDrafts[c.documentId]?.trim();
+                return Boolean(draft) && isValidEmail(draft);
+            }),
         [candidates, emailDrafts]
+    );
+
+    const selectedIds = useMemo(
+        () => candidates.filter((c) => selected.has(c.documentId)).map((c) => c.documentId),
+        [candidates, selected]
     );
 
     const needsEmail = useMemo(() => candidates.filter((c) => !c.email), [candidates]);
@@ -184,6 +214,11 @@ export default function AgentHrOutreachPanel({ accent, accentMuted, onRunInChat 
     const handleSaveEmail = async (documentId: string) => {
         const email = emailDrafts[documentId]?.trim();
         if (!email) return;
+        const validationError = emailValidationMessage(email);
+        if (validationError) {
+            setError(validationError);
+            return;
+        }
         setSavingId(documentId);
         setError(null);
         try {
@@ -200,36 +235,70 @@ export default function AgentHrOutreachPanel({ accent, accentMuted, onRunInChat 
         }
     };
 
-    const loadPreview = async () => {
-        const firstId = [...selected][0];
-        if (!firstId) return;
-        setPreviewLoading(true);
-        const result = await previewOutreach({
-            documentId: firstId,
-            template,
-            companyName,
-            senderName,
-            interviewDetails: template === "interview_invite" ? interviewDetails : undefined,
-            emailOverride: emailDrafts[firstId],
-        });
-        if (result) {
-            setPreview({
-                subject: result.subject,
-                body: stripHtml(result.html),
-                name: result.candidateName,
-            });
-        }
-        setPreviewLoading(false);
-    };
+    const previewSafeIndex = selectedIds.length ? Math.min(previewIndex, selectedIds.length - 1) : 0;
+    const previewDocumentId = selectedIds[previewSafeIndex];
+    const previewDraftOverride = previewDocumentId ? emailDrafts[previewDocumentId]?.trim() : "";
 
     useEffect(() => {
-        if (!selected.size) {
+        setPreviewIndex(0);
+    }, [selectedIds.join("|")]);
+
+    useEffect(() => {
+        if (!selectedIds.length || !previewDocumentId) {
             setPreview(null);
+            setPreviewLoading(false);
             return;
         }
-        void loadPreview();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selected, template, companyName, senderName, interviewDetails]);
+
+        const timer = window.setTimeout(() => {
+            previewAbortRef.current?.abort();
+            const controller = new AbortController();
+            previewAbortRef.current = controller;
+            const requestId = ++previewRequestRef.current;
+
+            setPreviewLoading(true);
+            void previewOutreach(
+                {
+                    documentId: previewDocumentId,
+                    template,
+                    companyName,
+                    senderName,
+                    interviewDetails: template === "interview_invite" ? interviewDetails : undefined,
+                    emailOverride: previewDraftOverride || undefined,
+                },
+                controller.signal
+            ).then((result) => {
+                if (requestId !== previewRequestRef.current) return;
+                if (result) {
+                    setPreview({
+                        subject: result.subject,
+                        body: stripHtml(result.html),
+                        name: result.candidateName,
+                        email: result.email || previewDraftOverride || null,
+                        documentId: previewDocumentId,
+                    });
+                } else {
+                    setPreview(null);
+                }
+                setPreviewLoading(false);
+            });
+        }, 400);
+
+        return () => {
+            window.clearTimeout(timer);
+            previewAbortRef.current?.abort();
+        };
+    }, [
+        selectedIds.length,
+        previewDocumentId,
+        previewDraftOverride,
+        previewIndex,
+        template,
+        companyName,
+        senderName,
+        interviewDetails,
+        previewOutreach,
+    ]);
 
     const handleSend = async () => {
         setError(null);
@@ -246,8 +315,18 @@ export default function AgentHrOutreachPanel({ accent, accentMuted, onRunInChat 
         const overrides: Record<string, string> = {};
         for (const id of ids) {
             const row = candidates.find((c) => c.documentId === id);
-            if (row && !row.email && emailDrafts[id]?.trim()) {
-                overrides[id] = emailDrafts[id].trim();
+            if (row && !row.email) {
+                const draft = emailDrafts[id]?.trim();
+                if (!draft) {
+                    setError(`Add an email for ${row.candidateName} before sending.`);
+                    return;
+                }
+                const validationError = emailValidationMessage(draft);
+                if (validationError) {
+                    setError(`${row.candidateName}: ${validationError}`);
+                    return;
+                }
+                overrides[id] = draft;
             }
         }
 
@@ -262,6 +341,7 @@ export default function AgentHrOutreachPanel({ accent, accentMuted, onRunInChat 
             });
             setSelected(new Set());
             setPreview(null);
+            setPreviewIndex(0);
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to send emails");
         }
@@ -463,20 +543,76 @@ export default function AgentHrOutreachPanel({ accent, accentMuted, onRunInChat 
 
                     {selected.size > 0 && (
                         <div className="rounded-xl border border-border bg-surface-2/30 px-3 py-2.5 space-y-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted flex items-center gap-1">
-                                <Eye size={12} /> Preview
-                                {previewLoading && <Loader2 size={12} className="animate-spin" />}
-                            </p>
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted flex items-center gap-1">
+                                    <Eye size={12} /> Preview
+                                    {previewLoading && <Loader2 size={12} className="animate-spin" />}
+                                </p>
+                                {selectedIds.length > 1 && (
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPreviewIndex((i) => Math.max(0, i - 1))}
+                                            disabled={previewSafeIndex <= 0 || previewLoading}
+                                            className="p-1 rounded-md border border-border hover:bg-surface-2 disabled:opacity-40"
+                                            aria-label="Previous preview"
+                                        >
+                                            <ChevronLeft size={12} />
+                                        </button>
+                                        <span className="text-[10px] font-semibold tabular-nums text-foreground-muted min-w-[3rem] text-center">
+                                            {previewSafeIndex + 1} / {selectedIds.length}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setPreviewIndex((i) => Math.min(selectedIds.length - 1, i + 1))
+                                            }
+                                            disabled={previewSafeIndex >= selectedIds.length - 1 || previewLoading}
+                                            className="p-1 rounded-md border border-border hover:bg-surface-2 disabled:opacity-40"
+                                            aria-label="Next preview"
+                                        >
+                                            <ChevronRight size={12} />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                             {preview ? (
                                 <>
-                                    <p className="text-[11px] font-semibold text-foreground truncate">{preview.subject}</p>
-                                    <p className="text-[10px] text-foreground-muted">To: {preview.name}</p>
-                                    <pre className="text-[10px] text-foreground-muted whitespace-pre-wrap font-sans max-h-32 overflow-y-auto">
+                                    <p className="text-[11px] font-semibold text-foreground">{preview.subject}</p>
+                                    <p className="text-[10px] text-foreground-muted">
+                                        To: {preview.name}
+                                        {preview.email ? ` <${preview.email}>` : ""}
+                                    </p>
+                                    <pre className="text-[10px] text-foreground-muted whitespace-pre-wrap font-sans max-h-36 overflow-y-auto rounded-lg bg-background/50 p-2 border border-border/50">
                                         {preview.body}
                                     </pre>
                                 </>
+                            ) : previewLoading ? (
+                                <p className="text-[10px] text-foreground-muted">Loading preview…</p>
                             ) : (
-                                <p className="text-[10px] text-foreground-muted">Select a candidate to preview the email.</p>
+                                <p className="text-[10px] text-foreground-muted">Could not load preview.</p>
+                            )}
+                            {selectedIds.length > 1 && (
+                                <div className="flex flex-wrap gap-1 pt-1">
+                                    {selectedIds.map((id, idx) => {
+                                        const row = candidates.find((c) => c.documentId === id);
+                                        return (
+                                            <button
+                                                key={id}
+                                                type="button"
+                                                onClick={() => setPreviewIndex(idx)}
+                                                className={cn(
+                                                    "rounded-full px-2 py-0.5 text-[9px] font-semibold border transition-colors",
+                                                    idx === previewSafeIndex
+                                                        ? "border-accent bg-accent-muted text-accent"
+                                                        : "border-border text-foreground-muted hover:bg-surface-2"
+                                                )}
+                                            >
+                                                {row?.candidateName?.split(" ")[0] || `#${idx + 1}`}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             )}
                         </div>
                     )}

@@ -34,6 +34,8 @@ import { tryFinanceDynamicAgent } from '../services/financeIntentRouter';
 import { tryLegalDynamicAgent } from '../services/legalIntentRouter';
 import { tryProcurementDynamicAgent } from '../services/procurementIntentRouter';
 import { tryOtherDynamicAgent } from '../services/otherIntentRouter';
+import { tryClickUpTaskCommand } from '../services/clickupChatActionService';
+import { tryStructuredRecordCommand } from '../services/structuredRecordChatService';
 import { getAgentAnalyticsDashboard, tryAgentChatVisual } from '../services/agentChatVisualService';
 import { filterDocumentIdsForAgent } from '../services/dynamicAnalyticsEngine';
 import { wantsPortfolioFinanceScope } from '../services/financeIntent';
@@ -300,6 +302,110 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     focusDocumentIds =
                         (await filterDocumentIdsForAgent(req.user, focusDocumentIds, phase3Agent)) ||
                         [];
+                }
+
+                const clickUpTask = await tryClickUpTaskCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                });
+                if (clickUpTask.handled && clickUpTask.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: clickUpTask.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (clickUpTask.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: unknown) {
+                        const err = appendErr as { message?: string };
+                        logger.warn(
+                            `ClickUp task reply ok but append-exchange failed: ${err?.message || appendErr}`
+                        );
+                    }
+                    const clickUpFocus = (clickUpTask.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (clickUpFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, clickUpFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: clickUpTask.answer,
+                            citations: clickUpTask.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'clickup-task-query',
+                            agentId: phase3Agent || 'other_agent',
+                            documentCount: (clickUpTask.citations || []).length,
+                            contentKind: 'record',
+                        },
+                    });
+                }
+
+                const structuredRecords = await tryStructuredRecordCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                });
+                if (structuredRecords.handled && structuredRecords.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: structuredRecords.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (structuredRecords.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: unknown) {
+                        const err = appendErr as { message?: string };
+                        logger.warn(
+                            `Structured-record reply ok but append-exchange failed: ${err?.message || appendErr}`
+                        );
+                    }
+                    const recordFocus = (structuredRecords.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (recordFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, recordFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: structuredRecords.answer,
+                            citations: structuredRecords.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'integration-record-query',
+                            agentId: phase3Agent || 'other_agent',
+                            documentCount: (structuredRecords.citations || []).length,
+                            contentKind: 'record',
+                        },
+                    });
                 }
 
                 const hrDynamic = await tryHrDynamicAgent({

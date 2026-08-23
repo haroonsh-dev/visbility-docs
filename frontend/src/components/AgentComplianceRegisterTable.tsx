@@ -66,6 +66,7 @@ export default function AgentComplianceRegisterTable({
                             <th className="px-4 py-2 font-semibold">Standard</th>
                             <th className="px-4 py-2 font-semibold text-right w-24">Days</th>
                             <th className="px-4 py-2 font-semibold text-right w-28">Status</th>
+                            <th className="px-4 py-2 font-semibold text-right w-28">Agent action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -95,6 +96,28 @@ export default function AgentComplianceRegisterTable({
                                     >
                                         {row.status}
                                     </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-right">
+                                    {onAsk ? (
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                onAsk(
+                                                    row.agentAction === "Renew"
+                                                        ? `Renewal plan for certificate ${row.name}`
+                                                        : `Review certificate ${row.name}`
+                                                )
+                                            }
+                                            className="text-[10px] font-semibold hover:underline"
+                                            style={{ color: accent }}
+                                        >
+                                            {row.agentAction}
+                                        </button>
+                                    ) : (
+                                        <span className="text-[10px] font-semibold text-foreground-muted">
+                                            {row.agentAction}
+                                        </span>
+                                    )}
                                 </td>
                             </tr>
                         ))}

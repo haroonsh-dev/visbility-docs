@@ -37,7 +37,7 @@ import {
 } from '../controllers/experienceLetterController';
 import { getSystemMonitor } from '../controllers/systemMonitorController';
 import { getAgentFleet } from '../controllers/agentFleetController';
-import { listHrCandidatesOutreach, sendHrCandidateEmail, patchHrCandidateEmail, previewHrCandidateEmail } from '../controllers/hrCandidateController';
+import { listHrCandidatesOutreach, listHrCandidatesShortlist, approveHrCandidatesShortlist, generateHrStructuredReport, sendHrCandidateEmail, patchHrCandidateEmail, previewHrCandidateEmail } from '../controllers/hrCandidateController';
 
 const tmpDir = path.join(process.cwd(), 'uploads', '_tmp');
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
@@ -56,6 +56,9 @@ router.get('/system/monitor', getSystemMonitor);
 router.get('/agent-fleet', getAgentFleet);
 router.get('/hr-analytics', getHrAnalytics);
 router.get('/hr/candidates/outreach', listHrCandidatesOutreach);
+router.get('/hr/candidates/shortlist', listHrCandidatesShortlist);
+router.post('/hr/candidates/shortlist/approve', approveHrCandidatesShortlist);
+router.post('/hr/reports/generate', generateHrStructuredReport);
 router.post('/hr/candidates/preview', previewHrCandidateEmail);
 router.post('/hr/candidates/email', sendHrCandidateEmail);
 router.patch('/hr/candidates/:documentId/email', patchHrCandidateEmail);

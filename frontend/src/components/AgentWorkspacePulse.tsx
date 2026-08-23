@@ -60,11 +60,11 @@ export default function AgentWorkspacePulse({
         <div className="rounded-xl border border-border bg-surface/30 overflow-hidden">
             <div className="h-0.5 w-full" style={{ backgroundColor: accent, opacity: 0.45 }} />
 
-            <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
-                    <div className="flex items-center gap-3 shrink-0 min-w-[120px]">
-                        <div className="text-center">
-                            <p className="text-2xl font-bold tabular-nums leading-none text-foreground">
+            <div className="px-3 py-2 sm:px-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <div className="flex items-center gap-2 shrink-0">
+                        <div>
+                            <p className="text-lg font-bold tabular-nums leading-none text-foreground">
                                 {metrics.healthScore}%
                             </p>
                             <p className={cn("text-[10px] font-medium mt-0.5", styles.label)}>

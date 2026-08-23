@@ -80,6 +80,7 @@ export const KNOWN_DOCUMENT_TYPES = new Set([
     'capa_letter',
     'certificate_of_compliance',
     'finance_report',
+    'integration_record',
     'other',
 ]);
 
@@ -135,6 +136,7 @@ export const DOC_TYPE_TO_AGENT: Record<string, string> = {
     certificate_of_compliance: 'compliance_agent',
     finance_report: 'finance_agent',
     other: 'other_agent',
+    integration_record: 'other_agent',
 };
 
 /**

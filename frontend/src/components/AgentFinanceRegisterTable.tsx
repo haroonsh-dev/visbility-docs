@@ -64,6 +64,7 @@ export default function AgentFinanceRegisterTable({
                             <th className="px-4 py-2 font-semibold">Vendor / bucket</th>
                             <th className="px-4 py-2 font-semibold text-right">Amount</th>
                             <th className="px-4 py-2 font-semibold text-right w-28">Status</th>
+                            <th className="px-4 py-2 font-semibold text-right w-28">Agent action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -92,6 +93,28 @@ export default function AgentFinanceRegisterTable({
                                     >
                                         {row.status}
                                     </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-right">
+                                    {onAsk ? (
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                onAsk(
+                                                    row.statusTone === "overdue"
+                                                        ? `Follow up on overdue AP for ${row.counterparty}`
+                                                        : `Show details for vendor ${row.counterparty}`
+                                                )
+                                            }
+                                            className="text-[10px] font-semibold hover:underline"
+                                            style={{ color: accent }}
+                                        >
+                                            {row.agentAction}
+                                        </button>
+                                    ) : (
+                                        <span className="text-[10px] font-semibold text-foreground-muted">
+                                            {row.agentAction}
+                                        </span>
+                                    )}
                                 </td>
                             </tr>
                         ))}

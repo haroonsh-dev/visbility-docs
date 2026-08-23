@@ -11,7 +11,12 @@ export type AgentVaultDoc = {
     classification?: string | null;
     status?: string | null;
     createdAt?: string | null;
-    metadata?: { phase3Agent?: string } | null;
+    metadata?: {
+        phase3Agent?: string;
+        cvScore?: number;
+        shortlistApproved?: boolean;
+        pipelineStatus?: string;
+    } | null;
 };
 
 export function useAgentPortfolio(agentId: AnalyticsAgentId | null, enabled = true) {

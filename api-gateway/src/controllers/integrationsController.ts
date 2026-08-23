@@ -745,7 +745,7 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
 
         if (doc.providerId === 'clickup') {
             const result = await syncClickUpList(doc);
-            const summary = `ingested=${result.ingested}, skipped=${result.skipped}, failed=${result.failed}, tasks=${result.taskCount}, attachments=${result.attachmentCount ?? 0}`;
+            const summary = `records=${result.recordsIngested ?? 0} new, ${result.recordsUpdated ?? 0} updated · files=${result.ingested} ingested, ${result.skipped} skipped, ${result.failed} failed · tasks=${result.taskCount}, attachments=${result.attachmentCount ?? 0}`;
             doc.lastSyncAt = new Date();
             doc.lastStatus = result.failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
             doc.lastSyncSummary = summary;
@@ -1283,7 +1283,14 @@ export const ingestViaIntegration = async (req: Request, res: Response, next: Ne
 
         res.status(201).json({
             success: true,
-            message: result.ingestMode === 'file_url' ? 'Document ingested from URL' : 'Document ingested',
+            message:
+                result.ingestMode === 'structured_record'
+                    ? result.updated
+                        ? 'Structured record updated'
+                        : 'Structured record ingested'
+                    : result.ingestMode === 'file_url'
+                      ? 'Document ingested from URL'
+                      : 'Document ingested',
             data: result,
         });
     } catch (error: any) {
@@ -1333,7 +1340,14 @@ export const pushViaConnection = async (req: Request, res: Response, next: NextF
 
         res.status(201).json({
             success: true,
-            message: result.ingestMode === 'file_url' ? 'Document ingested from URL' : 'Document ingested',
+            message:
+                result.ingestMode === 'structured_record'
+                    ? result.updated
+                        ? 'Structured record updated'
+                        : 'Structured record ingested'
+                    : result.ingestMode === 'file_url'
+                      ? 'Document ingested from URL'
+                      : 'Document ingested',
             data: result,
         });
     } catch (error: any) {

@@ -251,6 +251,8 @@ function DocumentsContent() {
             if (scoreFilter) params.set("scoreFilter", scoreFilter);
             if (scopeFilter) params.set("scope", scopeFilter);
             if (typeFilter) params.set("classification", typeFilter);
+            // Integration JSON records stay backend-only — never list them in Documents UI.
+            params.set("contentKind", "file");
             const data = await apiRequest(`/docs/documents?${params}`);
             setDocs(data?.data?.documents || []);
             setPagination(data?.data?.pagination || { page: 1, limit: 10, total: 0, totalPages: 0 });
@@ -911,16 +913,43 @@ function DocumentsContent() {
                                                         : " (clamped)"}
                                                 </span>
                                             )}
-                                            {doc.isDuplicate && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-amber-50 text-amber-700 border border-amber-200"><Copy size={10} /> Dup</span>}
-                                            {doc.visibilityScope === "department" && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]">Dept</span>}
-                                            {doc.visibilityScope === "personal" && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-slate-50 text-slate-500 border border-slate-200">Personal</span>}
+                                            {doc.isDuplicate && (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                                                    <Copy size={10} /> Dup
+                                                </span>
+                                            )}
+                                            {doc.visibilityScope === "department" && (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]">
+                                                    Dept
+                                                </span>
+                                            )}
+                                            {doc.visibilityScope === "personal" && (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-slate-50 text-slate-500 border border-slate-200">
+                                                    Personal
+                                                </span>
+                                            )}
                                         </div>
                                         <p className="text-xs text-slate-400 mt-1.5 flex items-center gap-2 flex-wrap">
-                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-slate-100 text-slate-500">{getFileTypeLabel(doc.mimeType, doc.originalFilename)}</span>
+                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-slate-100 text-slate-500">
+                                                {getFileTypeLabel(doc.mimeType, doc.originalFilename)}
+                                            </span>
                                             <span>{formatBytes(doc.sizeBytes)}</span>
                                             <span className="text-slate-300">&middot;</span>
-                                            <span>{new Date(doc.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-                                            {doc.classification && <><span className="text-slate-300">&middot;</span><span className="text-(--vb-blue-dark)">{doc.classification}</span></>}
+                                            <span>
+                                                {new Date(doc.createdAt).toLocaleDateString("en-US", {
+                                                    month: "short",
+                                                    day: "numeric",
+                                                    year: "numeric",
+                                                })}
+                                            </span>
+                                            {doc.classification && (
+                                                <>
+                                                    <span className="text-slate-300">&middot;</span>
+                                                    <span className="text-(--vb-blue-dark)">
+                                                        {DOC_TYPE_LABELS[doc.classification] || doc.classification}
+                                                    </span>
+                                                </>
+                                            )}
                                         </p>
                                         {doc.aiErrorMessage && <p className="text-xs text-rose-500 mt-1.5 flex items-center gap-1"><AlertTriangle size={11} /> {doc.aiErrorMessage}</p>}
                                     </div>

@@ -4,6 +4,7 @@ export type IntegrationProviderCapabilities = {
     pullSchedule: boolean;
     pullManual: boolean;
     pushIngest: boolean;
+    recordIngest: boolean;
     remoteTest: boolean;
     middlewarePush: boolean;
 };
@@ -12,6 +13,7 @@ const DEFAULT: IntegrationProviderCapabilities = {
     pullSchedule: false,
     pullManual: false,
     pushIngest: true,
+    recordIngest: true,
     remoteTest: false,
     middlewarePush: true,
 };
@@ -21,6 +23,7 @@ export const PROVIDER_CAPABILITIES: Record<string, IntegrationProviderCapabiliti
         pullSchedule: true,
         pullManual: true,
         pushIngest: true,
+        recordIngest: true,
         remoteTest: true,
         middlewarePush: false,
     },
@@ -38,6 +41,7 @@ export const PROVIDER_CAPABILITIES: Record<string, IntegrationProviderCapabiliti
         pullSchedule: true,
         pullManual: true,
         pushIngest: true,
+        recordIngest: true,
         remoteTest: true,
         middlewarePush: false,
     },
@@ -45,6 +49,7 @@ export const PROVIDER_CAPABILITIES: Record<string, IntegrationProviderCapabiliti
         pullSchedule: false,
         pullManual: false,
         pushIngest: true,
+        recordIngest: true,
         remoteTest: false,
         middlewarePush: false,
     },

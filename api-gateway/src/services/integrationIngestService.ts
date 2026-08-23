@@ -342,17 +342,41 @@ export type IngestHttpResult = {
     filename: string;
     status: string;
     providerId: string;
-    ingestMode: 'multipart' | 'file_url';
-    aiModelResponse: unknown;
+    ingestMode: 'multipart' | 'file_url' | 'structured_record';
+    recordType?: string;
+    updated?: boolean;
+    aiModelResponse?: unknown;
 };
 
-/** Shared multipart / JSON fileUrl ingest handler for public push endpoints. */
+/** Shared multipart / JSON fileUrl / structured record ingest for public push endpoints. */
 export async function processIngestHttpRequest(
     req: Request,
     connection: IIntegrationConnection
 ): Promise<IngestHttpResult> {
+    const {
+        ingestStructuredRecordForConnection,
+        parseStructuredRecordFromBody,
+    } = await import('./integrationRecordIngestService');
+
+    const structuredInput = parseStructuredRecordFromBody(req.body);
     const fileUrl = String(req.body?.fileUrl || req.body?.file_url || req.body?.url || '').trim();
     const multipartFile = (req as Request & { file?: Express.Multer.File }).file;
+
+    if (structuredInput && !multipartFile && !fileUrl) {
+        const record = await ingestStructuredRecordForConnection({
+            connection,
+            input: structuredInput,
+        });
+        return {
+            documentId: record.documentId,
+            filename: record.title,
+            status: record.status,
+            providerId: record.providerId,
+            ingestMode: 'structured_record',
+            recordType: record.recordType,
+            updated: record.updated,
+        };
+    }
 
     if (multipartFile && fileUrl) {
         throw Object.assign(new Error('Provide either multipart field "file" or JSON fileUrl — not both'), {
@@ -362,7 +386,9 @@ export async function processIngestHttpRequest(
 
     if (!multipartFile && !fileUrl) {
         throw Object.assign(
-            new Error('Provide multipart field "file" or JSON body with "fileUrl" (public https URL to download)'),
+            new Error(
+                'Provide JSON with recordType + data (structured record), multipart field "file", or JSON body with "fileUrl"'
+            ),
             { statusCode: 400 }
         );
     }

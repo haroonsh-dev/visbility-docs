@@ -3,6 +3,7 @@ import type { PortfolioFile } from "@/lib/agentWorkspaceKpis";
 import type { WorkspaceCoverage, WorkspaceMetrics } from "@/lib/agentWorkspaceInsights";
 import type { AgentVaultDoc } from "@/hooks/useAgentPortfolio";
 import { docTypeLabel, inferDocTypeFromFilename } from "@/lib/documentAgents";
+import { extractCertRegister } from "@/lib/agentWorkspaceCompliance";
 
 export type HrPillarId = "hiring" | "people" | "time" | "pay";
 
@@ -23,6 +24,7 @@ export type HrPriority = {
     tone: "warn" | "info";
     prompt?: string;
     chartView?: string;
+    documentIds?: string[];
 };
 
 export type HrWorkforceSnapshot = {
@@ -38,6 +40,7 @@ export type HrWorkforceSnapshot = {
         topCvScore?: number;
         certsTracked: number;
         certsExpiring: number;
+        certsExpired: number;
     };
 };
 
@@ -106,16 +109,84 @@ function docMix(vaultDocs: AgentVaultDoc[]): HrWorkforceSnapshot["docMix"] {
         .slice(0, 6);
 }
 
-function cvStats(visuals: ChatVisualSpec[], vaultDocs: AgentVaultDoc[]) {
-    const cvs = vaultDocs.filter((d) => resolveDocType(d) === "resume").length;
+function cvStats(
+    visuals: ChatVisualSpec[],
+    vaultDocs: AgentVaultDoc[],
+    shortlist?: CvShortlistRow[]
+) {
+    const resumes = vaultDocs.filter((d) => resolveDocType(d) === "resume");
+    const cvs = resumes.length;
+    const scoredFromVault = resumes.filter((d) => {
+        const meta = d.metadata as { cvScore?: number; shortlistApproved?: boolean } | null;
+        if (meta?.shortlistApproved) return true;
+        const score = Number(meta?.cvScore);
+        return Number.isFinite(score) && score > 0;
+    }).length;
     const scoreVisual = visuals.find((v) => /score|cv/i.test(v.title));
     const key = scoreVisual?.series[0]?.key;
-    const scored = scoreVisual?.data.length ?? 0;
+    const scoredFromVisual = scoreVisual?.data.length ?? 0;
+    const cvsScored = Math.max(shortlist?.length ?? 0, scoredFromVault, scoredFromVisual);
+
     let topCvScore: number | undefined;
-    if (key && scoreVisual?.data.length) {
+    if (shortlist?.length) {
+        topCvScore = shortlist[0].score;
+    } else if (key && scoreVisual?.data.length) {
         topCvScore = Math.max(...scoreVisual.data.map((row) => Number(row[key] || 0)));
     }
-    return { cvs, cvsScored: scored, topCvScore: topCvScore && Number.isFinite(topCvScore) ? topCvScore : undefined };
+    return {
+        cvs,
+        cvsScored,
+        topCvScore: topCvScore && Number.isFinite(topCvScore) ? topCvScore : undefined,
+    };
+}
+
+function resumeDisplayName(filename: string): string {
+    return filename
+        .replace(/\.[^.]+$/, "")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b(cv|resume)\b/gi, "")
+        .trim()
+        .replace(/\s+/g, " ")
+        || "Candidate";
+}
+
+function unscoredResumeDocumentIds(vaultDocs: AgentVaultDoc[]): string[] {
+    return vaultDocs
+        .filter((d) => resolveDocType(d) === "resume")
+        .filter((d) => {
+            const meta = d.metadata as { cvScore?: number; shortlistApproved?: boolean } | null;
+            if (meta?.shortlistApproved) return false;
+            const score = Number(meta?.cvScore);
+            return !(Number.isFinite(score) && score > 0);
+        })
+        .map((d) => d.documentId);
+}
+
+function hrCertStats(visuals: ChatVisualSpec[], coverage: WorkspaceCoverage) {
+    const register = extractCertRegister(visuals, 100);
+    let expiringSoon = 0;
+    let expired = 0;
+    for (const r of register) {
+        if (r.statusTone === "expired") expired++;
+        else if (r.statusTone === "expiring") expiringSoon++;
+    }
+
+    const hrExpiry = visuals.find((v) => /certificate expiry/i.test(v.title));
+    if (hrExpiry?.data.length) {
+        for (const row of hrExpiry.data) {
+            const bucket = String(row.bucket || row.status || row.label || "").toUpperCase();
+            const count = Number(row.count ?? row.value ?? 1);
+            if (/EXPIRED|OVERDUE|PAST/.test(bucket)) expired += count;
+            else if (/30|60|90|SOON|EXPIRING/.test(bucket)) expiringSoon += count;
+        }
+    }
+
+    const certsTracked =
+        coverage && "documentsWithExpiry" in coverage
+            ? (coverage.documentsWithExpiry ?? register.length)
+            : register.length;
+
+    return { certsTracked, expiringSoon, expired };
 }
 
 export function deriveHrWorkforceSnapshot(
@@ -123,13 +194,12 @@ export function deriveHrWorkforceSnapshot(
     portfolio: PortfolioFile[],
     visuals: ChatVisualSpec[],
     coverage: WorkspaceCoverage,
-    metrics: WorkspaceMetrics
+    metrics: WorkspaceMetrics,
+    opts?: { shortlist?: CvShortlistRow[]; pendingShortlistIds?: string[]; pendingShortlistRows?: CvPendingShortlistRow[] }
 ): HrWorkforceSnapshot {
     const pillarCounts = countByPillar(vaultDocs);
-    const { cvs, cvsScored, topCvScore } = cvStats(visuals, vaultDocs);
-    const certsTracked =
-        coverage && "documentsWithExpiry" in coverage ? (coverage.documentsWithExpiry ?? 0) : 0;
-    const certsExpiring = certsTracked; // proxy until expiry breakdown in coverage
+    const { cvs, cvsScored, topCvScore } = cvStats(visuals, vaultDocs, opts?.shortlist);
+    const { certsTracked, expiringSoon, expired } = hrCertStats(visuals, coverage);
 
     const pillars: HrPillar[] = (Object.keys(PILLAR_META) as HrPillarId[]).map((id) => {
         const count = pillarCounts[id];
@@ -143,21 +213,46 @@ export function deriveHrWorkforceSnapshot(
     });
 
     const priorities: HrPriority[] = [];
-    const unscoredCvs = Math.max(0, cvs - cvsScored);
-    if (unscoredCvs > 0) {
+    const vaultPendingIds = unscoredResumeDocumentIds(vaultDocs);
+    const pendingShortlistIds =
+        opts?.pendingShortlistIds?.length
+            ? opts.pendingShortlistIds
+            : vaultPendingIds;
+    if (pendingShortlistIds.length > 0) {
+        const pendingDocs = pendingShortlistIds
+            .map((id) => vaultDocs.find((d) => d.documentId === id))
+            .filter(Boolean) as AgentVaultDoc[];
+        const singleName =
+            opts?.pendingShortlistRows?.length === 1
+                ? opts.pendingShortlistRows[0].name
+                : pendingDocs.length === 1
+                  ? resumeDisplayName(pendingDocs[0].originalFilename)
+                  : null;
         priorities.push({
             id: "unscored-cvs",
-            title: `${unscoredCvs} CV${unscoredCvs === 1 ? "" : "s"} without scores`,
-            detail: "Open resumes until processing completes, then rank candidates.",
+            title:
+                singleName
+                    ? `Approve ${singleName} to shortlist`
+                    : `${pendingShortlistIds.length} CV${pendingShortlistIds.length === 1 ? "" : "s"} ready to shortlist`,
+            detail: singleName
+                ? "Add this CV to your ranked shortlist with one click."
+                : "Approve to add pending CVs to your ranked shortlist.",
             tone: "warn",
-            prompt: "Show CV score ranking",
-            chartView: "scores",
+            documentIds: pendingShortlistIds,
         });
     }
-    if (certsExpiring > 0) {
+    if (expired > 0) {
+        priorities.push({
+            id: "certs-expired",
+            title: `${expired} certificate${expired === 1 ? "" : "s"} expired`,
+            detail: "Renew or replace lapsed training and compliance certificates.",
+            tone: "warn",
+            prompt: "Any certificates expiring in the next 90 days?",
+        });
+    } else if (expiringSoon > 0) {
         priorities.push({
             id: "certs",
-            title: `${certsExpiring} certificate${certsExpiring === 1 ? "" : "s"} with expiry dates`,
+            title: `${expiringSoon} certificate${expiringSoon === 1 ? "" : "s"} expiring soon`,
             detail: "Review training and compliance renewals before they lapse.",
             tone: "warn",
             prompt: "Any certificates expiring in the next 90 days?",
@@ -219,7 +314,8 @@ export function deriveHrWorkforceSnapshot(
             cvsScored,
             topCvScore,
             certsTracked,
-            certsExpiring,
+            certsExpiring: expiringSoon,
+            certsExpired: expired,
         },
     };
 }
@@ -229,6 +325,15 @@ export type CvShortlistRow = {
     name: string;
     score: number;
     documentId?: string;
+    agentAction: string;
+    pipelineStatus: string;
+    scoreSource?: "ai" | "hr_approved";
+};
+
+export type CvPendingShortlistRow = {
+    documentId: string;
+    name: string;
+    filename: string;
 };
 
 export function extractCvShortlist(visuals: ChatVisualSpec[], limit = 10): CvShortlistRow[] {
@@ -245,7 +350,55 @@ export function extractCvShortlist(visuals: ChatVisualSpec[], limit = 10): CvSho
         .filter((r) => Number.isFinite(r.score) && r.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, limit)
-        .map((r, i) => ({ rank: i + 1, ...r }));
+        .map((r, i) => ({
+            rank: i + 1,
+            ...r,
+            agentAction: r.score >= 80 ? "Shortlist" : r.score >= 60 ? "Review CV" : "Archive",
+            pipelineStatus: r.score >= 80 ? "Shortlisted" : r.score >= 60 ? "Under review" : "Low match",
+        }));
+}
+
+/** Map stable API shortlist rows to UI table rows. */
+export function mapHrShortlistApiRows(
+    rows: Array<{
+        rank: number;
+        candidateName: string;
+        cvScore: number;
+        documentId: string;
+        pipelineStatus: string;
+        agentAction: string;
+        scoreSource?: "ai" | "hr_approved";
+    }>
+): CvShortlistRow[] {
+    return rows.map((r) => ({
+        rank: r.rank,
+        name: r.candidateName,
+        score: r.cvScore,
+        documentId: r.documentId,
+        pipelineStatus: r.pipelineStatus,
+        agentAction: r.agentAction,
+        scoreSource: r.scoreSource,
+    }));
+}
+
+export function mapHrPendingShortlistApiRows(
+    rows: Array<{ documentId: string; candidateName: string; filename: string }>
+): CvPendingShortlistRow[] {
+    return rows.map((r) => ({
+        documentId: r.documentId,
+        name: r.candidateName,
+        filename: r.filename,
+    }));
+}
+
+/** Prefer API shortlist; fall back to chart extraction while loading or if API is empty. */
+export function resolveCvShortlist(
+    apiRows: CvShortlistRow[] | undefined,
+    visuals: ChatVisualSpec[],
+    limit = 10
+): CvShortlistRow[] {
+    if (apiRows?.length) return apiRows.slice(0, limit);
+    return extractCvShortlist(visuals, limit);
 }
 
 export type HrAnalyticsGroupId = "all" | HrPillarId;
@@ -307,9 +460,13 @@ export function hrGroupForView(view: string): HrAnalyticsGroupId {
 
 export type HrViewKpi = { label: string; value: string };
 
-export function deriveHrViewKpis(visuals: ChatVisualSpec[], view: string): HrViewKpi[] {
+export function deriveHrViewKpis(
+    visuals: ChatVisualSpec[],
+    view: string,
+    shortlist?: CvShortlistRow[]
+): HrViewKpi[] {
     if (view === "scores" || view === "overview") {
-        const list = extractCvShortlist(visuals, 100);
+        const list = resolveCvShortlist(shortlist, visuals, 100);
         if (!list.length) return [];
         const avg = Math.round(list.reduce((s, r) => s + r.score, 0) / list.length);
         return [

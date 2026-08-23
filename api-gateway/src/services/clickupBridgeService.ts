@@ -9,6 +9,7 @@ import {
     ingestFileForConnection,
     type IngestUploadInput,
 } from './integrationIngestService';
+import { ingestClickUpTaskRecord } from './integrationRecordIngestService';
 
 const CLICKUP_API = 'https://api.clickup.com/api/v2';
 const CLICKUP_TIMEOUT_MS = 45_000;
@@ -181,7 +182,7 @@ async function fetchClickUpTeams(apiToken: string): Promise<Array<{ id: string; 
                     id: String(t.id || ''),
                     name: String(t.name || 'Workspace'),
                 }))
-                .filter((t) => t.id);
+                .filter((t: { id: string; name: string }) => Boolean(t.id));
         }
     } catch {
         /* fall through to /user */
@@ -197,7 +198,7 @@ async function fetchClickUpTeams(apiToken: string): Promise<Array<{ id: string; 
             id: String(t.id || ''),
             name: String(t.name || 'Workspace'),
         }))
-        .filter((t) => t.id);
+        .filter((t: { id: string; name: string }) => Boolean(t.id));
 }
 
 function pushUniqueLists(rows: ClickUpAccessibleList[], seen: Set<string>, next: ClickUpAccessibleList[]) {
@@ -586,7 +587,32 @@ export async function ingestAttachmentsFromTask(connection: IIntegrationConnecti
 
     const task = await fetchClickUpTask(taskId, apiToken);
     if (!listFilterMatches(connection, task)) {
-        return { ingested: 0, skipped: 0, failed: 0, details: [{ taskId, reason: 'list_filter' }] };
+        return {
+            ingested: 0,
+            skipped: 0,
+            failed: 0,
+            recordsIngested: 0,
+            recordsUpdated: 0,
+            details: [{ taskId, reason: 'list_filter' }],
+        };
+    }
+
+    let recordsIngested = 0;
+    let recordsUpdated = 0;
+    try {
+        const recordResult = await ingestClickUpTaskRecord(connection, task);
+        if (recordResult.updated) recordsUpdated += 1;
+        else recordsIngested += 1;
+    } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'task record ingest failed';
+        return {
+            ingested: 0,
+            skipped: 0,
+            failed: 1,
+            recordsIngested: 0,
+            recordsUpdated: 0,
+            details: [{ taskId, status: 'failed', error: msg }],
+        };
     }
 
     const attachments = taskAttachments(task);
@@ -616,7 +642,16 @@ export async function ingestAttachmentsFromTask(connection: IIntegrationConnecti
         }
     }
 
-    return { ingested, skipped, failed, details, taskId, attachmentCount: attachments.length };
+    return {
+        ingested,
+        skipped,
+        failed,
+        recordsIngested,
+        recordsUpdated,
+        details,
+        taskId,
+        attachmentCount: attachments.length,
+    };
 }
 
 export async function syncClickUpList(connection: IIntegrationConnection) {
@@ -633,6 +668,8 @@ export async function syncClickUpList(connection: IIntegrationConnection) {
     let ingested = 0;
     let skipped = 0;
     let failed = 0;
+    let recordsIngested = 0;
+    let recordsUpdated = 0;
     let attachmentCount = 0;
     const details: Array<Record<string, unknown>> = [];
 
@@ -645,6 +682,8 @@ export async function syncClickUpList(connection: IIntegrationConnection) {
             ingested += summary.ingested;
             skipped += summary.skipped;
             failed += summary.failed;
+            recordsIngested += summary.recordsIngested ?? 0;
+            recordsUpdated += summary.recordsUpdated ?? 0;
             attachmentCount += summary.attachmentCount ?? 0;
             if (summary.details?.length) {
                 details.push(...summary.details.map((d) => ({ taskId, ...d })));
@@ -659,6 +698,8 @@ export async function syncClickUpList(connection: IIntegrationConnection) {
         ingested,
         skipped,
         failed,
+        recordsIngested,
+        recordsUpdated,
         taskCount: tasks.length,
         attachmentCount,
         details: details.slice(0, 50),

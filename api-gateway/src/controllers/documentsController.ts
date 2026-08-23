@@ -19,6 +19,10 @@ import {
     getDuplicateGroupSizes,
 } from '../services/duplicateDetection';
 import {
+    contentKindMongoFilter,
+    parseContentKind,
+} from '../services/contentKindFilter';
+import {
     deleteDocumentFully,
     ensureUploadDir,
     saveUploadedFile,
@@ -228,8 +232,12 @@ export const getDocumentStats = async (req: Request, res: Response, next: NextFu
         const organizationId = (req.query.organizationId as string) || undefined;
         const departmentId = ((req.query.departmentId as string) || '').trim() || undefined;
         const uploadedBy = ((req.query.uploadedBy as string) || '').trim() || undefined;
+        // Library stats default to uploaded files only (exclude integration JSON records).
+        const contentKind = parseContentKind(req.query.contentKind, 'file');
 
-        const extra: Record<string, unknown> = {};
+        const extra: Record<string, unknown> = {
+            ...contentKindMongoFilter(contentKind),
+        };
         if (uploadedBy) {
             extra.uploadedBy = uploadedBy;
         }
@@ -497,11 +505,15 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
                 : undefined;
         const classification = ((req.query.classification as string) || (req.query.documentType as string) || '').trim() || undefined;
         const uploadedBy = ((req.query.uploadedBy as string) || '').trim() || undefined;
+        // Documents library defaults to files; Synced records tab uses contentKind=record.
+        const contentKind = parseContentKind(req.query.contentKind, 'file');
         // Duplicate-group aggregation runs over the full matching collection; dashboards
         // and other list views that don't render dup badges can opt out for speed.
         const withDuplicates = (req.query.withDuplicates as string) !== 'false';
 
-        const extra: Record<string, unknown> = {};
+        const extra: Record<string, unknown> = {
+            ...contentKindMongoFilter(contentKind),
+        };
         if (status) extra.status = status;
         if (mimeType) extra.mimeType = new RegExp(mimeType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         if (q) {
@@ -715,6 +727,7 @@ export const listDocuments = async (req: Request, res: Response, next: NextFunct
         res.json({
             success: true,
             data: {
+                contentKind,
                 documents: annotateDuplicateCounts(documentsWithShareStatus, duplicateSizes),
                 pagination: {
                     page,

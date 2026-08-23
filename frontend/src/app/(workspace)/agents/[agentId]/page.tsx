@@ -77,26 +77,28 @@ export default function AgentWorkspacePage() {
     }
 
     return (
-        <AgentWorkspaceShell
-            agentId={validAgentId}
-            meta={meta}
-            agentOptions={agentOptions.filter((a) => a.value && isAnalyticsAgentId(a.value))}
-            visuals={visuals}
-            loading={loading}
-            documentCount={documentCount}
-            summary={summary}
-            scopeMode={scopeMode}
-            coverage={coverage}
-            integrations={integrations}
-            integrationsLoading={integrationsLoading}
-            view={view}
-            onViewChange={setView}
-            onRefresh={refresh}
-            onSyncIntegration={syncIntegration}
-            lastUpdated={lastUpdated}
-            live={live}
-            onLiveChange={setLive}
-            initialTab={initialTab}
-        />
+        <div className="h-full min-h-0 flex flex-col">
+            <AgentWorkspaceShell
+                agentId={validAgentId}
+                meta={meta}
+                agentOptions={agentOptions.filter((a) => a.value && isAnalyticsAgentId(a.value))}
+                visuals={visuals}
+                loading={loading}
+                documentCount={documentCount}
+                summary={summary}
+                scopeMode={scopeMode}
+                coverage={coverage}
+                integrations={integrations}
+                integrationsLoading={integrationsLoading}
+                view={view}
+                onViewChange={setView}
+                onRefresh={refresh}
+                onSyncIntegration={syncIntegration}
+                lastUpdated={lastUpdated}
+                live={live}
+                onLiveChange={setLive}
+                initialTab={initialTab}
+            />
+        </div>
     );
 }

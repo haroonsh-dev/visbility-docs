@@ -64,7 +64,7 @@ export default function AgentProcurementAnalyticsPanel({
     };
 
     return (
-        <div className="min-h-[520px] flex flex-col rounded-2xl border border-border bg-surface/30 overflow-hidden">
+        <div className="flex flex-col rounded-2xl border border-border bg-surface/30 overflow-hidden">
             <div className="shrink-0 border-b border-border bg-surface/40 px-4 sm:px-5 py-4 space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>

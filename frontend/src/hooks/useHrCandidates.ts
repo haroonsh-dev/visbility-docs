@@ -72,21 +72,26 @@ export function useHrCandidates(enabled = true) {
     );
 
     const previewOutreach = useCallback(
-        async (params: {
-            documentId: string;
-            template: OutreachTemplateId;
-            senderName?: string;
-            companyName?: string;
-            interviewDetails?: string;
-            emailOverride?: string;
-        }): Promise<OutreachPreview | null> => {
+        async (
+            params: {
+                documentId: string;
+                template: OutreachTemplateId;
+                senderName?: string;
+                companyName?: string;
+                interviewDetails?: string;
+                emailOverride?: string;
+            },
+            signal?: AbortSignal
+        ): Promise<OutreachPreview | null> => {
             try {
                 const data = await apiRequest("/docs/documents/hr/candidates/preview", {
                     method: "POST",
                     body: JSON.stringify(params),
+                    signal,
                 });
                 return (data?.data || null) as OutreachPreview | null;
-            } catch {
+            } catch (e: unknown) {
+                if (e instanceof Error && e.name === "AbortError") return null;
                 return null;
             }
         },

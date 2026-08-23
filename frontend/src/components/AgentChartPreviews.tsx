@@ -8,14 +8,16 @@ type Props = {
     visuals: ChatVisualSpec[];
     maxCharts?: number;
     onOpenCharts?: () => void;
+    hideHeader?: boolean;
 };
 
-export default function AgentChartPreviews({ visuals, maxCharts = 2, onOpenCharts }: Props) {
+export default function AgentChartPreviews({ visuals, maxCharts = 2, onOpenCharts, hideHeader }: Props) {
     const preview = visuals.slice(0, maxCharts);
     if (!preview.length) return null;
 
     return (
-        <section className="space-y-3">
+        <section className={hideHeader ? "" : "space-y-3"}>
+            {!hideHeader && (
             <div className="flex items-center justify-between gap-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
                     Live chart preview
@@ -32,6 +34,7 @@ export default function AgentChartPreviews({ visuals, maxCharts = 2, onOpenChart
                     </button>
                 )}
             </div>
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {preview.map((spec) => (
                     <div

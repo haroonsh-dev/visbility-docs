@@ -2,9 +2,8 @@
 
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Link from "next/link";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { ExternalLink, Loader2, RotateCcw, Sparkles } from "lucide-react";
+import WorkspaceChatMarkdown from "@/components/WorkspaceChatMarkdown";
 import ChatComposer from "@/components/ChatComposer";
 import type { AnalyticsAgentId } from "@/lib/documentAgents";
 import { agentChatPath } from "@/lib/documentAgents";
@@ -99,7 +98,14 @@ export default forwardRef<AgentWorkspaceChatRailHandle, Props>(function AgentWor
                     ...m,
                     { id: `a-${Date.now()}`, role: "assistant", content: reply },
                 ]);
-                if (data?.data?.model === "agent-analytics" || data?.data?.visuals?.length) {
+                const shouldRefreshAnalytics =
+                    data?.data?.model === "agent-analytics" ||
+                    (Array.isArray(data?.data?.visuals) && data.data.visuals.length > 0) ||
+                    (agentId === "hr_agent" &&
+                        /\b(cv|resume|shortlist|rank|score|candidate|reprocess)/i.test(
+                            `${trimmed} ${reply}`
+                        ));
+                if (shouldRefreshAnalytics) {
                     onAnalyticsReply?.();
                 }
             } catch (e: unknown) {
@@ -141,7 +147,7 @@ export default forwardRef<AgentWorkspaceChatRailHandle, Props>(function AgentWor
                 className
             )}
         >
-            <div className="shrink-0 px-4 py-3 border-b border-border flex items-center justify-between gap-2">
+            <div className="shrink-0 px-3 py-2 border-b border-border flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                     <Sparkles size={16} style={{ color: accent }} />
                     <div className="min-w-0">
@@ -175,7 +181,7 @@ export default forwardRef<AgentWorkspaceChatRailHandle, Props>(function AgentWor
                         <Loader2 size={20} className="animate-spin text-foreground-muted" />
                     </div>
                 ) : messages.length === 0 ? (
-                    <div className="text-center py-8 px-2">
+                    <div className="text-center py-4 px-2">
                         <p className="text-xs text-foreground-muted mb-4">
                             Ask about your {shortName.toLowerCase()} documents — charts refresh when you request analytics.
                         </p>
@@ -197,16 +203,14 @@ export default forwardRef<AgentWorkspaceChatRailHandle, Props>(function AgentWor
                         <div
                             key={m.id}
                             className={cn(
-                                "rounded-xl px-3 py-2 text-xs leading-relaxed max-w-[95%]",
+                                "rounded-xl px-3 py-2 text-xs leading-relaxed min-w-0",
                                 m.role === "user"
-                                    ? "ml-auto bg-accent-muted text-foreground border border-accent/20"
-                                    : "mr-auto bg-surface-2 text-foreground border border-border"
+                                    ? "ml-auto max-w-[92%] bg-accent-muted text-foreground border border-accent/20"
+                                    : "mr-auto w-full bg-surface-2 text-foreground border border-border"
                             )}
                         >
                             {m.role === "assistant" ? (
-                                <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                                </div>
+                                <WorkspaceChatMarkdown content={m.content} />
                             ) : (
                                 m.content
                             )}

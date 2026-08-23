@@ -52,6 +52,7 @@ export type InvoiceRegisterRow = {
     status: string;
     statusTone: "current" | "overdue" | "unknown";
     documentId?: string;
+    agentAction: string;
 };
 
 const PILLAR_TYPES: Record<FinPillarId, string[]> = {
@@ -179,6 +180,7 @@ export function extractVendorRegister(visuals: ChatVisualSpec[], limit = 12): In
             status: "AP balance",
             statusTone: "current" as const,
             documentId: row._documentIds ? String(row._documentIds).split(",")[0] : undefined,
+            agentAction: "View AP",
         };
     });
 }
@@ -204,6 +206,7 @@ export function extractOverdueQueue(visuals: ChatVisualSpec[], limit = 8): Invoi
             status: "Overdue",
             statusTone: "overdue",
             documentId: row._documentIds ? String(row._documentIds).split(",")[0] : undefined,
+            agentAction: "Follow up",
         });
         if (rows.length >= limit) break;
     }

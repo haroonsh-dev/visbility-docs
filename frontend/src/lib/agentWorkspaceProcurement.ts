@@ -53,6 +53,7 @@ export type OrderRegisterRow = {
     statusTone: "open" | "fulfilled" | "discrepancy" | "unknown";
     documentId?: string;
     filename?: string;
+    agentAction: string;
 };
 
 const PILLAR_TYPES: Record<ProcPillarId, string[]> = {
@@ -134,15 +135,18 @@ export function extractOrderRegister(visuals: ChatVisualSpec[], limit = 12): Ord
 
     return visual.data.slice(0, limit).map((row, i) => {
         const status = String(row.status || row.Status || "UNKNOWN");
+        const tone = statusTone(status);
         return {
             rank: i + 1,
             poNumber: String(row.poNumber || row.po_number || "—"),
             vendor: String(row.vendorName || row.vendor || "—"),
             amount: String(row.totalAmount || row.amount || "—"),
             status: status.replace(/_/g, " "),
-            statusTone: statusTone(status),
+            statusTone: tone,
             documentId: row._documentIds ? String(row._documentIds).split(",")[0] : undefined,
             filename: row.filename ? String(row.filename) : undefined,
+            agentAction:
+                tone === "discrepancy" ? "Match review" : tone === "open" ? "Track PO" : "Review",
         };
     });
 }

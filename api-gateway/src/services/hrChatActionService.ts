@@ -688,7 +688,7 @@ const HR_NON_RESUME_TYPES = new Set([
     'transcript',
 ]);
 
-function isResumeLike(doc: { classification?: string | null; originalFilename?: string }): boolean {
+export function isResumeLike(doc: { classification?: string | null; originalFilename?: string }): boolean {
     const filename = doc.originalFilename || '';
     const inferred = inferDocumentTypeFromFilename(filename);
     if (inferred && inferred !== 'resume') return false;
@@ -702,7 +702,7 @@ function isResumeLike(doc: { classification?: string | null; originalFilename?: 
     return /\b(cv|cvs|resume|curriculum|biodata)\b/i.test(filename);
 }
 
-async function resolveCvScoreForResume(
+export async function resolveCvScoreForResume(
     user: AuthUser,
     doc: { documentId: string; metadata?: Record<string, unknown>; pythonDocumentId?: string | null }
 ): Promise<number> {
