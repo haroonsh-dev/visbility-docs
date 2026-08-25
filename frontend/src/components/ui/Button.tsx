@@ -11,11 +11,11 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const variants: Record<ButtonVariant, string> = {
     primary:
-        "bg-(--vb-color-primary-btn-bg) text-(--vb-color-primary-btn-fg) hover:bg-(--accent-hover) shadow-[var(--vb-glow)] hover:shadow-[var(--vb-glow-strong)]",
+        "bg-(--vb-color-primary-btn-bg) text-(--vb-color-primary-btn-fg) hover:bg-(--accent-hover) shadow-(--vb-glow) hover:shadow-(--vb-glow-strong)",
     secondary:
         "bg-(--btn-secondary-bg) border border-(--btn-secondary-border) text-(--btn-secondary-text) hover:bg-(--btn-secondary-hover-bg) hover:border-(--btn-secondary-hover-border) hover:text-(--btn-secondary-hover-text)",
     ghost:
-        "bg-transparent text-foreground-muted hover:bg-accent-muted hover:text-[var(--vb-blue-dark)]",
+        "bg-transparent text-foreground-muted hover:bg-accent-muted hover:text-(--vb-blue-dark)",
     danger:
         "bg-error-muted border border-[rgba(248,113,113,0.3)] text-error hover:bg-rose-500/20",
 };

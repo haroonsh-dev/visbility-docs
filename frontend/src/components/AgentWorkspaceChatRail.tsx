@@ -183,7 +183,8 @@ export default forwardRef<AgentWorkspaceChatRailHandle, Props>(function AgentWor
                 ) : messages.length === 0 ? (
                     <div className="text-center py-4 px-2">
                         <p className="text-xs text-foreground-muted mb-4">
-                            Ask about your {shortName.toLowerCase()} documents — charts refresh when you request analytics.
+                            Ask about your {shortName.toLowerCase()} documents, synced records, or open
+                            tasks — charts refresh when you request analytics.
                         </p>
                         <div className="flex flex-col gap-1.5">
                             {suggestions.map((s) => (

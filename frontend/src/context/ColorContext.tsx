@@ -52,7 +52,7 @@ const lightTheme: Theme = {
     /* Decorative only — never use on primary buttons */
     gradientPrimary: "from-[var(--vb-blue-bright)] via-[var(--vb-blue)] to-[var(--vb-blue-deep)]",
     gradientSecondary: "from-white via-[var(--vb-mist)] to-white",
-    gradientButton: "bg-[var(--vb-color-primary-btn-bg)] text-[var(--vb-color-primary-btn-fg)]",
+    gradientButton: "bg-(--vb-color-primary-btn-bg) text-(--vb-color-primary-btn-fg)",
 
     iconPrimary: "text-foreground",
     iconSecondary: "text-foreground-muted",
@@ -61,9 +61,9 @@ const lightTheme: Theme = {
     sidebarItemActive:
       "bg-[rgba(56,182,255,0.08)] text-accent border border-[rgba(56,182,255,0.28)] shadow-sm",
     sidebarItemInactive: "text-foreground-secondary hover:bg-slate-100 border border-transparent",
-    sidebarIconBgActive: "bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] shadow-sm",
+    sidebarIconBgActive: "bg-(--vb-blue) text-(--vb-color-primary-btn-fg) shadow-sm",
     sidebarIconBgInactive:
-      "bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.2)]",
+      "bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.2)]",
 
     bgDarkPanel: "bg-surface",
     bgDarkPanelHover: "hover:bg-surface-2",
@@ -92,9 +92,9 @@ const lightTheme: Theme = {
     bgButtonEnabledRed: "bg-rose-50",
     bgButtonHoverBlue: "hover:bg-[rgba(56,182,255,0.14)]",
     bgButtonHoverRed: "hover:bg-rose-100",
-    textButtonDisabled: "text-[var(--vb-blue)]",
+    textButtonDisabled: "text-(--vb-blue)",
     textButtonDisabledRed: "text-rose-500",
-    textButtonEnabled: "text-[var(--vb-blue-dark)]",
+    textButtonEnabled: "text-(--vb-blue-dark)",
     textButtonEnabledRed: "text-rose-800",
     borderBlue: "border-[rgba(56,182,255,0.4)]",
     borderRed: "border-rose-300",
@@ -105,7 +105,7 @@ const lightTheme: Theme = {
     bgIconGreen: "bg-emerald-100",
     textStatusGreen: "text-emerald-600",
     textStatusRed: "text-rose-600",
-    textBlue: "text-[var(--vb-blue-dark)]",
+    textBlue: "text-(--vb-blue-dark)",
     textRed: "text-rose-600",
     bgGradientBlue: "bg-[rgba(56,182,255,0.12)]",
     bgGradientRed: "bg-rose-100/40",

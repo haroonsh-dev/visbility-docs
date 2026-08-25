@@ -1,6 +1,10 @@
 import type { ChatVisualSpec } from "@/types/chatVisuals";
 import type { PortfolioFile } from "@/lib/agentWorkspaceKpis";
-import type { WorkspaceCoverage, WorkspaceMetrics } from "@/lib/agentWorkspaceInsights";
+import {
+    getSkippedDocumentIds,
+    type WorkspaceCoverage,
+    type WorkspaceMetrics,
+} from "@/lib/agentWorkspaceInsights";
 import type { AgentVaultDoc } from "@/hooks/useAgentPortfolio";
 import { docTypeLabel, inferDocTypeFromFilename } from "@/lib/documentAgents";
 import { extractCertRegister } from "@/lib/agentWorkspaceCompliance";
@@ -25,6 +29,7 @@ export type HrPriority = {
     prompt?: string;
     chartView?: string;
     documentIds?: string[];
+    approveKind?: "shortlist" | "reprocess";
 };
 
 export type HrWorkforceSnapshot = {
@@ -239,6 +244,7 @@ export function deriveHrWorkforceSnapshot(
                 : "Approve to add pending CVs to your ranked shortlist.",
             tone: "warn",
             documentIds: pendingShortlistIds,
+            approveKind: "shortlist",
         });
     }
     if (expired > 0) {
@@ -259,12 +265,15 @@ export function deriveHrWorkforceSnapshot(
         });
     }
     if (metrics.skippedDocs > 0) {
+        const skippedIds = getSkippedDocumentIds(coverage);
         priorities.push({
             id: "fix",
             title: `${metrics.skippedDocs} HR file${metrics.skippedDocs === 1 ? "" : "s"} not in charts`,
-            detail: "Fix extraction or linking so leave, payroll, and directory views populate.",
+            detail: "Approve to reprocess so leave, payroll, and directory views populate.",
             tone: "warn",
-            prompt: "Why are some HR files not in charts?",
+            documentIds: skippedIds.length ? skippedIds : undefined,
+            approveKind: skippedIds.length ? "reprocess" : undefined,
+            prompt: skippedIds.length ? undefined : "Why are some HR files not in charts?",
         });
     }
     if (pillarCounts.hiring > 0 && cvsScored > 0 && topCvScore != null) {

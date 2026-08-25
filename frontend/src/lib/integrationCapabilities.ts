@@ -45,6 +45,14 @@ export const PROVIDER_CAPABILITIES: Record<string, IntegrationProviderCapabiliti
         remoteTest: true,
         middlewarePush: false,
     },
+    slack: {
+        pullSchedule: true,
+        pullManual: true,
+        pushIngest: true,
+        recordIngest: true,
+        remoteTest: true,
+        middlewarePush: false,
+    },
     custom_webhook: {
         pullSchedule: false,
         pullManual: false,

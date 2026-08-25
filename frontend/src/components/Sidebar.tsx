@@ -3,18 +3,15 @@
 import React, { Suspense, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
-    Activity, ChevronDown, LogOut, User, X, Building2,
+    ChevronDown, LogOut, User, X, Building2,
 } from "lucide-react";
 import { usePermissions } from "@/context/PermissionsContext";
 import { clearAuthState, getStoredUser } from "@/lib/authSession";
 import { apiRequest } from "@/lib/apiClient";
 import LogoDark from "@/assets/Logo/visibility docs dark bg.png";
-import {
-    agentWorkspacePath,
-    getAgentWorkspaceMeta,
-} from "@/lib/agentWorkspace";
+import { agentWorkspacePath } from "@/lib/agentWorkspace";
 import { usePlanAgents } from "@/hooks/usePlanAgents";
 import { cn } from "@/lib/utils";
 
@@ -25,8 +22,6 @@ type SidebarProps = { open?: boolean; onClose?: () => void };
 export function SidebarContent({ open = false, onClose }: SidebarProps) {
     const pathname = usePathname();
     const router = useRouter();
-    const searchParams = useSearchParams();
-    const currentAgent = searchParams?.get("agent") || "";
     const {
         role: permRole,
         canAccessPage,
@@ -45,7 +40,6 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
     const role = permRole || user?.role || "team";
 
     const [deptOpen, setDeptOpen] = React.useState(true);
-    const [agentOpen, setAgentOpen] = React.useState(true);
     const [departments, setDepartments] = React.useState<DeptNav[]>([]);
 
     useEffect(() => {
@@ -104,7 +98,7 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
         { href: "/admin/plans", label: "Subscriptions & Billing", roles: ["superAdmin"] },
         { href: "/plans", label: "Subscriptions & Billing", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("plans") },
         { href: "/admin/email-reports", label: "Automated Reports", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("email_reports") },
-        { href: "/admin/integrations", label: "API & Webhooks", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("integrations") },
+        { href: "/admin/integrations", label: "Integrations", roles: ["admin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("integrations") },
         { href: "/admin/settings", label: "AI Engine Config", roles: ["admin", "superAdmin", "team"], allow: () => role === "admin" || role === "superAdmin" || canAccessPage("settings") },
         {
             href: "/activity",
@@ -201,7 +195,6 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                             pathname?.startsWith(`${href}/`) ||
                             (href === "/agents" && (pathname?.startsWith("/agents/") || pathname?.startsWith("/chat")));
                         const showDeptDropdown = href === "/documents" && canSeeDepts && departments.length > 0;
-                                    const showAgentDropdown = href === "/agents" && agentOptions.length > 0;
 
                         return (
                             <div key={href}>
@@ -227,13 +220,6 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                             <ChevronDown size={14} className={cn("transition-transform", deptOpen ? "rotate-180" : "")} />
                                         </button>
                                     )}
-                                    {showAgentDropdown && (
-                                        <button type="button" onClick={() => setAgentOpen((o) => !o)}
-                                            className="p-1.5 rounded-lg min-h-8 min-w-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                                            aria-label="Toggle agent options">
-                                            <ChevronDown size={14} className={cn("transition-transform", agentOpen ? "rotate-180" : "")} />
-                                        </button>
-                                    )}
                                 </div>
                                 {showDeptDropdown && deptOpen && (
                                     <div className="ml-4 pl-3 border-l border-white/6 space-y-0.5 mb-1 mt-0.5">
@@ -241,68 +227,9 @@ export function SidebarContent({ open = false, onClose }: SidebarProps) {
                                             const dActive = pathname === `/departments/${d.departmentId}`;
                                             return (
                                                 <Link key={d.departmentId} href={`/departments/${d.departmentId}`} onClick={() => onClose?.()}
-                                                    className={cn("flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-colors", dActive && "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.1)]")}>
+                                                    className={cn("flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-colors", dActive && "text-(--vb-blue-bright) bg-[rgba(56,182,255,0.1)]")}>
                                                     <Building2 size={11} className="shrink-0 opacity-60" />
                                                     <span className="truncate">{d.name}</span>
-                                                </Link>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                                {showAgentDropdown && agentOpen && (
-                                    <div className="ml-3 pl-2.5 border-l border-white/6 space-y-0.5 mb-1 mt-1">
-                                        <Link
-                                            href="/chat?new=1"
-                                            onClick={() => onClose?.()}
-                                            className={cn(
-                                                "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
-                                                pathname?.startsWith("/chat") && !currentAgent
-                                                    ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.12)]"
-                                                    : "text-slate-400 hover:text-white hover:bg-white/5"
-                                            )}
-                                        >
-                                            Quick chat
-                                        </Link>
-                                        <Link
-                                            href="/agents"
-                                            onClick={() => onClose?.()}
-                                            className={cn(
-                                                "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
-                                                pathname === "/agents"
-                                                    ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.12)]"
-                                                    : "text-slate-400 hover:text-white hover:bg-white/5"
-                                            )}
-                                        >
-                                            All workspaces
-                                        </Link>
-                                        {agentOptions.map((ag) => {
-                                            const meta = getAgentWorkspaceMeta(ag.value);
-                                            const Icon = meta?.icon;
-                                            const wsPath = agentWorkspacePath(ag.value);
-                                            const active =
-                                                pathname === wsPath ||
-                                                (pathname?.startsWith("/chat") && currentAgent === ag.value);
-                                            return (
-                                                <Link
-                                                    key={ag.value}
-                                                    href={wsPath}
-                                                    onClick={() => onClose?.()}
-                                                    className={cn(
-                                                        "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors min-w-0",
-                                                        active
-                                                            ? "text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.15)] font-semibold"
-                                                            : "text-slate-400 hover:text-white hover:bg-white/5"
-                                                    )}
-                                                    title={meta?.tagline || ag.label}
-                                                >
-                                                    {Icon && (
-                                                        <Icon
-                                                            size={13}
-                                                            className="shrink-0 opacity-80"
-                                                            style={active && meta ? { color: meta.accent } : undefined}
-                                                        />
-                                                    )}
-                                                    <span className="truncate">{meta?.shortName || ag.label}</span>
                                                 </Link>
                                             );
                                         })}

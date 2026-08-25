@@ -65,12 +65,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         ? {
             success: "text-emerald-700",
             error: "text-rose-700",
-            info: "text-[var(--vb-blue-dark)]",
+            info: "text-(--vb-blue-dark)",
         }
         : {
             success: "text-emerald-300",
             error: "text-rose-300",
-            info: "text-[var(--vb-blue-bright)]",
+            info: "text-(--vb-blue-bright)",
         };
 
     const bgColors: Record<ToastType, string> = isLightTheme
@@ -89,12 +89,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         ? {
             success: "text-emerald-900",
             error: "text-rose-900",
-            info: "text-[var(--vb-ink)]",
+            info: "text-(--vb-ink)",
         }
         : {
             success: "text-emerald-100",
             error: "text-rose-100",
-            info: "text-[var(--vb-blue-bright)]",
+            info: "text-(--vb-blue-bright)",
     };
 
     return (

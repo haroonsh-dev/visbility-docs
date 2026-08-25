@@ -102,7 +102,6 @@ function DashboardContent() {
     const [showCompanyModal, setShowCompanyModal] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [showAnalytics, setShowAnalytics] = useState(false);
 
     // Identity comes from PermissionsContext (already cached + refreshed in background) —
     // no second /auth/me round trip on the dashboard critical path.
@@ -328,7 +327,7 @@ function DashboardContent() {
                     }
                 />
                 {!isAdminView && teamIdentity?.organization?.organizationName && (
-                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.28)] bg-[rgba(56,182,255,0.08)] px-3 py-1 text-xs font-medium text-[var(--vb-blue-dark)]">
+                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.28)] bg-[rgba(56,182,255,0.08)] px-3 py-1 text-xs font-medium text-(--vb-blue-dark)">
                         <Building2 size={13} />
                         {teamIdentity.organization.organizationName}
                     </div>
@@ -357,7 +356,7 @@ function DashboardContent() {
                 >
                     <div className="p-5 sm:p-6 border-b border-white/8 bg-linear-to-r from-[rgba(56,182,255,0.1)] via-[rgba(56,182,255,0.05)] to-transparent flex flex-wrap items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <div className="h-11 w-11 rounded-xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-md">
+                            <div className="h-11 w-11 rounded-xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shadow-md">
                                 <Building2 size={22} />
                             </div>
                             <div>
@@ -365,7 +364,7 @@ function DashboardContent() {
                                     <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                                         Tenant & Company Directory
                                     </h2>
-                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[rgba(56,182,255,0.15)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] border border-[rgba(56,182,255,0.2)]">
+                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[rgba(56,182,255,0.15)] text-(--vb-blue-dark) dark:text-(--vb-blue-bright) border border-[rgba(56,182,255,0.2)]">
                                         {adminsData.length} {adminsData.length === 1 ? "Company" : "Companies"}
                                     </span>
                                 </div>
@@ -424,11 +423,11 @@ function DashboardContent() {
                                             >
                                                 <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white">
                                                     <div className="flex items-center gap-2.5">
-                                                        <div className="w-8 h-8 rounded-lg bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] flex items-center justify-center shrink-0 border border-[rgba(56,182,255,0.2)]">
+                                                        <div className="w-8 h-8 rounded-lg bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) dark:text-(--vb-blue-bright) flex items-center justify-center shrink-0 border border-[rgba(56,182,255,0.2)]">
                                                             <Building2 size={15} />
                                                         </div>
                                                         <div>
-                                                            <p className="truncate text-xs font-bold text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] hover:underline">
+                                                            <p className="truncate text-xs font-bold text-(--vb-blue-dark) dark:text-(--vb-blue-bright) hover:underline">
                                                                 {orgName}
                                                             </p>
                                                             <p className="text-[10px] text-slate-400 font-normal">ID: {admin.organizationId || "N/A"}</p>
@@ -445,14 +444,14 @@ function DashboardContent() {
                                                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border ${
                                                         plan.includes("PRO") || plan.includes("ENTERPRISE")
                                                             ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
-                                                            : "bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] border-[rgba(56,182,255,0.2)]"
+                                                            : "bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) dark:text-(--vb-blue-bright) border-[rgba(56,182,255,0.2)]"
                                                     }`}>
                                                         <CreditCard size={12} />
                                                         {plan}
                                                     </span>
                                                 </td>
                                                 <td className="py-3.5 px-4">
-                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-500/10 text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] border border-[rgba(56,182,255,0.2)]">
+                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-500/10 text-(--vb-blue-dark) dark:text-(--vb-blue-bright) border border-[rgba(56,182,255,0.2)]">
                                                         <FileText size={12} />
                                                         {docCount} {docCount === 1 ? "doc" : "docs"}
                                                     </span>
@@ -491,7 +490,7 @@ function DashboardContent() {
                             {/* Modal Header */}
                             <div className="p-5 border-b border-white/10 bg-linear-to-r from-[rgba(56,182,255,0.1)] via-[rgba(56,182,255,0.05)] to-transparent flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-lg font-bold">
+                                    <div className="w-12 h-12 rounded-xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shadow-lg font-bold">
                                         <Building2 size={24} />
                                     </div>
                                     <div>
@@ -523,17 +522,17 @@ function DashboardContent() {
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
                                         <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
-                                            <CreditCard size={12} className="text-[var(--vb-blue-bright)]" /> Subscription Plan
+                                            <CreditCard size={12} className="text-(--vb-blue-bright)" /> Subscription Plan
                                         </p>
-                                        <p className="text-sm font-extrabold text-[var(--vb-blue-bright)] mt-1 uppercase">
+                                        <p className="text-sm font-extrabold text-(--vb-blue-bright) mt-1 uppercase">
                                             {selectedCompany.organization?.subscriptionPlan || "FREE"}
                                         </p>
                                     </div>
                                     <div className="p-3.5 rounded-xl bg-white/5 border border-white/10">
                                         <p className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
-                                            <FileText size={12} className="text-[var(--vb-blue-bright)]" /> Uploaded Documents
+                                            <FileText size={12} className="text-(--vb-blue-bright)" /> Uploaded Documents
                                         </p>
-                                        <p className="text-sm font-extrabold text-[var(--vb-blue-bright)] mt-1">
+                                        <p className="text-sm font-extrabold text-(--vb-blue-bright) mt-1">
                                             {selectedCompany.documentCount || 0} Files
                                         </p>
                                     </div>
@@ -549,7 +548,7 @@ function DashboardContent() {
 
                                 {/* Admin Details */}
                                 <div className="p-4 rounded-xl bg-slate-800/60 border border-white/5 space-y-3">
-                                    <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--vb-blue-bright)] flex items-center gap-1.5">
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-(--vb-blue-bright) flex items-center gap-1.5">
                                         <User size={14} /> Organization Admin Contact
                                     </h4>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -649,14 +648,14 @@ function DashboardContent() {
                 >
                     {teamIdentity?.department ? (
                         <div className="relative p-5 sm:p-6">
-                            <div className="absolute inset-y-0 left-0 w-1.5 bg-[var(--vb-blue)]" />
+                            <div className="absolute inset-y-0 left-0 w-1.5 bg-(--vb-blue)" />
                             <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-5">
-                                <div className="h-14 w-14 rounded-2xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shrink-0 shadow-[var(--vb-glow)]">
+                                <div className="h-14 w-14 rounded-2xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shrink-0 shadow-(--vb-glow)">
                                     <Building2 size={24} />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2 mb-1">
-                                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--vb-blue-dark)]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-(--vb-blue-dark)">
                                             Your department
                                         </p>
                                         {teamIdentity.orgRole?.isLeader && (
@@ -729,16 +728,16 @@ function DashboardContent() {
                     className="p-4 rounded-2xl bg-linear-to-r from-[rgba(56,182,255,0.15)] via-[rgba(56,182,255,0.1)] to-[rgba(56,182,255,0.05)] border border-[rgba(56,182,255,0.3)] flex flex-wrap items-center justify-between gap-3 shadow-md"
                 >
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] flex items-center justify-center shrink-0 border border-[rgba(56,182,255,0.3)]">
+                        <div className="w-10 h-10 rounded-xl bg-[rgba(56,182,255,0.2)] text-(--vb-blue-dark) dark:text-(--vb-blue-bright) flex items-center justify-center shrink-0 border border-[rgba(56,182,255,0.3)]">
                             <Building2 size={20} />
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] uppercase font-bold text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] tracking-wider">Filtered View Active</span>
+                                <span className="text-[10px] uppercase font-bold text-(--vb-blue-dark) dark:text-(--vb-blue-bright) tracking-wider">Filtered View Active</span>
                                 <span className="text-xs text-slate-400 font-mono">({selectedCompany.organizationId || selectedCompany.organization?.organizationId || "N/A"})</span>
                             </div>
                             <p className="text-sm font-extrabold text-slate-900 dark:text-white">
-                                Showing cards & graphs for <span className="text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)] underline">{selectedCompany.organization?.organizationName || selectedCompany.fullName}</span>
+                                Showing cards & graphs for <span className="text-(--vb-blue-dark) dark:text-(--vb-blue-bright) underline">{selectedCompany.organization?.organizationName || selectedCompany.fullName}</span>
                             </p>
                         </div>
                     </div>
@@ -761,24 +760,6 @@ function DashboardContent() {
                 </motion.div>
             )}
 
-            <div className="pt-2">
-                <button
-                    type="button"
-                    onClick={() => setShowAnalytics((v) => !v)}
-                    className="w-full flex items-center justify-between rounded-2xl border border-border bg-surface/40 px-4 py-3 text-left hover:bg-surface-2 transition-colors"
-                >
-                    <div>
-                        <p className="text-sm font-semibold text-foreground">Document analytics</p>
-                        <p className="text-xs text-foreground-muted">
-                            Upload trends, department breakdown, and insights
-                        </p>
-                    </div>
-                    <span className="text-xs font-medium text-accent">{showAnalytics ? "Hide" : "Show"}</span>
-                </button>
-            </div>
-
-            {showAnalytics && (
-                <>
             <DashboardStats stats={data.stats} />
 
             <DashboardCharts
@@ -797,8 +778,6 @@ function DashboardContent() {
                 loading={loading}
                 isAdminView={isAdminView}
             />
-                </>
-            )}
 
             <motion.div variants={stagger} initial="hidden" animate="show">
                 <h3 className="text-sm font-bold text-slate-800 mb-4">Quick Actions</h3>
@@ -810,7 +789,7 @@ function DashboardContent() {
                             title: "Documents",
                             desc: "Upload, manage, and search files",
                             gradient: "from-[rgba(56,182,255,0.08)] to-blue-600",
-                            shadow: "shadow-[var(--vb-glow)]",
+                            shadow: "shadow-(--vb-glow)",
                             allow: true,
                         },
                         {
@@ -819,7 +798,7 @@ function DashboardContent() {
                             title: "AI Workspaces",
                             desc: "Insights and chat per Finance, HR, Legal, and more",
                             gradient: "from-blue-500 to-[rgba(63,116,255,0.06)]",
-                            shadow: "shadow-[var(--vb-glow)]",
+                            shadow: "shadow-(--vb-glow)",
                             allow: canAccessPage("chat"),
                         },
                         {
@@ -840,14 +819,14 @@ function DashboardContent() {
                                     <item.icon size={22} className="text-white" />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-bold text-slate-800 group-hover:text-[var(--vb-blue-dark)] transition-colors">
+                                    <p className="text-sm font-bold text-slate-800 group-hover:text-(--vb-blue-dark) transition-colors">
                                         {item.title}
                                     </p>
                                     <p className="text-xs text-slate-500 mt-0.5">{item.desc}</p>
                                 </div>
                                 <ArrowRight
                                     size={16}
-                                    className="text-slate-300 group-hover:text-[var(--vb-blue)] group-hover:translate-x-1 transition-all shrink-0"
+                                    className="text-slate-300 group-hover:text-(--vb-blue) group-hover:translate-x-1 transition-all shrink-0"
                                 />
                             </Link>
                         </motion.div>

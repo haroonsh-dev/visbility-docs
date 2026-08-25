@@ -102,15 +102,26 @@ def reconcile_resume_transcript_classification(
     text: str,
     filename: str = "",
 ) -> dict:
-    """Correct common LLM/heuristic confusion between CV and academic transcript."""
+    """Correct common LLM/heuristic confusion between CV and academic transcript / invoice."""
     if not result:
         return result
 
-    doc_type = str(result.get("document_type", "")).lower()
-    if doc_type not in ("resume", "transcript", "cv"):
-        if doc_type == "cv":
-            result["document_type"] = "resume"
-            result["agent_type"] = "hr_agent"
+    doc_type = str(result.get("document_type", "")).lower().replace(" ", "_")
+    if doc_type == "cv":
+        result["document_type"] = "resume"
+        result["agent_type"] = "hr_agent"
+        doc_type = "resume"
+
+    # Filename wins for clear CV/resume names (stops OCR junk → false "invoice")
+    if filename_suggests_resume(filename) and doc_type not in ("resume",):
+        result["document_type"] = "resume"
+        result["agent_type"] = "hr_agent"
+        result["reasoning"] = (
+            f"{result.get('reasoning', '')} [Adjusted: filename indicates CV/resume, not {doc_type or 'other'}.]"
+        ).strip()
+        doc_type = "resume"
+
+    if doc_type not in ("resume", "transcript"):
         return result
 
     resume_score, transcript_score = score_resume_vs_transcript(text, filename)

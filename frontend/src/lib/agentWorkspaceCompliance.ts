@@ -1,6 +1,10 @@
 import type { ChatVisualSpec, ComplianceAnalyticsCoverage } from "@/types/chatVisuals";
 import type { PortfolioFile } from "@/lib/agentWorkspaceKpis";
-import type { WorkspaceCoverage, WorkspaceMetrics } from "@/lib/agentWorkspaceInsights";
+import {
+    getSkippedDocumentIds,
+    type WorkspaceCoverage,
+    type WorkspaceMetrics,
+} from "@/lib/agentWorkspaceInsights";
 import type { AgentVaultDoc } from "@/hooks/useAgentPortfolio";
 import { docTypeLabel, inferDocTypeFromFilename } from "@/lib/documentAgents";
 
@@ -23,6 +27,8 @@ export type CompPriority = {
     tone: "warn" | "info";
     prompt?: string;
     chartView?: string;
+    documentIds?: string[];
+    approveKind?: "shortlist" | "reprocess";
 };
 
 export type ComplianceSnapshot = {
@@ -289,12 +295,15 @@ export function deriveComplianceSnapshot(
         });
     }
     if (metrics.skippedDocs > 0) {
+        const skippedIds = getSkippedDocumentIds(coverage);
         priorities.push({
             id: "fix",
             title: `${metrics.skippedDocs} file${metrics.skippedDocs === 1 ? "" : "s"} not in charts`,
-            detail: "Reprocess so expiry, findings, and status fields populate.",
+            detail: "Approve to reprocess so expiry, findings, and status fields populate.",
             tone: "warn",
-            prompt: "Why are some compliance files not in charts?",
+            documentIds: skippedIds.length ? skippedIds : undefined,
+            approveKind: skippedIds.length ? "reprocess" : undefined,
+            prompt: skippedIds.length ? undefined : "Why are some compliance files not in charts?",
         });
     }
     if (priorities.length === 0 && metrics.totalDocs > 0) {

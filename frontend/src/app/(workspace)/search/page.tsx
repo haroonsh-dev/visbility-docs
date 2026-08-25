@@ -160,7 +160,7 @@ function SearchContent() {
                                                         {title}
                                                     </p>
                                                     {pct && (
-                                                        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] border-[rgba(56,182,255,0.28)]">
+                                                        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border-[rgba(56,182,255,0.28)]">
                                                             {pct}
                                                         </span>
                                                     )}

@@ -90,7 +90,7 @@ export default function ClassifyAgentPopup({
                     <div className="flex items-center gap-2">
                         <h3 className="text-lg font-bold text-foreground">Classification result</h3>
                         {queueLen > 1 && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-bright)]">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-[rgba(56,182,255,0.2)] text-(--vb-blue-bright)">
                                 1 of {queueLen}
                             </span>
                         )}
@@ -101,7 +101,7 @@ export default function ClassifyAgentPopup({
                 </div>
 
                 <div className="rounded-xl p-4 bg-[rgba(56,182,255,0.1)] border border-[rgba(56,182,255,0.2)]">
-                    <p className="text-xs font-semibold text-[var(--vb-blue-bright)] uppercase tracking-wider">Detected type</p>
+                    <p className="text-xs font-semibold text-(--vb-blue-bright) uppercase tracking-wider">Detected type</p>
                     <p className="text-lg font-bold text-foreground mt-1">{typeLabel}</p>
                     <p className="text-xs text-foreground-muted mt-1">
                         Required agent: {agentLabel(naturalAgent)}

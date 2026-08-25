@@ -94,7 +94,11 @@ type Props = {
     hrShortlistApprovingId?: string | null;
     onRefresh?: () => void;
     onApproveShortlist?: (documentIds: string[]) => void | Promise<void>;
+    /** Approve Action Center items that reprocess extraction gaps (all agents). */
+    onApproveReprocess?: (documentIds: string[]) => void | Promise<void>;
+    skippedDocumentIds?: string[];
     shortlistApproving?: boolean;
+    actionApproving?: boolean;
     shortlistNote?: HrShortlistNote | null;
     onDismissShortlistNote?: () => void;
     onSyncConnection?: (connectionId: string) => void;
@@ -136,14 +140,14 @@ function IntelligenceRail({
     pendingActions,
     onRecommend,
     onAction,
-    shortlistApproving,
+    actionApproving,
 }: {
     verdict: ReturnType<typeof deriveAgentVerdict>;
     accent: string;
     pendingActions: PendingAction[];
     onRecommend: (rec: AgentRecommendation) => void;
     onAction: (action: PendingAction) => void;
-    shortlistApproving?: boolean;
+    actionApproving?: boolean;
 }) {
     const vStyle = VERDICT_STYLES[verdict.status];
     const VerdictIcon = vStyle.icon;
@@ -203,9 +207,13 @@ function IntelligenceRail({
                     </div>
                     <div className="divide-y divide-border">
                         {pendingActions.slice(0, 4).map((action) => {
-                            const isShortlistAction =
-                                action.actionLabel === "Approve" && (action.documentIds?.length ?? 0) > 0;
-                            const disabled = Boolean(shortlistApproving && isShortlistAction);
+                            const isExecutableApprove =
+                                action.actionLabel === "Approve" &&
+                                (action.approveKind === "shortlist" || action.approveKind === "reprocess") &&
+                                (action.documentIds?.length ?? 0) > 0;
+                            const disabled = Boolean(actionApproving && isExecutableApprove);
+                            const busyLabel =
+                                action.approveKind === "reprocess" ? "Queuing…" : "Adding…";
                             return (
                             <div key={action.id} className="px-4 py-3 flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
@@ -223,7 +231,7 @@ function IntelligenceRail({
                                         ACTION_BTN[action.actionLabel]
                                     )}
                                 >
-                                    {disabled ? "Adding…" : action.actionLabel}
+                                    {disabled ? busyLabel : action.actionLabel}
                                 </button>
                             </div>
                             );
@@ -267,7 +275,10 @@ export default function AgentCommandDashboard({
     hrShortlistApprovingId,
     onRefresh,
     onApproveShortlist,
+    onApproveReprocess,
+    skippedDocumentIds,
     shortlistApproving,
+    actionApproving,
     shortlistNote,
     onDismissShortlistNote,
     onSyncConnection,
@@ -279,9 +290,14 @@ export default function AgentCommandDashboard({
     );
 
     const pendingActions = useMemo(
-        () => derivePendingActions(agentId, metrics, attention, priorities, integrations),
-        [agentId, metrics, attention, priorities, integrations]
+        () =>
+            derivePendingActions(agentId, metrics, attention, priorities, integrations, {
+                skippedDocumentIds,
+            }),
+        [agentId, metrics, attention, priorities, integrations, skippedDocumentIds]
     );
+
+    const railApproving = Boolean(actionApproving || shortlistApproving);
 
     const quickAsks = AGENT_QUICK_ASKS[agentId] || [];
     const updatedLabel = formatUpdated(lastUpdated);
@@ -319,14 +335,20 @@ export default function AgentCommandDashboard({
             onOpenFix();
             return;
         }
-        // Shortlist / Approve = add CV(s) to ranked shortlist (HR), not navigate away
-        if (
-            action.actionLabel === "Approve" &&
-            action.documentIds?.length &&
-            onApproveShortlist
-        ) {
-            void onApproveShortlist(action.documentIds);
-            return;
+        if (action.actionLabel === "Approve" && action.documentIds?.length) {
+            if (action.approveKind === "shortlist" && onApproveShortlist) {
+                void onApproveShortlist(action.documentIds);
+                return;
+            }
+            if (action.approveKind === "reprocess" && onApproveReprocess) {
+                void onApproveReprocess(action.documentIds);
+                return;
+            }
+            // Legacy HR shortlist actions without approveKind
+            if (!action.approveKind && onApproveShortlist) {
+                void onApproveShortlist(action.documentIds);
+                return;
+            }
         }
         if (action.actionLabel === "Approve" || action.actionLabel === "Run" || action.actionLabel === "Shortlist") {
             if (action.prompt) {
@@ -604,7 +626,7 @@ export default function AgentCommandDashboard({
                             pendingActions={pendingActions}
                             onRecommend={handleRecommend}
                             onAction={handleAction}
-                            shortlistApproving={shortlistApproving}
+                            actionApproving={railApproving}
                         />
                     </div>
 
@@ -671,7 +693,7 @@ export default function AgentCommandDashboard({
                             pendingActions={pendingActions}
                             onRecommend={handleRecommend}
                             onAction={handleAction}
-                            shortlistApproving={shortlistApproving}
+                            actionApproving={railApproving}
                         />
                     </div>
                 </div>

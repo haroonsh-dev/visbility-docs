@@ -242,7 +242,7 @@ export default function DashboardInsights({
                     </div>
                     <Link
                         href="/documents"
-                        className="text-xs font-semibold text-[var(--vb-blue-dark)] hover:text-[var(--vb-blue-dark)] inline-flex items-center gap-1"
+                        className="text-xs font-semibold text-(--vb-blue-dark) hover:text-(--vb-blue-dark) inline-flex items-center gap-1"
                     >
                         View all <ArrowRight size={12} />
                     </Link>
@@ -266,7 +266,7 @@ export default function DashboardInsights({
                                     href={`/documents/details?doc=${doc.documentId}`}
                                     className="flex items-center gap-3 min-w-0 flex-1"
                                 >
-                                    <div className="h-9 w-9 rounded-xl bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] flex items-center justify-center shrink-0">
+                                    <div className="h-9 w-9 rounded-xl bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) flex items-center justify-center shrink-0">
                                         <FileText size={15} />
                                     </div>
                                     <div className="min-w-0 flex-1">

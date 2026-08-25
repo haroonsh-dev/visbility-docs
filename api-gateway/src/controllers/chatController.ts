@@ -34,7 +34,8 @@ import { tryFinanceDynamicAgent } from '../services/financeIntentRouter';
 import { tryLegalDynamicAgent } from '../services/legalIntentRouter';
 import { tryProcurementDynamicAgent } from '../services/procurementIntentRouter';
 import { tryOtherDynamicAgent } from '../services/otherIntentRouter';
-import { tryClickUpTaskCommand } from '../services/clickupChatActionService';
+import { tryIntegrationTaskCommand } from '../services/integrationTaskChatService';
+import { tryIntegrationTaskPlaybookCommand } from '../services/integrationTaskPlaybookService';
 import { tryStructuredRecordCommand } from '../services/structuredRecordChatService';
 import { getAgentAnalyticsDashboard, tryAgentChatVisual } from '../services/agentChatVisualService';
 import { filterDocumentIdsForAgent } from '../services/dynamicAnalyticsEngine';
@@ -304,21 +305,22 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                         [];
                 }
 
-                const clickUpTask = await tryClickUpTaskCommand({
+                const integrationPlaybook = await tryIntegrationTaskPlaybookCommand({
                     user: req.user,
                     question: message,
                     phase3Agent,
+                    sessionId,
                 });
-                if (clickUpTask.handled && clickUpTask.answer) {
+                if (integrationPlaybook.handled && integrationPlaybook.answer) {
                     let persistedSessionId = sessionId;
                     try {
                         const appended = await appendChatExchange({
                             organizationId: orgIdEarly,
                             question: message,
-                            answer: clickUpTask.answer,
+                            answer: integrationPlaybook.answer,
                             sessionId,
                             userId: req.user.userId,
-                            sources: (clickUpTask.citations || []).map((c) => ({
+                            sources: (integrationPlaybook.citations || []).map((c) => ({
                                 document_id: c.documentId,
                                 document_title: c.filename,
                                 phase3_agent: c.phase3Agent,
@@ -329,14 +331,14 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     } catch (appendErr: unknown) {
                         const err = appendErr as { message?: string };
                         logger.warn(
-                            `ClickUp task reply ok but append-exchange failed: ${err?.message || appendErr}`
+                            `Integration playbook reply ok but append-exchange failed: ${err?.message || appendErr}`
                         );
                     }
-                    const clickUpFocus = (clickUpTask.citations || [])
+                    const playbookFocus = (integrationPlaybook.citations || [])
                         .map((c) => c.documentId)
                         .filter(Boolean) as string[];
-                    if (clickUpFocus.length) {
-                        setSessionFocusDocumentIds(persistedSessionId, clickUpFocus, {
+                    if (playbookFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, playbookFocus, {
                             organizationId: orgIdEarly,
                             userId: req.user.userId,
                         });
@@ -344,13 +346,66 @@ export const chatWithDocuments = async (req: Request, res: Response, next: NextF
                     return res.json({
                         success: true,
                         data: {
-                            reply: clickUpTask.answer,
-                            citations: clickUpTask.citations || [],
+                            reply: integrationPlaybook.answer,
+                            citations: integrationPlaybook.citations || [],
                             sessionId: persistedSessionId,
                             chatScope,
-                            model: 'clickup-task-query',
+                            model: 'integration-task-playbook',
                             agentId: phase3Agent || 'other_agent',
-                            documentCount: (clickUpTask.citations || []).length,
+                            documentCount: (integrationPlaybook.citations || []).length,
+                            contentKind: 'record',
+                        },
+                    });
+                }
+
+                const integrationTask = await tryIntegrationTaskCommand({
+                    user: req.user,
+                    question: message,
+                    phase3Agent,
+                    focusDocumentIds,
+                });
+                if (integrationTask.handled && integrationTask.answer) {
+                    let persistedSessionId = sessionId;
+                    try {
+                        const appended = await appendChatExchange({
+                            organizationId: orgIdEarly,
+                            question: message,
+                            answer: integrationTask.answer,
+                            sessionId,
+                            userId: req.user.userId,
+                            sources: (integrationTask.citations || []).map((c) => ({
+                                document_id: c.documentId,
+                                document_title: c.filename,
+                                phase3_agent: c.phase3Agent,
+                                document_type: c.documentType,
+                            })),
+                        });
+                        persistedSessionId = appended.session_id || sessionId;
+                    } catch (appendErr: unknown) {
+                        const err = appendErr as { message?: string };
+                        logger.warn(
+                            `Integration task reply ok but append-exchange failed: ${err?.message || appendErr}`
+                        );
+                    }
+                    const taskFocus = (integrationTask.citations || [])
+                        .map((c) => c.documentId)
+                        .filter(Boolean) as string[];
+                    if (taskFocus.length) {
+                        setSessionFocusDocumentIds(persistedSessionId, taskFocus, {
+                            organizationId: orgIdEarly,
+                            userId: req.user.userId,
+                        });
+                    }
+                    return res.json({
+                        success: true,
+                        data: {
+                            reply: integrationTask.answer,
+                            citations: integrationTask.citations || [],
+                            sessionId: persistedSessionId,
+                            chatScope,
+                            model: 'integration-task-query',
+                            agentId: phase3Agent || 'other_agent',
+                            documentCount: (integrationTask.citations || []).length,
                             contentKind: 'record',
                         },
                     });

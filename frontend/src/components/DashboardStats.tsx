@@ -37,7 +37,7 @@ type DashboardStatsProps = {
 
 export default function DashboardStats({ stats }: DashboardStatsProps) {
     const cards: StatCard[] = [
-        { label: "Total Documents", value: stats?.total ?? 0, icon: FileText, accent: "blue", iconBg: "bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)]", iconColor: "text-[var(--vb-blue-dark)]" },
+        { label: "Total Documents", value: stats?.total ?? 0, icon: FileText, accent: "blue", iconBg: "bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)]", iconColor: "text-(--vb-blue-dark)" },
         { label: "Processed", value: stats?.processed ?? 0, icon: CheckCircle, accent: "emerald", iconBg: "bg-linear-to-br from-emerald-50 to-green-50", iconColor: "text-emerald-600" },
         { label: "Processing", value: stats?.processing ?? 0, icon: Clock, accent: "amber", iconBg: "bg-linear-to-br from-amber-50 to-orange-50", iconColor: "text-amber-600" },
         { label: "Failed", value: stats?.failed ?? 0, icon: AlertTriangle, accent: "rose", iconBg: "bg-linear-to-br from-rose-50 to-red-50", iconColor: "text-rose-600" },
@@ -60,8 +60,8 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
                                 <Icon size={22} />
                             </div>
                             <div className="min-w-0">
-                                <p className="text-[11px] text-[var(--vb-muted)] font-semibold uppercase tracking-[0.14em]">{card.label}</p>
-                                <p className="text-2xl font-bold tracking-tight text-[var(--vb-ink)] mt-1">
+                                <p className="text-[11px] text-(--vb-muted) font-semibold uppercase tracking-[0.14em]">{card.label}</p>
+                                <p className="text-2xl font-bold tracking-tight text-(--vb-ink) mt-1">
                                     {typeof card.value === "number" ? <AnimatedNumber value={card.value} /> : card.value}
                                 </p>
                             </div>

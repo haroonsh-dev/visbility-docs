@@ -575,7 +575,7 @@ export default function SuperAdminPlansPage() {
                         type="button"
                         onClick={() => setTab(t)}
                         className={`relative px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
-                            tab === t ? "text-[var(--vb-blue-dark)]" : "text-slate-500 hover:text-slate-700"
+                            tab === t ? "text-(--vb-blue-dark)" : "text-slate-500 hover:text-slate-700"
                         }`}
                     >
                         {TAB_META[t]}
@@ -583,7 +583,7 @@ export default function SuperAdminPlansPage() {
                             <span className="ml-1.5 text-[10px] font-bold text-rose-600">{pendingCount}</span>
                         )}
                         {tab === t && (
-                            <span className="absolute left-4 right-4 -bottom-px h-0.5 bg-[var(--vb-blue)] rounded-full" />
+                            <span className="absolute left-4 right-4 -bottom-px h-0.5 bg-(--vb-blue) rounded-full" />
                         )}
                     </button>
                 ))}
@@ -672,7 +672,7 @@ export default function SuperAdminPlansPage() {
                                                 }}
                                                 className={`px-2.5 py-1 rounded-lg text-[11px] border transition-colors ${
                                                     on
-                                                        ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-[var(--vb-blue-dark)]"
+                                                        ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-(--vb-blue-dark)"
                                                         : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
                                                 }`}
                                             >
@@ -1008,13 +1008,13 @@ export default function SuperAdminPlansPage() {
                                     type="button"
                                     onClick={() => setSubFilter(f)}
                                     className={`relative px-3 py-2 text-xs font-medium capitalize whitespace-nowrap ${
-                                        subFilter === f ? "text-[var(--vb-blue-dark)]" : "text-slate-500 hover:text-slate-700"
+                                        subFilter === f ? "text-(--vb-blue-dark)" : "text-slate-500 hover:text-slate-700"
                                     }`}
                                 >
                                     {f}
                                     <span className="ml-1 text-slate-400">{count}</span>
                                     {subFilter === f && (
-                                        <span className="absolute left-3 right-3 -bottom-px h-0.5 bg-[var(--vb-blue)] rounded-full" />
+                                        <span className="absolute left-3 right-3 -bottom-px h-0.5 bg-(--vb-blue) rounded-full" />
                                     )}
                                 </button>
                             );
@@ -1197,7 +1197,7 @@ export default function SuperAdminPlansPage() {
                                                     }}
                                                     className={`px-2.5 py-1 rounded-full text-[11px] border ${
                                                         on
-                                                            ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-[var(--vb-blue-dark)]"
+                                                            ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-(--vb-blue-dark)"
                                                             : "bg-white border-slate-200 text-slate-500"
                                                     }`}
                                                 >
@@ -1345,7 +1345,7 @@ export default function SuperAdminPlansPage() {
                                                             }}
                                                             className={`px-2.5 py-1 rounded-full text-[11px] border ${
                                                                 on
-                                                                    ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-[var(--vb-blue-dark)]"
+                                                                    ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-(--vb-blue-dark)"
                                                                     : "bg-white border-slate-200 text-slate-500"
                                                             }`}
                                                         >
@@ -1496,7 +1496,7 @@ export default function SuperAdminPlansPage() {
                                                     }}
                                                     className={`px-2.5 py-1 rounded-full text-[11px] border ${
                                                         on
-                                                            ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-[var(--vb-blue-dark)]"
+                                                            ? "bg-[rgba(56,182,255,0.1)] border-[rgba(56,182,255,0.28)] text-(--vb-blue-dark)"
                                                             : "bg-white border-slate-200 text-slate-500"
                                                     }`}
                                                 >

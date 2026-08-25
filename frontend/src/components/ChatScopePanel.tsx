@@ -350,7 +350,7 @@ export default function ChatScopePanel({
                                                 onChange={() => toggleFolder(agentDocs)}
                                             />
                                         ) : null}
-                                        <Folder size={13} className="text-[var(--vb-blue-bright)] shrink-0" />
+                                        <Folder size={13} className="text-(--vb-blue-bright) shrink-0" />
                                         <span className="flex-1 truncate">{agentLabel(agent)}</span>
                                         <span className={`text-[10px] font-semibold ${textMuted}`}>
                                             {agentDocs.length}
@@ -423,7 +423,7 @@ export default function ChatScopePanel({
                                                                         checked ? (
                                                                             <CheckSquare
                                                                                 size={14}
-                                                                                className="text-[var(--vb-blue-bright)] shrink-0 mt-0.5"
+                                                                                className="text-(--vb-blue-bright) shrink-0 mt-0.5"
                                                                             />
                                                                         ) : (
                                                                             <Square

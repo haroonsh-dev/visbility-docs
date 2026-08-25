@@ -39,8 +39,10 @@ import { type AgentWorkspaceMeta } from "@/lib/agentWorkspace";
 import {
     deriveAttentionItems,
     deriveWorkspaceMetrics,
+    getSkippedDocumentIds,
     getSkippedFiles,
 } from "@/lib/agentWorkspaceInsights";
+import { reprocessDocuments } from "@/lib/documentReprocess";
 import {
     deriveSpotlightKpis,
     mergePortfolioFiles,
@@ -53,7 +55,7 @@ import type { WorkspaceIntegration } from "@/lib/integrationConnections";
 import AgentConnectedSystemsPanel from "@/components/AgentConnectedSystemsPanel";
 import AgentCommandDashboard from "@/components/AgentCommandDashboard";
 import { deriveHrWorkforceSnapshot } from "@/lib/agentWorkspaceHr";
-import { useHrShortlist } from "@/hooks/useHrShortlist";
+import { useHrShortlist, type HrShortlistNote } from "@/hooks/useHrShortlist";
 import { deriveProcurementSnapshot } from "@/lib/agentWorkspaceProcurement";
 import { deriveComplianceSnapshot } from "@/lib/agentWorkspaceCompliance";
 import { deriveFinanceSnapshot } from "@/lib/agentWorkspaceFinance";
@@ -165,8 +167,15 @@ export default function AgentWorkspaceShell({
         [agentId, coverage, metrics.totalDocs, documentCount]
     );
     const skippedFiles = useMemo(() => getSkippedFiles(coverage), [coverage]);
+    const skippedDocumentIds = useMemo(() => {
+        const fromCoverage = getSkippedDocumentIds(coverage);
+        if (fromCoverage.length) return fromCoverage;
+        return portfolio.filter((f) => !f.inCharts).map((f) => f.documentId).filter(Boolean);
+    }, [coverage, portfolio]);
     const plainSummary = summary.replace(/\*\*/g, "").trim();
     const fixCount = metrics.skippedDocs;
+    const [actionApproving, setActionApproving] = useState(false);
+    const [actionNote, setActionNote] = useState<HrShortlistNote | null>(null);
     const pulse = useMemo(
         () =>
             deriveWorkspacePulse(agentId, metrics, portfolio, visuals.length, integrations),
@@ -262,6 +271,41 @@ export default function AgentWorkspaceShell({
         onRefresh();
     };
 
+    const handleApproveReprocess = async (documentIds: string[]) => {
+        const ids = [...new Set(documentIds.map(String).filter(Boolean))];
+        if (!ids.length || actionApproving) return;
+        setActionApproving(true);
+        setActionNote(null);
+        try {
+            const result = await reprocessDocuments(ids);
+            const queued = result.queued.length;
+            const failed = result.failed.length;
+            if (queued > 0) {
+                setActionNote({
+                    tone: failed > 0 ? "err" : "ok",
+                    text:
+                        failed > 0
+                            ? `Queued reprocess for ${queued} file${queued === 1 ? "" : "s"} (${failed} failed). Refresh charts when processing finishes.`
+                            : `Approved — reprocessing ${queued} file${queued === 1 ? "" : "s"}. Refresh charts when processing finishes.`,
+                });
+            } else {
+                setActionNote({
+                    tone: "err",
+                    text: result.failed[0]?.message || "Could not queue reprocess.",
+                });
+            }
+            void refreshPortfolio();
+            onRefresh();
+        } catch (e: unknown) {
+            setActionNote({
+                tone: "err",
+                text: e instanceof Error ? e.message : "Reprocess failed",
+            });
+        } finally {
+            setActionApproving(false);
+        }
+    };
+
     const openChartView = (viewId: string) => {
         onViewChange(viewId as AnalyticsPanelView);
         setTab("charts");
@@ -343,9 +387,17 @@ export default function AgentWorkspaceShell({
             onOpenAnalytics={() => setTab("charts")}
             onRefresh={handleRefresh}
             onApproveShortlist={agentId === "hr_agent" ? handleApproveShortlist : undefined}
+            onApproveReprocess={handleApproveReprocess}
+            skippedDocumentIds={skippedDocumentIds}
             shortlistApproving={agentId === "hr_agent" ? hrShortlistApproving : false}
-            shortlistNote={agentId === "hr_agent" ? hrShortlistNote : null}
-            onDismissShortlistNote={agentId === "hr_agent" ? clearHrShortlistNote : undefined}
+            actionApproving={actionApproving}
+            shortlistNote={
+                agentId === "hr_agent" ? hrShortlistNote || actionNote : actionNote
+            }
+            onDismissShortlistNote={() => {
+                setActionNote(null);
+                if (agentId === "hr_agent") clearHrShortlistNote();
+            }}
             onSyncConnection={onSyncIntegration ? handleIntegrationSync : undefined}
             footer={renderConnectedSystems()}
             hrShortlist={agentId === "hr_agent" ? hrShortlist : undefined}

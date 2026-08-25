@@ -64,7 +64,7 @@ const ROLE_PAGE_LABELS: { key: string; label: string; hint: string }[] = [
     { key: "page.departments", label: "Department pages", hint: "Department overview under Documents" },
     { key: "page.plans", label: "Subscriptions & Billing", hint: "Subscription and plans page" },
     { key: "page.email_reports", label: "Automated Reports", hint: "Scheduled email report settings" },
-    { key: "page.integrations", label: "API & Webhooks", hint: "Third-party integrations page" },
+    { key: "page.integrations", label: "Integrations", hint: "Third-party integrations page" },
     { key: "page.settings", label: "AI Engine Config", hint: "AI configuration and settings page" },
 ];
 
@@ -1242,7 +1242,7 @@ function DepartmentsAdminContent() {
                                             "bg-emerald-500/20 text-emerald-400",
                                             "bg-amber-500/20 text-amber-400",
                                             "bg-violet-500/20 text-violet-400",
-                                            "bg-blue-500/20 text-[var(--vb-blue-bright)]",
+                                            "bg-blue-500/20 text-(--vb-blue-bright)",
                                         ];
                                         let hash = 0;
                                         for (let i = 0; i < m.fullName.length; i++) hash = m.fullName.charCodeAt(i) + ((hash << 5) - hash);

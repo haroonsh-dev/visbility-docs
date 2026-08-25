@@ -92,7 +92,7 @@ const AVATAR_COLORS = [
     "bg-emerald-500/20 text-emerald-400",
     "bg-amber-500/20 text-amber-400",
     "bg-violet-500/20 text-violet-400",
-    "bg-blue-500/20 text-[var(--vb-blue-bright)]",
+    "bg-blue-500/20 text-(--vb-blue-bright)",
     "bg-pink-500/20 text-pink-400",
     "bg-lime-500/20 text-lime-400",
 ];
@@ -634,9 +634,9 @@ function AdminsContent() {
                                                     <button
                                                         type="button"
                                                         onClick={() => openGroqModal(a.organization!.organizationId, a.organization!.organizationName, a.organization!.groqApiKeyMasked)}
-                                                        className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 hover:border-[rgba(56,182,255,0.5)] hover:text-[var(--vb-blue-bright)]"
+                                                        className="btn-secondary rounded-lg px-3 py-2 text-sm min-h-10 inline-flex items-center gap-1.5 hover:border-[rgba(56,182,255,0.5)] hover:text-(--vb-blue-bright)"
                                                     >
-                                                        <KeyRound size={14} className="text-[var(--vb-blue-bright)]" /> Groq Key
+                                                        <KeyRound size={14} className="text-(--vb-blue-bright)" /> Groq Key
                                                     </button>
                                                 )}
                                                 <button
@@ -801,7 +801,7 @@ function AdminsContent() {
                             <div className="relative px-6 pt-5 pb-4 border-b border-border bg-linear-to-r from-[rgba(56,182,255,0.08)] via-[rgba(56,182,255,0.04)] to-transparent">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
+                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-(--vb-blue-dark) border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
                                             <Shield size={18} />
                                         </div>
                                         <div className="min-w-0">
@@ -970,7 +970,7 @@ function AdminsContent() {
                             <div className="relative px-6 pt-5 pb-4 border-b border-border bg-linear-to-r from-[rgba(56,182,255,0.08)] via-[rgba(56,182,255,0.04)] to-transparent">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
+                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-(--vb-blue-dark) border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
                                             <Pencil size={18} />
                                         </div>
                                         <div className="min-w-0">
@@ -1138,7 +1138,7 @@ function AdminsContent() {
                             <div className="relative px-6 pt-5 pb-4 border-b border-border bg-linear-to-r from-[rgba(56,182,255,0.1)] via-[rgba(56,182,255,0.05)] to-transparent">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-[var(--vb-blue)] border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
+                                        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-[rgba(56,182,255,0.2)] to-blue-600/10 text-(--vb-blue) border border-[rgba(56,182,255,0.2)] flex items-center justify-center shrink-0">
                                             <KeyRound size={20} />
                                         </div>
                                         <div className="min-w-0">
@@ -1195,7 +1195,7 @@ function AdminsContent() {
                                         autoComplete="off"
                                     />
                                     <p className="text-[11px] text-foreground-muted">
-                                        Enter a valid Groq API key (starts with <code className="font-mono text-[var(--vb-blue-bright)]">gsk_</code>).
+                                        Enter a valid Groq API key (starts with <code className="font-mono text-(--vb-blue-bright)">gsk_</code>).
                                     </p>
                                 </div>
 

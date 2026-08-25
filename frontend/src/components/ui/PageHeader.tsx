@@ -9,9 +9,9 @@ export function PageHeader({
     return (
         <div className={cn("flex flex-wrap items-end justify-between gap-4", className)}>
             <div className="min-w-0">
-                <h1 className="font-display text-xl font-bold tracking-tight text-[var(--vb-ink)]">{title}</h1>
+                <h1 className="font-display text-xl font-bold tracking-tight text-(--vb-ink)">{title}</h1>
                 {subtitle && (
-                    <p className="text-[13px] mt-1 text-[var(--vb-muted)] leading-relaxed">{subtitle}</p>
+                    <p className="text-[13px] mt-1 text-(--vb-muted) leading-relaxed">{subtitle}</p>
                 )}
             </div>
             {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}

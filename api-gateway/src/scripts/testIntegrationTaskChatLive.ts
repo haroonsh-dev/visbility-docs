@@ -1,16 +1,16 @@
 /**
- * Live DB smoke test for ClickUp task chat (requires .env + Mongo).
- * Run: npx tsx --tsconfig tsconfig.json src/scripts/testClickUpChatLive.ts
+ * Live DB smoke test for universal integration task chat (requires .env + Mongo).
+ * Run: npx tsx --tsconfig tsconfig.json src/scripts/testIntegrationTaskChatLive.ts
  */
 import dotenv from 'dotenv';
 import dbConnect from '../config/db';
 import User from '../models/User';
 import Document from '../models/Document';
 import {
-    tryClickUpTaskCommand,
-    loadClickUpTaskRows,
-    detectClickUpTaskAsk,
-} from '../services/clickupChatActionService';
+    tryIntegrationTaskCommand,
+    loadIntegrationTaskRows,
+    detectIntegrationTaskAsk,
+} from '../services/integrationTaskChatService';
 
 dotenv.config();
 
@@ -31,32 +31,33 @@ async function main() {
         permissions: user.permissions as Record<string, boolean>,
     };
 
-    const clickupDocCount = await Document.countDocuments({
+    const taskDocCount = await Document.countDocuments({
         organizationId: user.organizationId,
         status: 'ready',
         'metadata.ingestKind': 'structured_record',
         $or: [
+            { 'metadata.recordType': 'task' },
             { 'metadata.source': 'clickup' },
             { 'metadata.integrationExternalRef.clickupTaskId': { $exists: true, $ne: '' } },
         ],
     });
 
-    console.log(`ClickUp structured task records in org: ${clickupDocCount}`);
+    console.log(`Synced task records in org: ${taskDocCount}`);
 
-    const rows = await loadClickUpTaskRows(authUser, { limit: 5 });
-    console.log(`loadClickUpTaskRows sample: ${rows.length}`);
+    const rows = await loadIntegrationTaskRows(authUser, { limit: 5 });
+    console.log(`loadIntegrationTaskRows sample: ${rows.length}`);
     for (const r of rows.slice(0, 3)) {
         console.log(`  - ${r.name} | ${r.status} | ${r.assignees}`);
     }
 
     const questions = [
-        'check what are clickup task',
+        'show synced tasks',
         'Show ClickUp tasks and who is assigned',
     ];
 
     for (const q of questions) {
-        console.log(`\n--- Q: "${q}" (detect=${detectClickUpTaskAsk(q)}) ---`);
-        const res = await tryClickUpTaskCommand({
+        console.log(`\n--- Q: "${q}" (detect=${detectIntegrationTaskAsk(q)}) ---`);
+        const res = await tryIntegrationTaskCommand({
             user: authUser,
             question: q,
             phase3Agent: 'hr_agent',

@@ -27,7 +27,7 @@ const PAGE_TITLES: Record<string, string> = {
     "/plans": "Subscriptions & Billing",
     "/admin/documents": "Document Vault",
     "/admin/settings": "AI Engine Config",
-    "/admin/integrations": "API & Webhooks",
+    "/admin/integrations": "Integrations",
     "/admin/email-reports": "Automated Reports",
 };
 

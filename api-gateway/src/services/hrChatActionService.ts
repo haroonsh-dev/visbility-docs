@@ -511,15 +511,15 @@ function nameMatchesResume(query: string, filename: string, candidateName?: stri
     return false;
 }
 
-/** Person named in chat (not "top N"). */
-function parseCandidateNameFromMessage(question: string): string | null {
+/** Person named in chat (not "top N"). Supports "for / of / to Name". */
+export function parseCandidateNameFromMessage(question: string): string | null {
     if (hasExplicitTopN(question)) return null;
     const q = question.trim();
 
     const patterns = [
-        /(?:offer\s*letters?|offers?|experience\s*letters?)\s+for\s+(?!top\b)([^,\n]+?)(?:\s*[,.]|\s+company\b|\s+title\b|\s+salary\b|\s+join(?:ing)?\b|\s+from\b|\s+to\b|$)/i,
-        /(?:generate|create|make|draft)\s+(?:an?\s+)?(?:offer|experience)\s+(?:letter\s+)?for\s+(?!top\b)([^,\n]+?)(?:\s*[,.]|\s+company\b|\s+title\b|\s+salary\b|$)/i,
-        /\bfor\s+(?:candidate\s+)?(?!top\b)([A-Za-z][A-Za-z\s.'-]{1,70}?)(?:\s*[,.]|\s+company\b|\s+title\b|\s+salary\b|\s+join(?:ing)?\b|\s+from\b|\s+to\b|$)/i,
+        /(?:offer\s*letters?|offers?|experience\s*letters?)\s+(?:for|of|to)\s+(?!top\b)([^,\n]+?)(?:\s*[,.]|\s+company\b|\s+title\b|\s+salary\b|\s+join(?:ing)?\b|\s+from\b|\s+to\b|$)/i,
+        /(?:generate|create|make|draft)\s+(?:an?\s+)?(?:offer|experience)\s+(?:letter\s+)?(?:for|of|to)\s+(?!top\b)([^,\n]+?)(?:\s*[,.]|\s+company\b|\s+title\b|\s+salary\b|$)/i,
+        /\b(?:for|of)\s+(?:candidate\s+)?(?!top\b)([A-Za-z][A-Za-z\s.'-]{1,70}?)(?:\s*[,.]|\s+company\b|\s+title\b|\s+salary\b|\s+join(?:ing)?\b|\s+from\b|\s+to\b|$)/i,
     ];
 
     for (const re of patterns) {
@@ -537,6 +537,17 @@ function parseCandidateNameFromMessage(question: string): string | null {
     if (quoted?.[1]?.trim()) return quoted[1].trim();
 
     return null;
+}
+
+/** Bare "cv.pdf" / filename reply after HR asks which candidate. */
+export function parseResumeFilenameFromMessage(question: string): string | null {
+    const q = question.trim();
+    if (!q || q.length > 180) return null;
+    if (/\b(generate|create|draft|offer|experience|letter|company|salary|title)\b/i.test(q)) {
+        return null;
+    }
+    const m = q.match(/^["']?([^"'/\n]+\.(?:pdf|docx?))["']?$/i);
+    return m?.[1]?.trim() || null;
 }
 
 async function enrichResumeCandidateNames(
@@ -591,6 +602,28 @@ async function resolveLetterTargets(params: {
         };
     }
 
+    // User replied with just a filename (e.g. clicked "cv.pdf")
+    const bareFile = parseResumeFilenameFromMessage(question);
+    if (bareFile) {
+        const want = bareFile.toLowerCase();
+        const byName = pool.filter((r) => r.originalFilename.toLowerCase() === want);
+        if (byName.length === 1) {
+            return {
+                ok: true,
+                resumes: [byName[0]],
+                note: `**${byName[0].originalFilename}** (selected by filename)`,
+            };
+        }
+        const soft = pool.filter((r) => r.originalFilename.toLowerCase().includes(want.replace(/\.(pdf|docx?)$/i, '')));
+        if (soft.length === 1) {
+            return {
+                ok: true,
+                resumes: [soft[0]],
+                note: `**${soft[0].originalFilename}** (selected by filename)`,
+            };
+        }
+    }
+
     if (scopedIds?.length === 1) {
         const one = pool.find((r) => r.documentId === scopedIds[0]);
         if (one) {
@@ -627,9 +660,35 @@ async function resolveLetterTargets(params: {
                 ].join('\n'),
             };
         }
+
+        // Name may live on a joining letter / employee file while the CV is still "cv.pdf"
+        const relatedHit = await nameAppearsOnRelatedHrDoc(user, named, scopedIds);
+        if (relatedHit && pool.length === 1) {
+            return {
+                ok: true,
+                resumes: [pool[0]],
+                note: `**${named}** → **${pool[0].originalFilename}** (only CV in scope)`,
+            };
+        }
+        if (pool.length === 1) {
+            return {
+                ok: true,
+                resumes: [pool[0]],
+                note: `**${pool[0].originalFilename}** (only CV in scope — using for **${named}**)`,
+            };
+        }
+
+        const resumeLines = pool.slice(0, 8).map((r, i) => `${i + 1}. **${r.originalFilename}**`);
         return {
             ok: false,
-            message: `No resume in scope matches **${named}**. Select that person's CV in **Document scope**, then ask again.`,
+            message: [
+                `No resume filename/extracted name matches **${named}** yet${relatedHit ? ` (found related file **${relatedHit}**)` : ''}.`,
+                '',
+                'Pick one CV by filename, or narrow **Document scope** to one resume:',
+                ...resumeLines,
+                '',
+                'Tip: rename the CV to include the person (e.g. `Haroon_Shahid_CV.pdf`) or reprocess the resume so the candidate name is extracted.',
+            ].join('\n'),
         };
     }
 
@@ -645,9 +704,9 @@ async function resolveLetterTargets(params: {
         return {
             ok: false,
             message: [
-                `**${scopedIds.length}** resumes are in scope. I generate letters for **one person at a time**. Either:`,
+                `**${pool.length}** resumes are in scope (from ${scopedIds.length} files). I generate letters for **one person at a time**. Either:`,
                 '- Select **only that candidate CV** in Document scope, or',
-                '- Say their name: `Generate experience letter for Ahmed Khan. Company … title … from YYYY-MM-DD to YYYY-MM-DD`',
+                '- Say their name: `Generate offer letter for Ahmed Khan. Company … title … salary PKR … joining …`',
                 '',
                 'To generate for several people at once, say explicitly: `Generate experience letters for top 3. …`',
             ].join('\n'),
@@ -660,13 +719,26 @@ async function resolveLetterTargets(params: {
             'Name the candidate or narrow **Document scope** to one CV.',
             '',
             'Example:',
-            '`Generate experience letter for Sara Ali. Company Visibility Bots, title Software Engineer, from 2024-01-01 to 2026-08-01`',
+            '`Generate offer letter for Sara Ali. Company Visibility Bots, title Software Engineer, salary PKR 80000 monthly, joining 2026-09-01`',
             '',
-            'Or for an offer: `Generate offer letter for Sara Ali. Company … title … salary PKR … joining …`',
+            'Also works: `Generate offer letter of Sara Ali. …`',
             '',
             'Bulk by score: `Generate experience letters for top 3. Company … title … from … to …`',
         ].join('\n'),
     };
+}
+
+async function nameAppearsOnRelatedHrDoc(
+    user: AuthUser,
+    named: string,
+    scopedIds?: string[]
+): Promise<string | null> {
+    const filter = await buildDocumentFilter(user, {});
+    const query: Record<string, unknown> = { ...filter };
+    if (scopedIds?.length) query.documentId = { $in: scopedIds };
+    const docs = await Document.find(query).select('originalFilename').limit(80).lean();
+    const hit = docs.find((d) => nameMatchesResume(named, d.originalFilename || '', null));
+    return hit?.originalFilename || null;
 }
 
 const HR_NON_RESUME_TYPES = new Set([
@@ -880,20 +952,39 @@ function detectHrCommand(question: string, phase3Agent?: string): HrCommand {
 
     const wantsExperience =
         /\b(generate|create|make|draft)\b.*\b(experience\s*letters?|employment\s+certificate)\b/.test(q) ||
-        /\b(experience\s*letters?|employment\s+certificate)\b.*\b(generate|create|make|draft|for)\b/.test(q) ||
+        /\b(experience\s*letters?|employment\s+certificate)\b.*\b(generate|create|make|draft|for|of)\b/.test(q) ||
         (phase3Agent === HR_AGENT &&
             /\b(experience\s*letters?|employment\s+certificate)\b/.test(q) &&
-            /\bfor\b/.test(q) &&
+            /\b(for|of)\b/.test(q) &&
             !/\brelieving\s+letter\b/.test(q));
 
     const wantsOffer =
         !wantsExperience &&
         (/\b(generate|create|make|draft)\b.*\b(offer\s*letters?|offers?)\b/.test(q) ||
-            /\b(offer\s*letters?|offers?)\b.*\b(generate|create|make|draft|for)\b/.test(q) ||
+            /\b(offer\s*letters?|offers?)\b.*\b(generate|create|make|draft|for|of)\b/.test(q) ||
             (phase3Agent === HR_AGENT &&
                 /\boffer\s*letters?\b/.test(q) &&
-                /\bfor\b/.test(q) &&
+                /\b(for|of)\b/.test(q) &&
                 !/\bexperience\b/.test(q)));
+
+    // Follow-up: user tapped a CV filename (e.g. "cv.pdf") — treat as offer-letter target pick
+    if (
+        !wantsExperience &&
+        !wantsOffer &&
+        phase3Agent === HR_AGENT &&
+        parseResumeFilenameFromMessage(question) &&
+        /\b(cv|resume|curriculum|biodata)\b/i.test(question)
+    ) {
+        return 'generate_offer';
+    }
+    if (
+        !wantsExperience &&
+        !wantsOffer &&
+        phase3Agent === HR_AGENT &&
+        parseResumeFilenameFromMessage(question)
+    ) {
+        return 'generate_offer';
+    }
 
     const wantsList =
         /\b(list|show|give|top|best|rank|shortlist)\b/.test(q) &&

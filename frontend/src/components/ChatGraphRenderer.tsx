@@ -79,12 +79,12 @@ export default function ChatGraphRenderer({ chartData }: { chartData: ChartDataP
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/5">
                 <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-bright)] flex items-center justify-center border border-[rgba(56,182,255,0.3)]">
+                    <div className="w-7 h-7 rounded-lg bg-[rgba(56,182,255,0.2)] text-(--vb-blue-bright) flex items-center justify-center border border-[rgba(56,182,255,0.3)]">
                         <Icon size={14} />
                     </div>
                     <span className="text-xs font-bold tracking-wide text-white">{title}</span>
                 </div>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)] bg-[rgba(56,182,255,0.15)] px-2 py-0.5 rounded-full border border-[rgba(56,182,255,0.25)]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-(--vb-blue-bright) bg-[rgba(56,182,255,0.15)] px-2 py-0.5 rounded-full border border-[rgba(56,182,255,0.25)]">
                     {type === "pie" ? "Share Breakdown" : type === "area" || type === "line" ? "Trend Graph" : "Bar Graph"}
                 </span>
             </div>

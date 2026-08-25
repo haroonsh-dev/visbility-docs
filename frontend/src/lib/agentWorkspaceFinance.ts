@@ -1,6 +1,11 @@
 import type { ChatVisualSpec, FinanceAnalyticsCoverage } from "@/types/chatVisuals";
 import type { PortfolioFile } from "@/lib/agentWorkspaceKpis";
-import type { WorkspaceCoverage, WorkspaceMetrics } from "@/lib/agentWorkspaceInsights";
+import {
+    getMissingAmountDocumentIds,
+    getSkippedDocumentIds,
+    type WorkspaceCoverage,
+    type WorkspaceMetrics,
+} from "@/lib/agentWorkspaceInsights";
 import type { AgentVaultDoc } from "@/hooks/useAgentPortfolio";
 import { docTypeLabel, inferDocTypeFromFilename } from "@/lib/documentAgents";
 
@@ -23,6 +28,8 @@ export type FinPriority = {
     tone: "warn" | "info";
     prompt?: string;
     chartView?: string;
+    documentIds?: string[];
+    approveKind?: "shortlist" | "reprocess";
 };
 
 export type FinanceSnapshot = {
@@ -225,10 +232,14 @@ export function deriveFinanceSnapshot(
     const aging = agingStats(visuals);
     const currency = ap.currency;
 
+    const missingAmountIds = getMissingAmountDocumentIds(coverage);
+    const skippedIds = getSkippedDocumentIds(coverage);
     const missingAmountCount =
-        coverage && "documentsWithAmount" in coverage
-            ? Math.max(0, (coverage.documentsInScope || metrics.totalDocs) - (coverage.documentsWithAmount || 0))
-            : 0;
+        missingAmountIds.length > 0
+            ? missingAmountIds.length
+            : coverage && "documentsWithAmount" in coverage
+              ? Math.max(0, (coverage.documentsInScope || metrics.totalDocs) - (coverage.documentsWithAmount || 0))
+              : 0;
 
     const pillars: FinPillar[] = (Object.keys(PILLAR_META) as FinPillarId[]).map((id) => {
         const count = pillarCounts[id];
@@ -260,18 +271,24 @@ export function deriveFinanceSnapshot(
         priorities.push({
             id: "missing-amount",
             title: `${missingAmountCount} file${missingAmountCount === 1 ? "" : "s"} missing amounts`,
-            detail: "Reprocess invoices so vendor totals and aging charts populate.",
+            detail: "Approve to reprocess invoices so vendor totals and aging charts populate.",
             tone: "warn",
-            prompt: "Which invoices are missing total_amount in extraction?",
+            documentIds: missingAmountIds.length ? missingAmountIds : undefined,
+            approveKind: missingAmountIds.length ? "reprocess" : undefined,
+            prompt: missingAmountIds.length
+                ? undefined
+                : "Which invoices are missing total_amount in extraction?",
         });
     }
     if (metrics.skippedDocs > 0) {
         priorities.push({
             id: "fix",
             title: `${metrics.skippedDocs} file${metrics.skippedDocs === 1 ? "" : "s"} not in charts`,
-            detail: "Fix extraction gaps for full AP/AR portfolio views.",
+            detail: "Approve to reprocess extraction gaps for full AP/AR portfolio views.",
             tone: "warn",
-            prompt: "Why are some finance files not in charts?",
+            documentIds: skippedIds.length ? skippedIds : undefined,
+            approveKind: skippedIds.length ? "reprocess" : undefined,
+            prompt: skippedIds.length ? undefined : "Why are some finance files not in charts?",
         });
     }
     if (ap.topVendorShare != null && ap.topVendorShare >= 35) {

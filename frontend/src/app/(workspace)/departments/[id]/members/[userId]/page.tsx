@@ -101,7 +101,7 @@ const PERM_LABELS: Record<string, string> = {
     "page.departments": "Department pages",
     "page.plans": "Subscriptions & Billing",
     "page.email_reports": "Automated Reports",
-    "page.integrations": "API & Webhooks",
+    "page.integrations": "Integrations",
     "page.settings": "AI Engine Config",
 };
 
@@ -277,7 +277,7 @@ function MemberDetailContent() {
         return (
             <div className="flex flex-col items-center justify-center py-24 gap-4">
                 <div className="w-12 h-12 rounded-2xl bg-[rgba(56,182,255,0.1)] flex items-center justify-center">
-                    <Loader2 className="h-6 w-6 animate-spin text-[var(--vb-blue-dark)]" />
+                    <Loader2 className="h-6 w-6 animate-spin text-(--vb-blue-dark)" />
                 </div>
                 <p className="text-sm text-slate-500 font-medium">Loading employee details...</p>
             </div>
@@ -288,7 +288,7 @@ function MemberDetailContent() {
         return (
             <div className="p-8 max-w-3xl mx-auto text-center space-y-4">
                 <EmptyState
-                    icon={<Users size={24} className="text-[var(--vb-blue-dark)]" />}
+                    icon={<Users size={24} className="text-(--vb-blue-dark)" />}
                     title="Employee not available"
                     description={error || "You may not have permission to view this person."}
                 />
@@ -313,7 +313,7 @@ function MemberDetailContent() {
                 <div className="mb-4">
                     <Link
                         href={`/departments/${departmentId}`}
-                        className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-[var(--vb-blue-dark)]"
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-(--vb-blue-dark)"
                     >
                         <ArrowLeft size={13} /> {department.name}
                     </Link>
@@ -342,7 +342,7 @@ function MemberDetailContent() {
                 animate={{ opacity: 1, y: 0 }}
                 className="surface-card p-5 flex flex-col sm:flex-row sm:items-center gap-4"
             >
-                <div className="h-14 w-14 rounded-2xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center text-lg font-bold shadow-[var(--vb-glow)]">
+                <div className="h-14 w-14 rounded-2xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center text-lg font-bold shadow-(--vb-glow)">
                     {initials}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -389,7 +389,7 @@ function MemberDetailContent() {
                         onClick={() => setTab(t.id)}
                         className={`px-3.5 py-2 rounded-xl text-sm font-medium transition-colors ${
                             tab === t.id
-                                ? "bg-[rgba(56,182,255,0.1)] text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.28)]"
+                                ? "bg-[rgba(56,182,255,0.1)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]"
                                 : "text-slate-500 hover:bg-slate-50 border border-transparent"
                         }`}
                     >
@@ -431,7 +431,7 @@ function MemberDetailContent() {
                     </div>
                     <div className="surface-card overflow-hidden">
                         <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
-                            <FileText size={15} className="text-[var(--vb-blue-dark)]" />
+                            <FileText size={15} className="text-(--vb-blue-dark)" />
                             <h3 className="text-sm font-bold text-slate-800">Recent documents</h3>
                         </div>
                         {docsLoading ? (
@@ -456,7 +456,7 @@ function MemberDetailContent() {
                                         </div>
                                         <Link
                                             href={`/documents/details?doc=${doc.documentId}`}
-                                            className="text-xs font-medium text-[var(--vb-blue-dark)] shrink-0"
+                                            className="text-xs font-medium text-(--vb-blue-dark) shrink-0"
                                         >
                                             Details
                                         </Link>
@@ -686,7 +686,7 @@ function MemberDetailContent() {
             {tab === "access" && (
                 <div className="surface-card p-5 space-y-4">
                     <div className="flex items-center gap-2">
-                        <Shield size={16} className="text-[var(--vb-blue-dark)]" />
+                        <Shield size={16} className="text-(--vb-blue-dark)" />
                         <h3 className="text-sm font-bold text-slate-800">Effective access</h3>
                     </div>
                     <div className="grid sm:grid-cols-2 gap-3 text-sm">

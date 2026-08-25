@@ -10,7 +10,7 @@ import { downloadVisualsCsv } from "@/lib/analyticsExport";
 
 /** Match chat column toolbar height for split-pane alignment */
 export const WORKSPACE_SPLIT_HEADER =
-    "shrink-0 flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-6 lg:px-8 py-3 sm:py-4 min-h-[4.5rem] border-b border-border";
+    "shrink-0 flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-6 lg:px-8 py-3 sm:py-4 min-h-18 border-b border-border";
 
 export type AnalyticsPanelView =
     | "overview"

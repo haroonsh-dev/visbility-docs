@@ -203,7 +203,7 @@ function TeamContent() {
                     >
                         <form onSubmit={createMember} className="surface-card p-6 space-y-4">
                             <div className="flex items-center gap-3 mb-2">
-                                <div className="w-10 h-10 rounded-xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-[var(--vb-glow)]">
+                                <div className="w-10 h-10 rounded-xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shadow-(--vb-glow)">
                                     <Plus size={18} />
                                 </div>
                                 <div>
@@ -276,7 +276,7 @@ function TeamContent() {
                                     <div className="flex items-center gap-3 min-w-0">
                                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold ${
                                             m.status === "active"
-                                                ? "bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)] text-[var(--vb-blue-dark)] border border-[rgba(56,182,255,0.28)]"
+                                                ? "bg-linear-to-br from-[rgba(56,182,255,0.08)] to-[rgba(63,116,255,0.06)] text-(--vb-blue-dark) border border-[rgba(56,182,255,0.28)]"
                                                 : "bg-linear-to-br from-slate-50 to-slate-100 text-slate-400 border border-slate-200"
                                         }`}>
                                             {(m.fullName || m.email || "U").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}

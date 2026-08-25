@@ -40,7 +40,20 @@ import {
     verifyClickUpToken,
     verifyClickUpList,
 } from '../services/clickupBridgeService';
+import {
+    connectionSlackCreds,
+    normalizeSlackChannelId,
+    processSlackWebhook,
+    syncSlackChannel,
+    verifySlackChannel,
+    verifySlackToken,
+} from '../services/slackBridgeService';
 import fs from 'fs';
+
+function buildSlackWebhookUrl(publicBase: string, connectionId: string, ingestKey: string): string {
+    const base = publicBase.replace(/\/$/, '');
+    return `${base}/api/docs/integrations/slack/${connectionId}/webhook?key=${encodeURIComponent(ingestKey)}`;
+}
 
 function maskSecret(value: string): string {
     if (!value || value.length < 8) return '****';
@@ -132,8 +145,14 @@ function publicConnection(doc: any, req: Request) {
         process.env.PUBLIC_API_URL ||
         process.env.API_PUBLIC_URL ||
         `${req.protocol}://${req.get('host')}`;
-    const ingestUrl = `${base.replace(/\/$/, '')}/api/docs/integrations/ingest`;
+    const root = base.replace(/\/$/, '');
+    const ingestUrl = `${root}/api/docs/integrations/ingest`;
     const intervalMinutes = Number(doc.intervalMinutes || doc.config?.intervalMinutes || 15);
+    // Admin Integrations UI needs full push/Events URLs + ingest key (all providers).
+    const keyQs =
+        typeof doc.ingestApiKey === 'string' && doc.ingestApiKey.trim()
+            ? `?key=${encodeURIComponent(doc.ingestApiKey.trim())}`
+            : '';
     return {
         connectionId: doc.connectionId,
         providerId: doc.providerId,
@@ -154,14 +173,21 @@ function publicConnection(doc: any, req: Request) {
         secretsMasked: maskSecrets(doc.secrets),
         hasSecrets: Object.keys(doc.secrets || {}).length > 0,
         ingestApiKeyMasked: maskSecret(doc.ingestApiKey),
-        ingestApiKey: undefined as string | undefined,
+        ingestApiKey:
+            typeof doc.ingestApiKey === 'string' && doc.ingestApiKey.trim()
+                ? doc.ingestApiKey.trim()
+                : undefined,
         ingestUrl,
         clickupWebhookUrl:
             doc.providerId === 'clickup' && doc.connectionId
-                ? `${base.replace(/\/$/, '')}/api/docs/integrations/clickup/${doc.connectionId}/webhook`
+                ? `${root}/api/docs/integrations/clickup/${doc.connectionId}/webhook${keyQs}`
+                : undefined,
+        slackWebhookUrl:
+            doc.providerId === 'slack' && doc.connectionId
+                ? `${root}/api/docs/integrations/slack/${doc.connectionId}/webhook${keyQs}`
                 : undefined,
         connectionPushUrl: doc.connectionId
-            ? `${base.replace(/\/$/, '')}/api/docs/integrations/connections/${doc.connectionId}/push`
+            ? `${root}/api/docs/integrations/connections/${doc.connectionId}/push${keyQs}`
             : undefined,
         useCase: doc.config?.useCase ? String(doc.config.useCase) : null,
         isActive: doc.isActive,
@@ -258,6 +284,16 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
         if (fields.folderId) config.folderId = normalizeFolderId(String(fields.folderId));
         if (fields.listId) config.listId = String(fields.listId).trim();
         if (fields.clickupListId) config.listId = String(fields.clickupListId).trim();
+        if (fields.channelId) config.channelId = normalizeSlackChannelId(String(fields.channelId));
+        if (fields.slackChannelId) {
+            config.channelId = normalizeSlackChannelId(String(fields.slackChannelId));
+        }
+        if (fields.listId) config.listId = String(fields.listId).trim();
+        // Slack: also mirror channel into listId so universal task layer can resolve it
+        if (providerId === 'slack' && config.channelId) {
+            config.channelId = normalizeSlackChannelId(String(config.channelId));
+            config.listId = String(config.channelId);
+        }
         if (fields.ingestAuthMode != null) config.ingestAuthMode = String(fields.ingestAuthMode);
         if (fields.ingestCustomHeaderName != null) {
             config.ingestCustomHeaderName = String(fields.ingestCustomHeaderName).trim();
@@ -281,6 +317,24 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
                     message: e?.message || 'Invalid Google Drive private key',
                 });
             }
+        }
+
+        // Slack: keep botToken as canonical; mirror to apiToken for universal task layer
+        if (providerId === 'slack') {
+            if (secrets.botToken && !String(secrets.botToken).includes('****')) {
+                secrets.apiToken = secrets.botToken;
+            } else if (secrets.apiToken && !secrets.botToken) {
+                secrets.botToken = secrets.apiToken;
+            }
+            const tok = String(secrets.botToken || secrets.apiToken || '').trim();
+            if (tok && !tok.includes('****') && /^xapp-/i.test(tok)) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        'Wrong Slack token type (xapp-…). Use Bot User OAuth Token (xoxb-…) from OAuth & Permissions — not App-Level Token.',
+                });
+            }
+            if (config.channelId) config.listId = String(config.channelId);
         }
 
         const nextSyncAt =
@@ -392,6 +446,13 @@ export const saveIntegration = async (req: Request, res: Response, next: NextFun
                     doc.ingestApiKey
                 );
             }
+            if (doc.providerId === 'slack' && doc.ingestApiKey) {
+                (payload as Record<string, unknown>).slackWebhookUrl = buildSlackWebhookUrl(
+                    base,
+                    doc.connectionId,
+                    doc.ingestApiKey
+                );
+            }
         }
 
         res.status(isNew ? 201 : 200).json({
@@ -442,6 +503,56 @@ export const testIntegration = async (req: Request, res: Response, next: NextFun
                 return res.status(400).json({
                     success: false,
                     message: e?.message || 'Google Drive test failed',
+                    data: { ok: false },
+                });
+            }
+        }
+
+        if (doc.providerId === 'slack') {
+            const { botToken, channelId } = connectionSlackCreds(doc);
+            const missing: string[] = [];
+            if (!doc.ingestApiKey) missing.push('ingestApiKey');
+            if (!botToken) missing.push('botToken');
+            if (!channelId) missing.push('channelId');
+            if (missing.length) {
+                doc.lastStatus = `test_failed: missing ${missing.join(', ')}`;
+                await doc.save();
+                return res.status(400).json({
+                    success: false,
+                    message: `Test failed — missing: ${missing.join(', ')}`,
+                    data: { ok: false, missing },
+                });
+            }
+            try {
+                const info = await verifySlackToken(botToken);
+                const ch = await verifySlackChannel(botToken, channelId);
+                doc.lastStatus = `test_ok: Slack ${info.user} · #${ch.name}`;
+                doc.lastSyncAt = new Date();
+                await doc.save();
+                const base =
+                    process.env.PUBLIC_API_URL ||
+                    process.env.API_PUBLIC_URL ||
+                    `${req.protocol}://${req.get('host')}`;
+                const slackWebhookUrl = buildSlackWebhookUrl(base, doc.connectionId, doc.ingestApiKey);
+                return res.json({
+                    success: true,
+                    message: `Slack OK — bot valid and channel #${ch.name} found. Paste the Events Request URL into Slack → Event Subscriptions, then Sync now.`,
+                    data: {
+                        ok: true,
+                        slackUser: info.user,
+                        slackTeam: info.team,
+                        channelId: ch.id,
+                        channelName: ch.name,
+                        slackWebhookUrl,
+                        lastStatus: doc.lastStatus,
+                    },
+                });
+            } catch (e: any) {
+                doc.lastStatus = `test_failed: ${e?.message || e}`;
+                await doc.save();
+                return res.status(400).json({
+                    success: false,
+                    message: e?.message || 'Slack test failed',
                     data: { ok: false },
                 });
             }
@@ -741,6 +852,33 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
         });
         if (!doc) {
             return res.status(404).json({ success: false, message: 'Integration not found' });
+        }
+
+        if (doc.providerId === 'slack') {
+            const result = await syncSlackChannel(doc);
+            const summary = `records=${result.recordsIngested ?? 0} new, ${result.recordsUpdated ?? 0} updated · failed=${result.failed} · messages=${result.taskCount}`;
+            doc.lastSyncAt = new Date();
+            doc.lastStatus = result.failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
+            doc.lastSyncSummary = summary;
+            await doc.save();
+
+            recordActivityFromReq(req, {
+                action: 'integrations.sync',
+                category: 'document',
+                resourceType: 'integration',
+                resourceId: doc.connectionId,
+                message: `Slack channel sync: ${summary}`,
+                metadata: { summary },
+            });
+
+            return res.json({
+                success: true,
+                message: `Slack sync finished — ${summary}`,
+                data: {
+                    ...result,
+                    connection: publicConnection(doc.toObject(), req),
+                },
+            });
         }
 
         if (doc.providerId === 'clickup') {
@@ -1362,6 +1500,61 @@ export const pushViaConnection = async (req: Request, res: Response, next: NextF
             return res.status(error.statusCode).json({
                 success: false,
                 code: error.code,
+                message: error.message,
+            });
+        }
+        next(error);
+    }
+};
+
+/** Public Slack Events webhook — ?key= matches connection ingest API key. */
+export const slackWebhook = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const connectionId = String(req.params.id || '').trim();
+        const key = String(req.query.key || req.headers['x-integration-key'] || '').trim();
+        const payload = (req.body || {}) as Record<string, unknown>;
+
+        // Slack url_verification must answer before auth when first configuring Events
+        if (String(payload.type || '') === 'url_verification' && payload.challenge != null) {
+            if (connectionId && key) {
+                const connection = await IntegrationConnection.findOne({
+                    connectionId,
+                    isActive: true,
+                    providerId: 'slack',
+                });
+                if (connection && secureIngestKeyMatch(connection.ingestApiKey, key)) {
+                    return res.json({ challenge: payload.challenge });
+                }
+            }
+            // Still echo challenge so Slack can verify URL shape; key checked on real events
+            return res.json({ challenge: payload.challenge });
+        }
+
+        if (!connectionId || !key) {
+            return res.status(401).json({
+                success: false,
+                message: 'Missing connection id or key query parameter',
+            });
+        }
+
+        const connection = await IntegrationConnection.findOne({
+            connectionId,
+            isActive: true,
+            providerId: 'slack',
+        });
+        if (!connection || !secureIngestKeyMatch(connection.ingestApiKey, key)) {
+            return res.status(401).json({ success: false, message: 'Invalid Slack webhook key' });
+        }
+
+        const result = await processSlackWebhook(connection, payload);
+        if (result.challenge != null) {
+            return res.json({ challenge: result.challenge });
+        }
+        return res.json({ success: true, ...result });
+    } catch (error: any) {
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
+                success: false,
                 message: error.message,
             });
         }

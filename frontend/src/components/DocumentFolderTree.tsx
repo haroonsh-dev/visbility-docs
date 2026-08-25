@@ -102,7 +102,7 @@ export default function DocumentFolderTree({
                 return (
                     <details key={agent} className="rounded-xl border border-slate-200 overflow-hidden bg-white" open>
                         <summary className="px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors flex items-center gap-2 text-sm font-semibold text-slate-800 list-none">
-                            <Folder size={14} className="text-[var(--vb-blue-dark)] shrink-0" />
+                            <Folder size={14} className="text-(--vb-blue-dark) shrink-0" />
                             <span className="flex-1 truncate">{agentLabel(agent)}</span>
                             <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
                                 {total}
@@ -152,7 +152,7 @@ export default function DocumentFolderTree({
                                                             <span className="flex items-center gap-1.5 min-w-0">
                                                                 <FileText
                                                                     size={12}
-                                                                    className={`shrink-0 ${selected ? "text-[var(--vb-blue-dark)]" : "text-slate-400"}`}
+                                                                    className={`shrink-0 ${selected ? "text-(--vb-blue-dark)" : "text-slate-400"}`}
                                                                 />
                                                                 <span className="text-xs text-slate-700 truncate">
                                                                     {d.originalFilename}

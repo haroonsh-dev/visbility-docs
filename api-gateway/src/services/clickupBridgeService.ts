@@ -734,3 +734,187 @@ export function buildClickUpWebhookUrl(base: string, connectionId: string, inges
     const root = base.replace(/\/$/, '');
     return `${root}/api/docs/integrations/clickup/${encodeURIComponent(connectionId)}/webhook?key=${encodeURIComponent(ingestKey)}`;
 }
+
+export type ClickUpMember = {
+    id: number;
+    username: string;
+    email: string;
+    label: string;
+};
+
+function normalizeMember(raw: unknown): ClickUpMember | null {
+    const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null;
+    if (!o) return null;
+    const user = (o.user && typeof o.user === 'object' ? o.user : o) as Record<string, unknown>;
+    const idNum = Number(user.id ?? o.id);
+    if (!Number.isFinite(idNum) || idNum <= 0) return null;
+    const username = String(user.username || user.name || '').trim();
+    const email = String(user.email || '').trim();
+    const label = username && email ? `${username} (${email})` : username || email || String(idNum);
+    return { id: idNum, username, email, label };
+}
+
+/** Workspace + list members who can be assigned on tasks. */
+export async function listClickUpAssignableMembers(
+    apiToken: string,
+    opts?: { listId?: string; teamId?: string }
+): Promise<ClickUpMember[]> {
+    const byId = new Map<number, ClickUpMember>();
+
+    const push = (raw: unknown) => {
+        const m = normalizeMember(raw);
+        if (m) byId.set(m.id, m);
+    };
+
+    try {
+        const res = await axios.get(`${CLICKUP_API}/team`, {
+            headers: clickUpHeaders(apiToken),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        const teams = Array.isArray(res.data?.teams) ? res.data.teams : [];
+        for (const team of teams) {
+            const teamId = String((team as { id?: string | number }).id || '');
+            if (opts?.teamId && teamId && teamId !== opts.teamId) continue;
+            const members = Array.isArray((team as { members?: unknown[] }).members)
+                ? (team as { members: unknown[] }).members
+                : [];
+            for (const mem of members) push(mem);
+        }
+    } catch (err) {
+        throw formatClickUpApiError(err, 'user');
+    }
+
+    const listId = String(opts?.listId || '').trim();
+    if (listId) {
+        try {
+            const res = await axios.get(`${CLICKUP_API}/list/${encodeURIComponent(listId)}/member`, {
+                headers: clickUpHeaders(apiToken),
+                timeout: CLICKUP_TIMEOUT_MS,
+            });
+            const members = Array.isArray(res.data?.members) ? res.data.members : [];
+            for (const mem of members) push(mem);
+        } catch {
+            /* list members optional — team members already loaded */
+        }
+    }
+
+    return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export async function createClickUpTask(
+    listId: string,
+    apiToken: string,
+    input: { name: string; assignees?: number[]; description?: string; status?: string }
+): Promise<Record<string, unknown>> {
+    const id = String(listId || '').trim();
+    const name = String(input.name || '').trim();
+    if (!id) {
+        throw Object.assign(new Error('ClickUp List ID is required to create a task'), { statusCode: 400 });
+    }
+    if (!name) {
+        throw Object.assign(new Error('Task name is required'), { statusCode: 400 });
+    }
+    const body: Record<string, unknown> = { name };
+    if (input.description) body.description = input.description;
+    if (input.status) body.status = input.status;
+    if (Array.isArray(input.assignees) && input.assignees.length) {
+        body.assignees = input.assignees;
+    }
+    try {
+        const res = await axios.post(`${CLICKUP_API}/list/${encodeURIComponent(id)}/task`, body, {
+            headers: clickUpHeaders(apiToken),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        return res.data || {};
+    } catch (err) {
+        throw formatClickUpApiError(err, 'list');
+    }
+}
+
+export async function assignClickUpTask(
+    taskId: string,
+    apiToken: string,
+    opts: { add?: number[]; rem?: number[] }
+): Promise<Record<string, unknown>> {
+    const id = String(taskId || '').trim();
+    if (!id) {
+        throw Object.assign(new Error('ClickUp task ID is required'), { statusCode: 400 });
+    }
+    const add = (opts.add || []).filter((n) => Number.isFinite(n) && n > 0);
+    const rem = (opts.rem || []).filter((n) => Number.isFinite(n) && n > 0);
+    if (!add.length && !rem.length) {
+        throw Object.assign(new Error('Provide at least one assignee to add or remove'), { statusCode: 400 });
+    }
+    try {
+        const res = await axios.put(
+            `${CLICKUP_API}/task/${encodeURIComponent(id)}`,
+            { assignees: { add, rem } },
+            {
+                headers: clickUpHeaders(apiToken),
+                timeout: CLICKUP_TIMEOUT_MS,
+            }
+        );
+        return res.data || {};
+    } catch (err) {
+        throw formatClickUpApiError(err, 'task');
+    }
+}
+
+export async function updateClickUpTaskStatus(
+    taskId: string,
+    apiToken: string,
+    status: string
+): Promise<Record<string, unknown>> {
+    const id = String(taskId || '').trim();
+    const statusName = String(status || '').trim();
+    if (!id) {
+        throw Object.assign(new Error('ClickUp task ID is required'), { statusCode: 400 });
+    }
+    if (!statusName) {
+        throw Object.assign(new Error('Status name is required'), { statusCode: 400 });
+    }
+    try {
+        const res = await axios.put(
+            `${CLICKUP_API}/task/${encodeURIComponent(id)}`,
+            { status: statusName },
+            {
+                headers: clickUpHeaders(apiToken),
+                timeout: CLICKUP_TIMEOUT_MS,
+            }
+        );
+        return res.data || {};
+    } catch (err) {
+        throw formatClickUpApiError(err, 'task');
+    }
+}
+
+/** Pick a closed/complete status name for a list (falls back to "complete"). */
+export async function resolveClickUpCompleteStatus(
+    listId: string,
+    apiToken: string
+): Promise<string> {
+    const id = String(listId || '').trim();
+    if (!id) return 'complete';
+    try {
+        const res = await axios.get(`${CLICKUP_API}/list/${encodeURIComponent(id)}`, {
+            headers: clickUpHeaders(apiToken),
+            timeout: CLICKUP_TIMEOUT_MS,
+        });
+        const statuses = Array.isArray(res.data?.statuses) ? res.data.statuses : [];
+        const names = statuses
+            .map((s: { status?: string; type?: string }) => ({
+                status: String(s.status || '').trim(),
+                type: String(s.type || '').toLowerCase(),
+            }))
+            .filter((s: { status: string }) => Boolean(s.status));
+        const closed =
+            names.find((s: { type: string }) => s.type === 'closed' || s.type === 'done') ||
+            names.find((s: { status: string }) =>
+                /^(complete|closed|done|resolved)$/i.test(s.status)
+            ) ||
+            names.find((s: { status: string }) => /complete|closed|done|resolved/i.test(s.status));
+        return closed?.status || 'complete';
+    } catch {
+        return 'complete';
+    }
+}

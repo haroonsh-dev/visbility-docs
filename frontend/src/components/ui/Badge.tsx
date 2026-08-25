@@ -5,7 +5,7 @@ type BadgeVariant = "default" | "accent" | "success" | "warning" | "error" | "mu
 
 const variants: Record<BadgeVariant, string> = {
     default: "bg-surface-3 text-foreground-secondary border-border",
-    accent: "bg-accent-muted text-[var(--vb-blue-dark)] border-[rgba(56,182,255,0.28)]",
+    accent: "bg-accent-muted text-(--vb-blue-dark) border-[rgba(56,182,255,0.28)]",
     success: "bg-(--success-muted) text-(--success) border-[rgba(52,211,153,0.25)]",
     warning: "bg-(--warning-muted) text-(--warning) border-[rgba(251,191,36,0.25)]",
     error: "bg-error-muted text-error border-[rgba(248,113,113,0.25)]",

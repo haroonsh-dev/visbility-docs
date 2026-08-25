@@ -124,6 +124,8 @@ export const AGENT_CHART_CAPABILITIES: Record<string, string[]> = {
         "Portfolio + named-file targeting",
         "Data-quality + reprocess hints",
         "Finance report PDF generation",
+        "Synced invoices / expenses (integrations)",
+        "Open-task playbook (process until done)",
     ],
     hr_agent: [
         "CV score ranking chart",
@@ -138,6 +140,8 @@ export const AGENT_CHART_CAPABILITIES: Record<string, string[]> = {
         "Promotion / warning / relieving letters",
         "HR report + shortlist PDF",
         "Dynamic HR intent routing (plain-language asks)",
+        "Synced candidates / tasks (integrations)",
+        "Open-task playbook (process until done)",
     ],
     compliance_agent: [
         "Certificate expiry timeline + validity",
@@ -149,18 +153,28 @@ export const AGENT_CHART_CAPABILITIES: Record<string, string[]> = {
         "Section PDFs (certs / findings / register)",
         "NCR / CAPA / certificate-of-compliance letters",
         "Dynamic compliance intent routing",
+        "Synced certificates / audits (integrations)",
+        "Open-task playbook (process until done)",
     ],
     procurement_agent: [
         "Supplier spend bars",
         "PO vs invoice amounts",
         "Amounts by document",
+        "Synced purchase orders / suppliers (integrations)",
+        "Open-task playbook (process until done)",
     ],
     legal_agent: [
         "Risk flags by document",
         "Clause type mix",
         "Contract value by party",
+        "Synced contracts / NDAs (integrations)",
+        "Open-task playbook (process until done)",
     ],
-    other_agent: ["Document type mix for scoped files"],
+    other_agent: [
+        "Document type mix for scoped files",
+        "Synced integration records",
+        "Open-task playbook (process until done)",
+    ],
 };
 
 /** Skills that actually have chat charts / actions today (honest capability list). */

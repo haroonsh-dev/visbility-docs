@@ -633,6 +633,52 @@ export const INTEGRATION_CATALOG: IntegrationCatalogItem[] = [
             "Live today: ClickUp webhook → auto-ingest attachments + manual list sync. Chat analytics use extracted document data. Outbound: Send from library posts summaries to your webhook.",
     },
     {
+        id: "slack",
+        name: "Slack",
+        category: "generic",
+        description:
+            "Same universal task flow as ClickUp — connect a bot + channel; Sync now / Events webhook pulls messages as synced tasks; agents create, assign, and complete from chat.",
+        directions: "both",
+        fields: [
+            {
+                key: "label",
+                label: "Connection label",
+                type: "text",
+                required: true,
+                placeholder: "Slack HR hiring",
+            },
+            {
+                key: "botToken",
+                label: "Slack Bot User OAuth Token (xoxb-…)",
+                type: "password",
+                required: true,
+                secret: true,
+                placeholder: "xoxb-…",
+                help: "Must start with xoxb-. api.slack.com → Your App → OAuth & Permissions → Bot User OAuth Token. Do NOT use App-Level Token (xapp-).",
+            },
+            {
+                key: "channelId",
+                label: "Slack Channel ID (C…)",
+                type: "text",
+                required: true,
+                placeholder: "C0123456789",
+                help: "Must be a Channel ID starting with C… (channel details → bottom). Do NOT use a DM (D…) or a DM URL. You can also paste a Slack channel URL. Invite the bot with /invite @YourBot first.",
+            },
+            AGENT_FIELD,
+            OUTBOUND_FIELD,
+        ],
+        guideSteps: [
+            "Create a Slack app at api.slack.com → Add Bot Token Scopes: channels:history, channels:read, chat:write, users:read, users:read.email, reactions:write, groups:history (private).",
+            "Install to workspace → copy Bot User OAuth Token (xoxb-…).",
+            "Invite the bot to your channel (/invite @Bot).",
+            "In Visibility: Admin → Integrations → add Slack → paste token + Channel ID + default agent → Save.",
+            "Status tab → copy Slack Events webhook URL → Slack app → Event Subscriptions → Request URL → subscribe to message.channels (and message.groups if private).",
+            "Click Sync now to pull recent channel messages as synced tasks — then in any agent chat: show synced tasks / create task / assign / process open tasks.",
+        ],
+        setupNotes:
+            "Native Slack connector (no Zapier). Uses the same universal synced-task chat + playbook as ClickUp.",
+    },
+    {
         id: "custom_webhook",
         name: "Custom Webhook / REST API",
         category: "generic",

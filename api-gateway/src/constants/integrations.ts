@@ -16,6 +16,7 @@ export const INTEGRATION_PROVIDER_IDS = [
     'fiix_upkeep',
     // SaaS / Generic
     'clickup',
+    'slack',
     'custom_webhook',
     'sql_csv_drop',
 ] as const;
@@ -33,6 +34,7 @@ export const SECRET_FIELD_KEYS = new Set([
     'refreshToken',
     'connectionString',
     'apiToken',
+    'botToken',
     'ingestBearerToken',
     'ingestBasicPassword',
     'ingestCustomHeaderValue',

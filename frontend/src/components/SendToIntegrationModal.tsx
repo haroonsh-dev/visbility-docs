@@ -259,7 +259,7 @@ export default function SendToIntegrationModal({
             >
                 <header className="relative px-5 sm:px-6 py-5 border-b border-border bg-linear-to-r from-accent-muted via-surface to-surface">
                     <div className="flex items-start gap-3.5 pr-10">
-                        <div className="h-11 w-11 rounded-2xl bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shrink-0 shadow-[var(--vb-glow)]">
+                        <div className="h-11 w-11 rounded-2xl bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shrink-0 shadow-(--vb-glow)">
                             <Send size={18} />
                         </div>
                         <div className="min-w-0 pt-0.5">

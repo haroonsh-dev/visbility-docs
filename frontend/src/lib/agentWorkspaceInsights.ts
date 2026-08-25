@@ -165,3 +165,17 @@ export function getDefaultAskPrompt(agentId: AnalyticsAgentId): string {
 export function getSkippedFiles(coverage: WorkspaceCoverage): CoverageFile[] {
     return coverageFiles(coverage).filter((f) => f.status !== "in_charts");
 }
+
+/** Document IDs for Action Center Approve → reprocess (all agents). */
+export function getSkippedDocumentIds(coverage: WorkspaceCoverage): string[] {
+    return getSkippedFiles(coverage)
+        .map((f) => f.documentId)
+        .filter(Boolean);
+}
+
+export function getMissingAmountDocumentIds(coverage: WorkspaceCoverage): string[] {
+    return coverageFiles(coverage)
+        .filter((f) => f.status === "missing_amount")
+        .map((f) => f.documentId)
+        .filter(Boolean);
+}

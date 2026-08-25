@@ -43,6 +43,7 @@ type Connection = {
     ingestApiKey?: string;
     ingestUrl?: string;
     clickupWebhookUrl?: string;
+    slackWebhookUrl?: string;
     connectionPushUrl?: string;
     useCase?: string | null;
     ingestAuthMode?: string | null;
@@ -111,7 +112,7 @@ function DirectionBadge({ directions }: { directions: IntegrationCatalogItem["di
     }
     if (directions === "inbound") {
         return (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--vb-blue-dark)] dark:text-[var(--vb-blue-bright)]/90">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-(--vb-blue-dark) dark:text-(--vb-blue-bright)/90">
                 <Download size={10} /> Inbound
             </span>
         );
@@ -554,12 +555,15 @@ function IntegrationsContent() {
 
     const copyIngestCurl = async (mode: "multipart" | "json") => {
         const pushUrl = resolveConnectionPushUrl();
-        const url = pushUrl && !pushUrl.includes("••••") ? pushUrl : activeConn?.ingestUrl;
+        const url =
+            pushUrl && pushUrl.includes("key=")
+                ? pushUrl.split("?")[0]!
+                : activeConn?.ingestUrl;
         if (!url) {
             setError("Save the connection first to get an ingest URL");
             return;
         }
-        const key = freshIngestKey || "YOUR_INGEST_KEY";
+        const key = freshIngestKey || resolveVisibleIngestKey() || "YOUR_INGEST_KEY";
         const agent =
             activeConn?.config?.phase3Agent != null
                 ? String(activeConn.config.phase3Agent)
@@ -584,20 +588,39 @@ function IntegrationsContent() {
         if (!activeConn?.clickupWebhookUrl) return "";
         if (activeConn.clickupWebhookUrl.includes("key=")) return activeConn.clickupWebhookUrl;
         const key = freshIngestKey;
-        if (!key) return `${activeConn.clickupWebhookUrl}?key=••••`;
+        if (!key) return activeConn.clickupWebhookUrl;
         return `${activeConn.clickupWebhookUrl}?key=${encodeURIComponent(key)}`;
     };
 
     const copyClickUpWebhookUrl = async () => {
         const url = resolveClickUpWebhookUrl();
-        if (!url || url.includes("••••")) {
-            setError("Rotate the ingest key to copy the full ClickUp webhook URL");
+        if (!url) return;
+        if (!url.includes("key=")) {
+            setError("Webhook URL is missing the ingest key — reopen Status or reconnect ClickUp");
             return;
         }
         await copyText(url);
     };
 
-    const syncClickUpListNow = async () => {
+    const resolveSlackWebhookUrl = (): string => {
+        if (!activeConn?.slackWebhookUrl) return "";
+        if (activeConn.slackWebhookUrl.includes("key=")) return activeConn.slackWebhookUrl;
+        const key = freshIngestKey;
+        if (!key) return activeConn.slackWebhookUrl;
+        return `${activeConn.slackWebhookUrl}?key=${encodeURIComponent(key)}`;
+    };
+
+    const copySlackWebhookUrl = async () => {
+        const url = resolveSlackWebhookUrl();
+        if (!url) return;
+        if (!url.includes("key=")) {
+            setError("Events URL is missing the ingest key — reopen Status or reconnect Slack");
+            return;
+        }
+        await copyText(url);
+    };
+
+    const syncTaskProviderNow = async () => {
         if (!activeConn) return;
         setSyncing(true);
         setError(null);
@@ -607,13 +630,17 @@ function IntegrationsContent() {
                 method: "POST",
                 body: JSON.stringify({}),
             });
-            setSuccess(res?.message || "ClickUp sync finished");
+            setSuccess(res?.message || "Sync finished");
             await loadConnections({ force: true });
         } catch (e: any) {
-            setError(e.message || "ClickUp sync failed");
+            setError(e.message || "Sync failed");
         } finally {
             setSyncing(false);
         }
+    };
+
+    const syncClickUpListNow = async () => {
+        await syncTaskProviderNow();
     };
 
     const browseClickUpLists = async () => {
@@ -687,14 +714,38 @@ function IntegrationsContent() {
         if (!activeConn?.connectionPushUrl) return "";
         if (activeConn.connectionPushUrl.includes("key=")) return activeConn.connectionPushUrl;
         const key = freshIngestKey;
-        if (!key) return `${activeConn.connectionPushUrl}?key=••••`;
+        if (!key) return activeConn.connectionPushUrl;
         return `${activeConn.connectionPushUrl}?key=${encodeURIComponent(key)}`;
+    };
+
+    const resolveVisibleIngestKey = (): string => {
+        if (freshIngestKey) return freshIngestKey;
+        if (activeConn?.ingestApiKey) return String(activeConn.ingestApiKey);
+        const push = resolveConnectionPushUrl();
+        if (push.includes("key=")) {
+            try {
+                return new URL(push).searchParams.get("key") || "";
+            } catch {
+                return "";
+            }
+        }
+        return "";
+    };
+
+    const resolveSharedIngestUrlWithKey = (): string => {
+        const base = activeConn?.ingestUrl || "";
+        if (!base) return "";
+        if (base.includes("key=")) return base;
+        const key = resolveVisibleIngestKey();
+        if (!key) return base;
+        return `${base}${base.includes("?") ? "&" : "?"}key=${encodeURIComponent(key)}`;
     };
 
     const copyConnectionPushUrl = async () => {
         const url = resolveConnectionPushUrl();
-        if (!url || url.includes("••••")) {
-            setError("Rotate the ingest key to copy the full system push URL");
+        if (!url) return;
+        if (!url.includes("key=")) {
+            setError("Push URL is missing the ingest key — reopen Status or reconnect");
             return;
         }
         await copyText(url);
@@ -772,7 +823,7 @@ function IntegrationsContent() {
                     <p className="text-[11px] leading-relaxed text-foreground-muted">{field.help}</p>
                 )}
                 {field.key === "ingestAuthMode" && (
-                    <p className="text-[11px] leading-relaxed text-[var(--vb-blue-bright)]">
+                    <p className="text-[11px] leading-relaxed text-(--vb-blue-bright)">
                         {INGEST_AUTH_MODE_OPTIONS.find((o) => o.value === value)?.hint ||
                             "Pick how your external system sends credentials."}
                     </p>
@@ -924,7 +975,7 @@ function IntegrationsContent() {
             />
 
             {hasActivePlan === null && (
-                <div className="rounded-xl border border-border bg-surface-2/40 px-4 py-2.5 text-xs text-foreground-muted flex items-center gap-2">
+                <div className="rounded-xl border border-border bg-white px-4 py-2.5 text-xs text-foreground-muted flex items-center gap-2">
                     <Loader2 size={14} className="animate-spin shrink-0" />
                     Checking subscription…
                 </div>
@@ -1062,7 +1113,7 @@ function IntegrationsContent() {
                                 onClick={() => openPanel(item)}
                                 className={`group text-left surface-card border p-4 transition-all hover:-translate-y-0.5 hover:border-[rgba(56,182,255,0.45)] ${
                                     connected
-                                        ? "border-emerald-500/35 bg-linear-to-br from-emerald-500/[0.06] to-transparent"
+                                        ? "border-emerald-500/35 bg-linear-to-br from-emerald-500/6 to-transparent"
                                         : "border-border"
                                 }`}
                             >
@@ -1077,7 +1128,7 @@ function IntegrationsContent() {
                                         <Plug size={18} />
                                     </div>
                                     {connected ? (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300">
                                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                             {connectionCount > 1
                                                 ? `${connectionCount} connected`
@@ -1131,11 +1182,11 @@ function IntegrationsContent() {
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <h2 className="text-base font-bold tracking-tight">{activeItem.name}</h2>
                                         {isConnected ? (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300">
                                                 <CheckCircle2 size={10} /> Connected
                                             </span>
                                         ) : (
-                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/5 text-foreground-muted border border-border">
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white text-foreground-muted border border-border">
                                                 Not connected
                                             </span>
                                         )}
@@ -1179,8 +1230,8 @@ function IntegrationsContent() {
                                     <div
                                         className={`rounded-xl px-3.5 py-2.5 text-sm flex items-start gap-2 ${
                                             error
-                                                ? "border border-red-500/30 bg-red-500/10 text-red-300"
-                                                : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                                ? "border border-red-300 bg-red-50 text-red-800"
+                                                : "border border-emerald-300 bg-emerald-50 text-emerald-800"
                                         }`}
                                     >
                                         {error ? <AlertTriangle size={15} className="mt-0.5 shrink-0" /> : <Check size={15} className="mt-0.5 shrink-0" />}
@@ -1193,7 +1244,7 @@ function IntegrationsContent() {
                                     <div className="space-y-4">
                                         <div className="rounded-2xl border border-[rgba(56,182,255,0.2)] bg-linear-to-br from-[rgba(56,182,255,0.1)] via-transparent to-transparent p-4">
                                             <div className="flex items-center gap-2 mb-2">
-                                                <div className="h-8 w-8 rounded-lg bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-bright)] flex items-center justify-center">
+                                                <div className="h-8 w-8 rounded-lg bg-[rgba(56,182,255,0.2)] text-(--vb-blue-bright) flex items-center justify-center">
                                                     <BookOpen size={15} />
                                                 </div>
                                                 <div>
@@ -1212,7 +1263,7 @@ function IntegrationsContent() {
                                             {activeItem.guideSteps.map((step, i) => (
                                                 <li
                                                     key={i}
-                                                    className="flex gap-3 rounded-2xl border border-border bg-surface-2/40 p-3.5"
+                                                    className="flex gap-3 rounded-2xl border border-border bg-white p-3.5"
                                                 >
                                                     <span className="shrink-0 h-7 w-7 rounded-full bg-accent-muted text-accent text-xs font-bold flex items-center justify-center border border-[rgba(56,182,255,0.25)]">
                                                         {i + 1}
@@ -1248,7 +1299,7 @@ function IntegrationsContent() {
                                     <div className="space-y-4">
                                         <div className="rounded-2xl border border-[rgba(56,182,255,0.2)] bg-linear-to-br from-[rgba(56,182,255,0.1)] via-transparent to-transparent p-4">
                                             <div className="flex items-center gap-2">
-                                                <div className="h-8 w-8 rounded-lg bg-[rgba(56,182,255,0.2)] text-[var(--vb-blue-bright)] flex items-center justify-center">
+                                                <div className="h-8 w-8 rounded-lg bg-[rgba(56,182,255,0.2)] text-(--vb-blue-bright) flex items-center justify-center">
                                                     <Settings2 size={15} />
                                                 </div>
                                                 <div>
@@ -1264,7 +1315,7 @@ function IntegrationsContent() {
                                             </div>
                                         </div>
 
-                                        <div className="rounded-2xl border border-border bg-surface-2/30 p-4 space-y-4">
+                                        <div className="rounded-2xl border border-border bg-white p-4 space-y-4">
                                             {activeItem.fields
                                                 .filter((field) => {
                                                     const caps = getProviderCapabilities(activeItem.id);
@@ -1300,7 +1351,7 @@ function IntegrationsContent() {
                                                 .map(renderField)}
 
                                             {activeItem.id === "clickup" && isConnected && activeConn && (
-                                                <div className="rounded-xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-3 space-y-3">
+                                                <div className="rounded-xl border border-border bg-white p-3 space-y-3">
                                                     <div>
                                                         <p className="text-xs font-semibold text-foreground">
                                                             Find the correct List ID
@@ -1333,7 +1384,7 @@ function IntegrationsContent() {
                                                                     key={row.listId}
                                                                     type="button"
                                                                     onClick={() => applyClickUpListId(row.listId)}
-                                                                    className="w-full text-left rounded-lg border border-border/70 bg-black/10 px-2.5 py-2 hover:bg-surface-2/80"
+                                                                    className="w-full text-left rounded-lg border border-border/70 bg-white px-2.5 py-2 hover:bg-surface-2/80"
                                                                 >
                                                                     <p className="text-[11px] font-semibold text-foreground">
                                                                         {row.listName}{" "}
@@ -1353,7 +1404,7 @@ function IntegrationsContent() {
                                                             {clickUpListHint}
                                                         </p>
                                                     )}
-                                                    <div className="rounded-lg border border-border/70 bg-black/10 p-3 space-y-2">
+                                                    <div className="rounded-lg border border-border/70 bg-white p-3 space-y-2">
                                                         <p className="text-[10px] font-semibold text-foreground">
                                                             Fallback: resolve from a task link
                                                         </p>
@@ -1362,7 +1413,7 @@ function IntegrationsContent() {
                                                             Visibility reads the real list ID from that task.
                                                         </p>
                                                         <input
-                                                            className="w-full rounded-lg border border-border bg-black/20 px-2.5 py-2 text-xs"
+                                                            className="w-full rounded-lg border border-border bg-white px-2.5 py-2 text-xs"
                                                             placeholder="https://app.clickup.com/t/86abc123 or task link"
                                                             value={clickUpTaskRef}
                                                             onChange={(e) => setClickUpTaskRef(e.target.value)}
@@ -1411,13 +1462,13 @@ function IntegrationsContent() {
                                 {/* STATUS TAB (after connect) */}
                                 {panelTab === "status" && isConnected && activeConn && (
                                     <div className="space-y-4">
-                                        <div className="rounded-2xl border border-emerald-500/25 bg-linear-to-br from-emerald-500/15 via-emerald-500/5 to-transparent p-4">
+                                        <div className="rounded-2xl border border-emerald-300 bg-white p-4">
                                             <div className="flex items-start gap-3">
-                                                <div className="h-10 w-10 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center shrink-0">
+                                                <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
                                                     <CheckCircle2 size={20} />
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <h3 className="text-sm font-bold text-emerald-200">
+                                                    <h3 className="text-sm font-bold text-emerald-900">
                                                         {activeItem.name} is connected
                                                     </h3>
                                                     <p className="text-xs text-foreground-muted mt-1 leading-relaxed">
@@ -1444,12 +1495,12 @@ function IntegrationsContent() {
                                         <div
                                             className={`rounded-2xl border p-4 ${
                                                 testing
-                                                    ? "border-border bg-surface-2/40"
+                                                    ? "border-border bg-white"
                                                     : testResult?.ok
-                                                      ? "border-emerald-500/30 bg-emerald-500/10"
+                                                      ? "border-emerald-300 bg-emerald-50"
                                                       : testResult && !testResult.ok
-                                                        ? "border-red-500/30 bg-red-500/10"
-                                                        : "border-border bg-surface-2/40"
+                                                        ? "border-red-300 bg-red-50"
+                                                        : "border-border bg-white"
                                             }`}
                                         >
                                             <div className="flex items-center justify-between gap-2 mb-2">
@@ -1465,12 +1516,12 @@ function IntegrationsContent() {
                                             {testResult ? (
                                                 <div className="flex items-start gap-2">
                                                     {testResult.ok ? (
-                                                        <CheckCircle2 size={18} className="text-emerald-300 shrink-0 mt-0.5" />
+                                                        <CheckCircle2 size={18} className="text-emerald-700 shrink-0 mt-0.5" />
                                                     ) : (
-                                                        <XCircle size={18} className="text-rose-300 shrink-0 mt-0.5" />
+                                                        <XCircle size={18} className="text-rose-700 shrink-0 mt-0.5" />
                                                     )}
                                                     <div>
-                                                        <p className={`text-sm font-semibold ${testResult.ok ? "text-emerald-200" : "text-rose-200"}`}>
+                                                        <p className={`text-sm font-semibold ${testResult.ok ? "text-emerald-900" : "text-rose-800"}`}>
                                                             {testResult.ok ? "Test passed" : "Test failed"}
                                                         </p>
                                                         <p className="text-xs text-foreground-muted mt-1 leading-relaxed">
@@ -1496,7 +1547,7 @@ function IntegrationsContent() {
 
                                         {/* Saved details */}
                                         <div className="rounded-2xl border border-border overflow-hidden">
-                                            <div className="px-4 py-3 border-b border-border bg-surface-2/50">
+                                            <div className="px-4 py-3 border-b border-border bg-white">
                                                 <h4 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
                                                     Saved details
                                                 </h4>
@@ -1525,7 +1576,7 @@ function IntegrationsContent() {
                                         {/* Google Drive file browser */}
                                         {activeConn.providerId === "google_drive" && (
                                             <div className="rounded-2xl border border-border overflow-hidden">
-                                                <div className="px-4 py-3 border-b border-border bg-surface-2/50 flex items-center justify-between gap-2">
+                                                <div className="px-4 py-3 border-b border-border bg-white flex items-center justify-between gap-2">
                                                     <div>
                                                         <h4 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
                                                             Drive files
@@ -1600,7 +1651,7 @@ function IntegrationsContent() {
                                                                         </p>
                                                                     </div>
                                                                     {f.existsInLibrary ? (
-                                                                        <CheckCircle2 size={14} className="text-emerald-300 shrink-0 mt-0.5" />
+                                                                        <CheckCircle2 size={14} className="text-emerald-700 shrink-0 mt-0.5" />
                                                                     ) : (
                                                                         <Upload size={14} className="text-accent shrink-0 mt-0.5" />
                                                                     )}
@@ -1639,9 +1690,71 @@ function IntegrationsContent() {
                                             </div>
                                         )}
 
+                                        {activeConn.providerId === "slack" && (
+                                            <div className="rounded-2xl border border-border bg-white p-4 space-y-3">
+                                                <p className="text-xs font-semibold uppercase tracking-wider text-(--vb-blue-bright)">
+                                                    Slack uses the <strong className="text-foreground">same universal synced-task flow</strong> as
+                                                    ClickUp — channel messages become tasks agents can create, assign, and complete.
+                                                </p>
+                                                <p className="text-[11px] text-foreground-muted leading-relaxed">
+                                                    Paste this URL in Slack app → Event Subscriptions → Request URL. Channel{" "}
+                                                    <strong>{String(activeConn.config?.channelId || activeConn.config?.listId || "—")}</strong>{" "}
+                                                    routes to agent{" "}
+                                                    <strong>
+                                                        {String(activeConn.config?.phase3Agent || "auto").replace(
+                                                            "_agent",
+                                                            ""
+                                                        )}
+                                                    </strong>
+                                                    .
+                                                </p>
+                                                <div className="space-y-1">
+                                                    <p className="text-[11px] text-foreground-muted">Events webhook URL (copy into Slack)</p>
+                                                    <div className="flex gap-2 items-start">
+                                                        <textarea
+                                                            readOnly
+                                                            rows={3}
+                                                            value={resolveSlackWebhookUrl() || ""}
+                                                            className="flex-1 text-xs font-mono leading-relaxed break-all rounded-lg bg-white border border-border px-2.5 py-2 text-foreground resize-y min-h-18 select-all"
+                                                            onFocus={(e) => e.currentTarget.select()}
+                                                            aria-label="Slack Events webhook URL"
+                                                        />
+                                                        {resolveSlackWebhookUrl() && (
+                                                            <button
+                                                                type="button"
+                                                                className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+                                                                onClick={copySlackWebhookUrl}
+                                                            >
+                                                                <Copy size={14} />
+                                                                Copy
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[11px] text-foreground-muted mt-1">
+                                                        Full URL includes <code className="text-foreground">?key=</code> — no need to rotate to reveal.
+                                                    </p>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2 pt-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={syncTaskProviderNow}
+                                                        disabled={syncing}
+                                                        className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
+                                                    >
+                                                        {syncing ? (
+                                                            <Loader2 size={11} className="animate-spin" />
+                                                        ) : (
+                                                            <Download size={11} />
+                                                        )}
+                                                        Sync channel messages now
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {activeConn.providerId === "clickup" && (
-                                            <div className="rounded-2xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-4 space-y-3">
-                                                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)]">
+                                            <div className="rounded-2xl border border-border bg-white p-4 space-y-3">
+                                                <p className="text-xs font-semibold uppercase tracking-wider text-(--vb-blue-bright)">
                                                     ClickUp sync imports <strong className="text-foreground">task fields + attachments</strong>.
                                                     Task data is stored as structured JSON records; CV PDFs still go through OCR.
                                                 </p>
@@ -1659,32 +1772,30 @@ function IntegrationsContent() {
                                                     .
                                                 </p>
                                                 <div className="space-y-1">
-                                                    <p className="text-[11px] text-foreground-muted">Webhook URL</p>
-                                                    <div className="flex gap-2">
-                                                        <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
-                                                            {resolveClickUpWebhookUrl() || "—"}
-                                                        </code>
-                                                        {resolveClickUpWebhookUrl() &&
-                                                            !resolveClickUpWebhookUrl().includes("••••") && (
-                                                                <button
-                                                                    type="button"
-                                                                    className="btn-ghost p-2 rounded-lg border border-border"
-                                                                    onClick={copyClickUpWebhookUrl}
-                                                                    aria-label="Copy ClickUp webhook URL"
-                                                                >
-                                                                    <Copy size={14} />
-                                                                </button>
-                                                            )}
+                                                    <p className="text-[11px] text-foreground-muted">Webhook URL (copy into ClickUp)</p>
+                                                    <div className="flex gap-2 items-start">
+                                                        <textarea
+                                                            readOnly
+                                                            rows={3}
+                                                            value={resolveClickUpWebhookUrl() || ""}
+                                                            className="flex-1 text-xs font-mono leading-relaxed break-all rounded-lg bg-white border border-border px-2.5 py-2 text-foreground resize-y min-h-18 select-all"
+                                                            onFocus={(e) => e.currentTarget.select()}
+                                                            aria-label="ClickUp webhook URL"
+                                                        />
+                                                        {resolveClickUpWebhookUrl() && (
+                                                            <button
+                                                                type="button"
+                                                                className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+                                                                onClick={copyClickUpWebhookUrl}
+                                                            >
+                                                                <Copy size={14} />
+                                                                Copy
+                                                            </button>
+                                                        )}
                                                     </div>
-                                                    {freshIngestKey ? (
-                                                        <p className="text-[11px] text-amber-300 mt-1">
-                                                            Copy webhook URL now — key is shown only once after save/rotate.
-                                                        </p>
-                                                    ) : (
-                                                        <p className="text-[11px] text-foreground-muted mt-1">
-                                                            Rotate ingest key to reveal the full webhook URL for ClickUp.
-                                                        </p>
-                                                    )}
+                                                    <p className="text-[11px] text-foreground-muted mt-1">
+                                                        Full URL includes <code className="text-foreground">?key=</code> — no need to rotate to reveal.
+                                                    </p>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2 pt-1">
                                                     <button
@@ -1715,7 +1826,7 @@ function IntegrationsContent() {
                                                     </button>
                                                     <Link
                                                         href={agentChatHref}
-                                                        className="text-[11px] rounded-lg border border-emerald-500/30 text-emerald-300 px-2.5 py-1.5 hover:bg-emerald-500/10 inline-flex items-center gap-1"
+                                                        className="text-[11px] rounded-lg border border-emerald-300 text-emerald-800 px-2.5 py-1.5 hover:bg-emerald-50 inline-flex items-center gap-1"
                                                     >
                                                         Open agent chat →
                                                     </Link>
@@ -1723,8 +1834,8 @@ function IntegrationsContent() {
                                             </div>
                                         )}
 
-                                        <div className="rounded-2xl border border-[rgba(56,182,255,0.25)] bg-[rgba(56,182,255,0.05)] p-4 space-y-3">
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--vb-blue-bright)]">
+                                        <div className="rounded-2xl border border-border bg-white p-4 space-y-3">
+                                            <p className="text-xs font-semibold uppercase tracking-wider text-(--vb-blue-bright)">
                                                 System push endpoint (all connectors)
                                             </p>
                                             <p className="text-[11px] text-foreground-muted leading-relaxed">
@@ -1751,7 +1862,7 @@ function IntegrationsContent() {
                                             {connectionsForActive.length > 0 && (
                                                 <div className="space-y-2">
                                                     <select
-                                                        className="w-full rounded-lg border border-border bg-black/20 px-2.5 py-2 text-xs"
+                                                        className="w-full rounded-lg border border-border bg-white px-2.5 py-2 text-xs"
                                                         value={activeConn.connectionId}
                                                         onChange={(e) => {
                                                             const id = e.target.value;
@@ -1785,24 +1896,31 @@ function IntegrationsContent() {
                                             )}
                                             <div className="space-y-1">
                                                 <p className="text-[11px] text-foreground-muted">
-                                                    Per-connection push URL
+                                                    Per-connection push URL (all connectors)
                                                 </p>
-                                                <div className="flex gap-2">
-                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
-                                                        {resolveConnectionPushUrl() || "—"}
-                                                    </code>
-                                                    {resolveConnectionPushUrl() &&
-                                                        !resolveConnectionPushUrl().includes("••••") && (
-                                                            <button
-                                                                type="button"
-                                                                className="btn-ghost p-2 rounded-lg border border-border"
-                                                                onClick={copyConnectionPushUrl}
-                                                                aria-label="Copy push URL"
-                                                            >
-                                                                <Copy size={14} />
-                                                            </button>
-                                                        )}
+                                                <div className="flex gap-2 items-start">
+                                                    <textarea
+                                                        readOnly
+                                                        rows={3}
+                                                        value={resolveConnectionPushUrl() || ""}
+                                                        className="flex-1 text-xs font-mono leading-relaxed break-all rounded-lg bg-white border border-border px-2.5 py-2 text-foreground resize-y min-h-18 select-all"
+                                                        onFocus={(e) => e.currentTarget.select()}
+                                                        aria-label="Per-connection push URL"
+                                                    />
+                                                    {resolveConnectionPushUrl() && (
+                                                        <button
+                                                            type="button"
+                                                            className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+                                                            onClick={copyConnectionPushUrl}
+                                                        >
+                                                            <Copy size={14} />
+                                                            Copy
+                                                        </button>
+                                                    )}
                                                 </div>
+                                                <p className="text-[11px] text-foreground-muted">
+                                                    Full URL includes <code className="text-foreground">?key=</code> for every connector — copy as-is.
+                                                </p>
                                             </div>
                                             <p className="text-[11px] text-foreground-muted">
                                                 <strong className="text-foreground">Structured data (all agents):</strong> POST JSON{" "}
@@ -1811,7 +1929,7 @@ function IntegrationsContent() {
                                                 <code className="text-[10px]">recordType</code>, connection agent default, or{" "}
                                                 <code className="text-[10px]">phase3Agent</code>.
                                             </p>
-                                            <pre className="text-[10px] rounded-lg bg-black/20 border border-border px-2.5 py-2 overflow-x-auto text-foreground-muted max-h-32">
+                                            <pre className="text-[10px] rounded-lg bg-white border border-border px-2.5 py-2 overflow-x-auto text-foreground-muted max-h-32">
                                                 {structuredRecordPushBodyExample(
                                                     String(
                                                         form.phase3Agent ||
@@ -1833,18 +1951,26 @@ function IntegrationsContent() {
                                                 <p className="text-[11px] text-foreground-muted">
                                                     Shared ingest URL (alternative)
                                                 </p>
-                                                <div className="flex gap-2">
-                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
-                                                        {activeConn.ingestUrl || "—"}
-                                                    </code>
-                                                    {activeConn.ingestUrl && (
+                                                <div className="flex gap-2 items-start">
+                                                    <textarea
+                                                        readOnly
+                                                        rows={2}
+                                                        value={resolveSharedIngestUrlWithKey() || ""}
+                                                        className="flex-1 text-xs font-mono leading-relaxed break-all rounded-lg bg-white border border-border px-2.5 py-2 text-foreground resize-y min-h-11 select-all"
+                                                        onFocus={(e) => e.currentTarget.select()}
+                                                        aria-label="Shared ingest URL"
+                                                    />
+                                                    {resolveSharedIngestUrlWithKey() && (
                                                         <button
                                                             type="button"
-                                                            className="btn-ghost p-2 rounded-lg border border-border"
-                                                            onClick={() => copyText(activeConn.ingestUrl!)}
-                                                            aria-label="Copy URL"
+                                                            className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+                                                            onClick={() => {
+                                                                const u = resolveSharedIngestUrlWithKey();
+                                                                if (u) void copyText(u);
+                                                            }}
                                                         >
                                                             <Copy size={14} />
+                                                            Copy
                                                         </button>
                                                     )}
                                                 </div>
@@ -1862,24 +1988,32 @@ function IntegrationsContent() {
                                                             ? `Custom header: ${activeConn.config?.ingestCustomHeaderName || activeConn.ingestCustomHeaderName || "X-Api-Key"}`
                                                             : "Ingest API key (X-Integration-Key / ?key=)"}
                                                 </p>
-                                                <div className="flex gap-2">
-                                                    <code className="flex-1 text-[11px] break-all rounded-lg bg-black/20 border border-border px-2.5 py-2">
-                                                        {freshIngestKey || activeConn.ingestApiKeyMasked || "••••"}
-                                                    </code>
-                                                    {freshIngestKey && (
+                                                <div className="flex gap-2 items-start">
+                                                    <textarea
+                                                        readOnly
+                                                        rows={2}
+                                                        value={resolveVisibleIngestKey() || ""}
+                                                        className="flex-1 text-xs font-mono leading-relaxed break-all rounded-lg bg-white border border-border px-2.5 py-2 text-foreground resize-y min-h-11 select-all"
+                                                        onFocus={(e) => e.currentTarget.select()}
+                                                        aria-label="Ingest API key"
+                                                    />
+                                                    {resolveVisibleIngestKey() && (
                                                         <button
                                                             type="button"
-                                                            className="btn-ghost p-2 rounded-lg border border-border"
-                                                            onClick={() => copyText(freshIngestKey)}
-                                                            aria-label="Copy key"
+                                                            className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+                                                            onClick={() => {
+                                                                const key = resolveVisibleIngestKey();
+                                                                if (key) void copyText(key);
+                                                            }}
                                                         >
                                                             <Copy size={14} />
+                                                            Copy
                                                         </button>
                                                     )}
                                                 </div>
                                                 {freshIngestKey ? (
                                                     <p className="text-[11px] text-amber-300 mt-1">
-                                                        Copy push URL + key now — shown only once after save/rotate.
+                                                        New key after rotate — update any saved webhooks that used the old one.
                                                     </p>
                                                 ) : (
                                                     <button
@@ -1908,7 +2042,7 @@ function IntegrationsContent() {
                                                 </button>
                                                 <Link
                                                     href={agentChatHref}
-                                                    className="text-[11px] rounded-lg border border-emerald-500/30 text-emerald-300 px-2.5 py-1.5 hover:bg-emerald-500/10 inline-flex items-center gap-1"
+                                                    className="text-[11px] rounded-lg border border-emerald-300 text-emerald-800 px-2.5 py-1.5 hover:bg-emerald-50 inline-flex items-center gap-1"
                                                 >
                                                     Open agent chat →
                                                 </Link>
@@ -1934,7 +2068,7 @@ function IntegrationsContent() {
                                                 type="button"
                                                 onClick={disconnect}
                                                 disabled={saving}
-                                                className="flex-1 rounded-xl px-4 py-2.5 text-sm inline-flex items-center justify-center gap-2 border border-rose-500/30 text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+                                                className="flex-1 rounded-xl px-4 py-2.5 text-sm inline-flex items-center justify-center gap-2 border border-rose-300 text-rose-800 hover:bg-rose-50 disabled:opacity-50"
                                             >
                                                 <Trash2 size={14} /> Disconnect
                                             </button>

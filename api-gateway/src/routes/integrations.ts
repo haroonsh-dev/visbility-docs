@@ -12,6 +12,7 @@ import {
     rotateIngestKey,
     ingestViaIntegration,
     clickUpWebhook,
+    slackWebhook,
     pushViaConnection,
     listIntegrationFiles,
     listClickUpListsForConnection,
@@ -41,6 +42,8 @@ router.post('/ingest', ingestLimiter, upload.single('file'), ingestViaIntegratio
 router.post('/connections/:id/push', ingestLimiter, upload.single('file'), pushViaConnection);
 /** Public ClickUp webhook — ?key= matches connection ingest API key */
 router.post('/clickup/:id/webhook', ingestLimiter, clickUpWebhook);
+/** Public Slack Events webhook — same universal flow as ClickUp */
+router.post('/slack/:id/webhook', ingestLimiter, slackWebhook);
 
 router.use(authenticate);
 router.get('/', listIntegrations);

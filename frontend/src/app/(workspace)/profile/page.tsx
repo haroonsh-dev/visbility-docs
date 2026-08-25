@@ -57,7 +57,7 @@ function ProfileContent() {
 
     const roleColors: Record<string, { bg: string; text: string; border: string }> = {
         superAdmin: { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200" },
-        admin: { bg: "bg-[rgba(56,182,255,0.1)]", text: "text-[var(--vb-blue-dark)]", border: "border-[rgba(56,182,255,0.28)]" },
+        admin: { bg: "bg-[rgba(56,182,255,0.1)]", text: "text-(--vb-blue-dark)", border: "border-[rgba(56,182,255,0.28)]" },
         team: { bg: "bg-slate-50", text: "text-slate-600", border: "border-slate-200" },
     };
     const rc = roleColors[displayRole] || roleColors.team;
@@ -89,7 +89,7 @@ function ProfileContent() {
                     </div>
                     <div className="flex-1 min-w-0">
                         <h2 className="text-lg sm:text-xl font-bold tracking-tight truncate">{user?.fullName || user?.username || "User"}</h2>
-                        <p className="text-[var(--vb-blue-bright)] text-xs sm:text-sm truncate">{user?.email || "No email"}</p>
+                        <p className="text-(--vb-blue-bright) text-xs sm:text-sm truncate">{user?.email || "No email"}</p>
                         <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/15 backdrop-blur-sm border border-white/20">
                                 <Shield size={10} /> {displayRole}
@@ -115,7 +115,7 @@ function ProfileContent() {
                         onClick={() => setActiveTab(tab.id)}
                         className={`relative px-4 py-2 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-all ${
                             activeTab === tab.id
-                                ? "text-[var(--vb-blue-dark)]"
+                                ? "text-(--vb-blue-dark)"
                                 : "text-slate-500 hover:text-slate-700"
                         }`}
                     >
@@ -172,7 +172,7 @@ function ProfileContent() {
                         >
                             <div className="px-5 py-3 border-b border-slate-100 bg-linear-to-r from-[rgba(56,182,255,0.04)] to-[rgba(63,116,255,0.03)]">
                                 <div className="flex items-center gap-2.5">
-                                    <div className="w-8 h-8 rounded-lg bg-[var(--vb-blue)] text-[var(--vb-color-primary-btn-fg)] flex items-center justify-center shadow-[var(--vb-glow)]">
+                                    <div className="w-8 h-8 rounded-lg bg-(--vb-blue) text-(--vb-color-primary-btn-fg) flex items-center justify-center shadow-(--vb-glow)">
                                         <Pencil size={14} />
                                     </div>
                                     <div>

@@ -176,10 +176,18 @@ function enrichMetadataFromStructuredData(
         meta.cvScore = score;
     }
 
-    if (type === 'candidate' || type === 'employee' || type === 'resume') {
+    if (type === 'candidate' || type === 'employee' || type === 'resume' || type === 'payroll' || type === 'leave' || type === 'attendance' || type === 'performance') {
         meta.structuredHrRecord = true;
     }
-    if (type === 'invoice' || type === 'purchase_order') {
+    if (
+        type === 'invoice' ||
+        type === 'expense' ||
+        type === 'payment' ||
+        type === 'tax' ||
+        type === 'bank_statement' ||
+        type === 'budget' ||
+        type === 'finance_report'
+    ) {
         meta.structuredFinanceRecord = true;
     }
     if (type === 'certificate' || type === 'audit' || type === 'inspection' || type === 'capa' || type === 'compliance' || type === 'sop' || type === 'iso') {
@@ -188,8 +196,19 @@ function enrichMetadataFromStructuredData(
     if (type === 'contract' || type === 'nda' || type === 'agreement' || type === 'lease' || type === 'vendor_contract') {
         meta.structuredLegalRecord = true;
     }
-    if (type === 'quotation' || type === 'rfq' || type === 'supplier' || type === 'delivery_note' || type === 'procurement_request' || type === 'po') {
+    if (
+        type === 'purchase_order' ||
+        type === 'quotation' ||
+        type === 'rfq' ||
+        type === 'supplier' ||
+        type === 'delivery_note' ||
+        type === 'procurement_request' ||
+        type === 'po'
+    ) {
         meta.structuredProcurementRecord = true;
+    }
+    if (type === 'task' || type === 'generic') {
+        meta.structuredOtherRecord = true;
     }
 
     return meta;

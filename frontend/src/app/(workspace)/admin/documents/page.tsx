@@ -284,7 +284,7 @@ function AdminDocumentsContent() {
                                 </span>
                             )}
                             {scoreFilter && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.2)] bg-blue-500/10 px-2.5 py-1 text-[11px] text-[var(--vb-blue-bright)]">
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(56,182,255,0.2)] bg-blue-500/10 px-2.5 py-1 text-[11px] text-(--vb-blue-bright)">
                                     {SCORE_FILTER_OPTIONS.find((o) => o.value === scoreFilter)?.label}
                                     <button type="button" onClick={() => { setScoreFilter(""); setPagination((prev) => ({ ...prev, page: 1 })); }} className="hover:text-white" aria-label="Clear score">
                                         <X size={11} />

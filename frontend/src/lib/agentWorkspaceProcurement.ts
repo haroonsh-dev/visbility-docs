@@ -1,6 +1,10 @@
 import type { ChatVisualSpec } from "@/types/chatVisuals";
 import type { PortfolioFile } from "@/lib/agentWorkspaceKpis";
-import type { WorkspaceCoverage, WorkspaceMetrics } from "@/lib/agentWorkspaceInsights";
+import {
+    getSkippedDocumentIds,
+    type WorkspaceCoverage,
+    type WorkspaceMetrics,
+} from "@/lib/agentWorkspaceInsights";
 import type { AgentVaultDoc } from "@/hooks/useAgentPortfolio";
 import { docTypeLabel, inferDocTypeFromFilename } from "@/lib/documentAgents";
 
@@ -23,6 +27,8 @@ export type ProcPriority = {
     tone: "warn" | "info";
     prompt?: string;
     chartView?: string;
+    documentIds?: string[];
+    approveKind?: "shortlist" | "reprocess";
 };
 
 export type ProcurementSnapshot = {
@@ -227,12 +233,15 @@ export function deriveProcurementSnapshot(
         });
     }
     if (metrics.skippedDocs > 0) {
+        const skippedIds = getSkippedDocumentIds(coverage);
         priorities.push({
             id: "fix",
             title: `${metrics.skippedDocs} file${metrics.skippedDocs === 1 ? "" : "s"} not in charts`,
-            detail: "Reprocess POs and quotes so spend and status views populate.",
+            detail: "Approve to reprocess POs and quotes so spend and status views populate.",
             tone: "warn",
-            prompt: "Why are some procurement files not in charts?",
+            documentIds: skippedIds.length ? skippedIds : undefined,
+            approveKind: skippedIds.length ? "reprocess" : undefined,
+            prompt: skippedIds.length ? undefined : "Why are some procurement files not in charts?",
         });
     }
     if (spend.topSupplierShare != null && spend.topSupplierShare >= 40) {

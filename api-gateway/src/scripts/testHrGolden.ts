@@ -16,6 +16,7 @@ import {
 } from '../services/hrChatReportService';
 import { classifyHrWorkIntent } from '../services/hrIntentRouter';
 import { HR_AGENT } from '../services/offerLetterGenerationService';
+import { parseCandidateNameFromMessage } from '../services/hrChatActionService';
 
 function assert(cond: boolean, msg: string) {
     if (!cond) throw new Error(msg);
@@ -167,6 +168,19 @@ check('parse performance + transcript', () => {
         { student_name: 'Sara', institution_name: 'NUST', degree_program: 'CS', gpa_cgpa: 3.7 }
     );
     assert(tr.transcripts?.[0].gpa === 3.7, 'gpa');
+});
+
+check('parseCandidateName accepts of/for', () => {
+    assert(
+        parseCandidateNameFromMessage('generate offer letter of Haroon Shahid') === 'Haroon Shahid',
+        'of'
+    );
+    assert(
+        parseCandidateNameFromMessage(
+            'Generate offer letter for Ahmed Khan. Company Visibility Bots, title AI Engineer'
+        ) === 'Ahmed Khan',
+        'for'
+    );
 });
 
 console.log(`\n${passed} checks passed`);

@@ -20,6 +20,8 @@ export type PendingAction = {
     detail?: string;
     impact: "high" | "medium" | "low";
     actionLabel: "Approve" | "Review" | "Run" | "Fix" | "Shortlist";
+    /** Approve executes shortlist (HR) or document reprocess (all agents). */
+    approveKind?: "shortlist" | "reprocess";
     prompt?: string;
     chartView?: string;
     href?: string;
@@ -42,6 +44,7 @@ type PriorityLike = {
     prompt?: string;
     chartView?: string;
     documentIds?: string[];
+    approveKind?: "shortlist" | "reprocess";
 };
 
 const STATUS_LABEL: Record<VerdictStatus, string> = {
@@ -167,24 +170,35 @@ export function deriveAgentVerdict(
     };
 }
 
+const REPROCESS_PRIORITY_IDS = new Set(["missing-amount", "fix"]);
+
 export function derivePendingActions(
     agentId: AnalyticsAgentId,
     metrics: WorkspaceMetrics,
     attention: AttentionItem[],
     priorities: PriorityLike[] | undefined,
-    integrations: WorkspaceIntegration[]
+    integrations: WorkspaceIntegration[],
+    options?: { skippedDocumentIds?: string[] }
 ): PendingAction[] {
     const actions: PendingAction[] = [];
+    const skippedDocumentIds = options?.skippedDocumentIds?.filter(Boolean) ?? [];
 
     for (const p of (priorities || []).filter((x) => x.tone === "warn").slice(0, 3)) {
-        const shortlistPending = p.id === "unscored-cvs" && (p.documentIds?.length ?? 0) > 0;
+        const shortlistPending =
+            (p.approveKind === "shortlist" || p.id === "unscored-cvs") &&
+            (p.documentIds?.length ?? 0) > 0;
+        const reprocessPending =
+            (p.approveKind === "reprocess" || REPROCESS_PRIORITY_IDS.has(p.id)) &&
+            (p.documentIds?.length ?? 0) > 0;
+        const canApprove = shortlistPending || reprocessPending || Boolean(p.prompt);
         actions.push({
             id: `priority-${p.id}`,
             title: p.title,
             detail: p.detail,
             impact: "high",
-            actionLabel: shortlistPending || p.prompt ? "Approve" : "Review",
-            prompt: shortlistPending ? undefined : p.prompt,
+            actionLabel: canApprove ? "Approve" : "Review",
+            approveKind: shortlistPending ? "shortlist" : reprocessPending ? "reprocess" : undefined,
+            prompt: shortlistPending || reprocessPending ? undefined : p.prompt,
             chartView: p.id === "unscored-cvs" ? undefined : p.chartView,
             documentIds: p.documentIds,
         });
@@ -222,14 +236,20 @@ export function derivePendingActions(
         }
     }
 
-    if (metrics.skippedDocs > 0 && !actions.some((a) => a.id === "fix-skipped")) {
+    const hasSkippedPriority = actions.some(
+        (a) => a.id === "priority-fix" || a.id === "fix-skipped"
+    );
+    if (metrics.skippedDocs > 0 && !hasSkippedPriority) {
+        const canReprocess = skippedDocumentIds.length > 0;
         actions.push({
             id: "fix-skipped",
-            title: `Fix ${metrics.skippedDocs} file${metrics.skippedDocs === 1 ? "" : "s"} not in charts`,
-            detail: "Reprocess or resolve extraction gaps for full portfolio coverage.",
+            title: `${metrics.skippedDocs} file${metrics.skippedDocs === 1 ? "" : "s"} not in charts`,
+            detail: "Approve to reprocess extraction gaps for full portfolio coverage.",
             impact: metrics.skippedDocs >= 3 ? "high" : "medium",
-            actionLabel: "Fix",
-            prompt: `Why are ${metrics.skippedDocs} files not in charts?`,
+            actionLabel: canReprocess ? "Approve" : "Fix",
+            approveKind: canReprocess ? "reprocess" : undefined,
+            documentIds: canReprocess ? skippedDocumentIds : undefined,
+            prompt: canReprocess ? undefined : `Why are ${metrics.skippedDocs} files not in charts?`,
         });
     }
 
