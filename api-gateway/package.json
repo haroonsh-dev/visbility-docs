@@ -19,6 +19,7 @@
     "test:integration-ingest-url": "tsx --tsconfig tsconfig.json src/scripts/testIntegrationIngestUrl.ts",
     "test:clickup-bridge": "tsx --tsconfig tsconfig.json src/scripts/testClickUpBridge.ts",
     "test:policy-blocks-send": "tsx --tsconfig tsconfig.json src/scripts/testPolicyBlocksSend.ts",
+    "test:agent-api": "tsx --tsconfig tsconfig.json src/scripts/testAgentApi.ts",
     "seed:admin": "tsx src/scripts/seedAdmin.ts",
     "seed:plans": "tsx src/scripts/seedPlans.ts",
     "seed": "tsx src/scripts/seedAdmin.ts"

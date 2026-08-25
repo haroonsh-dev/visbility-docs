@@ -324,7 +324,7 @@ export default function AgentWorkspaceShell({
             const message = await onSyncIntegration(connectionId);
             setIntegrationSyncNote({
                 tone: "ok",
-                text: message || "Sync finished — check Documents and refresh the shortlist.",
+                text: message || "Sync complete",
             });
             handleRefresh();
         } catch (e: unknown) {

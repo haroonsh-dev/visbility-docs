@@ -856,9 +856,16 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
 
         if (doc.providerId === 'slack') {
             const result = await syncSlackChannel(doc);
-            const summary = `records=${result.recordsIngested ?? 0} new, ${result.recordsUpdated ?? 0} updated · failed=${result.failed} · messages=${result.taskCount}`;
+            const msgs = Number(result.taskCount || 0);
+            const failed = Number(result.failed || 0);
+            const summary =
+                failed > 0
+                    ? `Sync finished with errors: ${msgs} message${msgs === 1 ? '' : 's'} · ${failed} failed`
+                    : msgs === 0
+                      ? 'Sync complete: no new messages in channel'
+                      : `Sync complete: ${msgs} message${msgs === 1 ? '' : 's'} → synced tasks`;
             doc.lastSyncAt = new Date();
-            doc.lastStatus = result.failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
+            doc.lastStatus = failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
             doc.lastSyncSummary = summary;
             await doc.save();
 
@@ -868,12 +875,12 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
                 resourceType: 'integration',
                 resourceId: doc.connectionId,
                 message: `Slack channel sync: ${summary}`,
-                metadata: { summary },
+                metadata: { summary, taskCount: msgs, failed },
             });
 
             return res.json({
                 success: true,
-                message: `Slack sync finished — ${summary}`,
+                message: summary,
                 data: {
                     ...result,
                     connection: publicConnection(doc.toObject(), req),
@@ -883,9 +890,24 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
 
         if (doc.providerId === 'clickup') {
             const result = await syncClickUpList(doc);
-            const summary = `records=${result.recordsIngested ?? 0} new, ${result.recordsUpdated ?? 0} updated · files=${result.ingested} ingested, ${result.skipped} skipped, ${result.failed} failed · tasks=${result.taskCount}, attachments=${result.attachmentCount ?? 0}`;
+            const tasks = Number(result.taskCount || 0);
+            const attachments = Number(result.attachmentCount || 0);
+            const ingested = Number(result.ingested || 0);
+            const skipped = Number(result.skipped || 0);
+            const failed = Number(result.failed || 0);
+            const parts = [
+                `${tasks} task${tasks === 1 ? '' : 's'}`,
+                `${attachments} attachment${attachments === 1 ? '' : 's'}`,
+            ];
+            if (ingested) parts.push(`${ingested} file${ingested === 1 ? '' : 's'} ingested`);
+            if (skipped) parts.push(`${skipped} skipped`);
+            if (failed) parts.push(`${failed} failed`);
+            const summary =
+                failed > 0
+                    ? `Sync finished with errors: ${parts.join(' · ')}`
+                    : `Sync complete: ${parts.join(' · ')}`;
             doc.lastSyncAt = new Date();
-            doc.lastStatus = result.failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
+            doc.lastStatus = failed ? `sync_partial: ${summary}` : `sync_ok: ${summary}`;
             doc.lastSyncSummary = summary;
             await doc.save();
 
@@ -900,7 +922,7 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
 
             return res.json({
                 success: true,
-                message: `ClickUp sync finished — ${summary}`,
+                message: summary,
                 data: {
                     ...result,
                     connection: publicConnection(doc.toObject(), req),
@@ -911,7 +933,7 @@ export const syncIntegrationFiles = async (req: Request, res: Response, next: Ne
         if (doc.providerId !== 'google_drive') {
             return res.status(400).json({
                 success: false,
-                message: 'Sync is available for Google Drive and ClickUp (list pull) only',
+                message: 'Sync is available for Google Drive, ClickUp, and Slack only',
             });
         }
 

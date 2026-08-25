@@ -19,6 +19,7 @@ import plansRoutes from './routes/plans';
 import integrationsRoutes from './routes/integrations';
 import emailReportsRoutes from './routes/emailReports';
 import agentsToolsRoutes from './routes/agentsTools';
+import { agentApiPublicRouter, agentApiAdminRouter } from './routes/agentApi';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { authenticate } from './middleware/auth';
 import { listAllDocumentIntelligence, reprocessDocument } from './controllers/documentsController';
@@ -81,6 +82,9 @@ app.use('/api/docs/integrations', integrationsRoutes);
 app.use('/api/docs/email-reports', emailReportsRoutes);
 app.use('/api/docs/super-admin', superAdminRoutes);
 app.use('/api/docs/agents', agentsToolsRoutes);
+app.use('/api/docs/agent-api', agentApiAdminRouter);
+/** Public Agent Ask API for external apps (Bearer / X-Agent-Key). */
+app.use('/api/v1/agents', agentApiPublicRouter);
 
 app.use(notFound);
 app.use(errorHandler);

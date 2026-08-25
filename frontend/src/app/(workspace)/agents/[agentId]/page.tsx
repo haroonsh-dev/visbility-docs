@@ -51,8 +51,9 @@ export default function AgentWorkspacePage() {
 
     const syncIntegration = useCallback(async (connectionId: string) => {
         const res = await apiRequest(`/docs/integrations/${connectionId}/sync`, { method: "POST" });
-        return typeof res?.message === "string" ? res.message : undefined;
-    }, []);
+        await refreshIntegrations();
+        return typeof res?.message === "string" ? res.message : "Sync complete";
+    }, [refreshIntegrations]);
 
     if (agentsLoading) {
         return (

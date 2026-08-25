@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
     Key, Shield, Zap, Brain, Sparkles, Globe, Save, Trash2, Loader2, Check, AlertTriangle,
-    Eye, EyeOff, RotateCcw, Coins,
+    Eye, EyeOff, RotateCcw, Coins, Copy, Plug,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { useTheme } from "@/context/ColorContext";
@@ -142,6 +142,22 @@ function SettingsContent() {
     const [financeSaving, setFinanceSaving] = useState(false);
     const [financeSaveSuccess, setFinanceSaveSuccess] = useState<string | null>(null);
 
+    type AgentApiStatus = {
+        hasToken: boolean;
+        tokenMasked: string | null;
+        label: string | null;
+        isActive: boolean;
+        lastUsedAt: string | null;
+        allowedAgents: { id: string; label: string }[];
+        askUrlTemplate: string;
+        exampleAskUrl: string;
+    };
+    const [agentApi, setAgentApi] = useState<AgentApiStatus | null>(null);
+    const [agentApiFreshToken, setAgentApiFreshToken] = useState<string | null>(null);
+    const [agentApiCurl, setAgentApiCurl] = useState<string | null>(null);
+    const [agentApiLoading, setAgentApiLoading] = useState(true);
+    const [agentApiBusy, setAgentApiBusy] = useState(false);
+
     const loadKeys = useCallback(async (opts?: { silent?: boolean }) => {
         const useSilent = opts?.silent || Boolean(settingsCache && Date.now() - settingsCache.at < SETTINGS_CACHE_MS);
         if (!useSilent) setLoading(true);
@@ -196,6 +212,74 @@ function SettingsContent() {
     useEffect(() => {
         void loadFinanceSettings();
     }, [loadFinanceSettings]);
+
+    const loadAgentApi = useCallback(async () => {
+        setAgentApiLoading(true);
+        try {
+            const res = await apiRequest("/docs/agent-api/token");
+            setAgentApi((res?.data as AgentApiStatus) || null);
+        } catch {
+            setAgentApi(null);
+        } finally {
+            setAgentApiLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadAgentApi();
+    }, [loadAgentApi]);
+
+    const rotateAgentApi = async () => {
+        if (
+            agentApi?.hasToken &&
+            !confirm("Rotate Agent API token? Existing integrations using the old key will stop working.")
+        ) {
+            return;
+        }
+        setAgentApiBusy(true);
+        setError(null);
+        setSaveSuccess(null);
+        try {
+            const res = await apiRequest("/docs/agent-api/token/rotate", {
+                method: "POST",
+                body: JSON.stringify({ label: "Agent API" }),
+            });
+            setAgentApiFreshToken(res?.data?.token || null);
+            setAgentApiCurl(res?.data?.curlExample || null);
+            setSaveSuccess(res?.message || "Agent API token ready — copy it now");
+            await loadAgentApi();
+        } catch (e: any) {
+            setError(e.message || "Failed to create Agent API token");
+        } finally {
+            setAgentApiBusy(false);
+        }
+    };
+
+    const revokeAgentApi = async () => {
+        if (!confirm("Revoke Agent API token? External apps will lose access immediately.")) return;
+        setAgentApiBusy(true);
+        setError(null);
+        try {
+            await apiRequest("/docs/agent-api/token", { method: "DELETE" });
+            setAgentApiFreshToken(null);
+            setAgentApiCurl(null);
+            setSaveSuccess("Agent API token revoked");
+            await loadAgentApi();
+        } catch (e: any) {
+            setError(e.message || "Failed to revoke token");
+        } finally {
+            setAgentApiBusy(false);
+        }
+    };
+
+    const copyText = async (text: string) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setSaveSuccess("Copied to clipboard");
+        } catch {
+            setError("Could not copy");
+        }
+    };
 
     const saveFinanceSettings = async () => {
         setFinanceSaving(true);
@@ -373,11 +457,123 @@ function SettingsContent() {
                 </div>
             )}
             {saveSuccess && (
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 px-4 py-3 text-sm flex items-center gap-2">
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 px-4 py-3 text-sm flex items-center gap-2">
                     <Check size={16} />
                     {saveSuccess}
                 </div>
             )}
+
+            {/* Agent API — external apps */}
+            <div className="rounded-2xl border border-border bg-white p-5 space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <Plug size={18} className="text-(--vb-blue-dark)" />
+                            <h3 className="text-sm font-bold text-foreground">Agent API (for customer apps)</h3>
+                        </div>
+                        <p className="text-xs text-foreground-muted mt-1 leading-relaxed max-w-2xl">
+                            Give partners a token + endpoint so their own application can call your agents
+                            (Compliance, HR, Finance, …) without opening Visibility UI.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={() => void rotateAgentApi()}
+                            disabled={agentApiBusy}
+                            className="btn-secondary rounded-xl px-3 py-2 text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                            {agentApiBusy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                            {agentApi?.hasToken ? "Rotate token" : "Create token"}
+                        </button>
+                        {agentApi?.hasToken && agentApi.isActive && (
+                            <button
+                                type="button"
+                                onClick={() => void revokeAgentApi()}
+                                disabled={agentApiBusy}
+                                className="rounded-xl px-3 py-2 text-xs border border-rose-300 text-rose-800 hover:bg-rose-50 disabled:opacity-50"
+                            >
+                                Revoke
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {agentApiLoading ? (
+                    <p className="text-xs text-foreground-muted inline-flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin" /> Loading…
+                    </p>
+                ) : (
+                    <div className="space-y-3">
+                        <div className="space-y-1">
+                            <p className="text-[11px] text-foreground-muted">Ask URL (all agents on your plan)</p>
+                            <div className="flex gap-2 items-start">
+                                <code className="flex-1 text-xs font-mono break-all rounded-lg border border-border bg-white px-2.5 py-2">
+                                    {agentApi?.askUrlTemplate || "—"}
+                                </code>
+                                {agentApi?.askUrlTemplate && (
+                                    <button
+                                        type="button"
+                                        className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1"
+                                        onClick={() => void copyText(agentApi.askUrlTemplate)}
+                                    >
+                                        <Copy size={12} /> Copy
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <p className="text-[11px] text-foreground-muted">API token</p>
+                            <div className="flex gap-2 items-start">
+                                <textarea
+                                    readOnly
+                                    rows={2}
+                                    value={agentApiFreshToken || agentApi?.tokenMasked || "No token yet — click Create token"}
+                                    className="flex-1 text-xs font-mono rounded-lg border border-border bg-white px-2.5 py-2 text-foreground resize-y min-h-11 select-all"
+                                    onFocus={(e) => e.currentTarget.select()}
+                                />
+                                {agentApiFreshToken && (
+                                    <button
+                                        type="button"
+                                        className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1"
+                                        onClick={() => void copyText(agentApiFreshToken)}
+                                    >
+                                        <Copy size={12} /> Copy
+                                    </button>
+                                )}
+                            </div>
+                            {agentApiFreshToken && (
+                                <p className="text-[11px] text-amber-700">
+                                    Copy the full token now — it won’t be shown again after you leave this page.
+                                </p>
+                            )}
+                        </div>
+                        {agentApi?.allowedAgents && agentApi.allowedAgents.length > 0 && (
+                            <p className="text-[11px] text-foreground-muted">
+                                Entitled agents:{" "}
+                                <strong className="text-foreground">
+                                    {agentApi.allowedAgents.map((a) => a.label).join(", ")}
+                                </strong>
+                            </p>
+                        )}
+                        {agentApiCurl && (
+                            <div className="space-y-1">
+                                <p className="text-[11px] text-foreground-muted">Example cURL</p>
+                                <pre className="text-[10px] rounded-lg border border-border bg-white px-2.5 py-2 overflow-x-auto text-foreground-muted whitespace-pre-wrap">
+                                    {agentApiCurl}
+                                </pre>
+                                <button
+                                    type="button"
+                                    className="text-[11px] text-accent hover:underline inline-flex items-center gap-1"
+                                    onClick={() => void copyText(agentApiCurl)}
+                                >
+                                    <Copy size={11} /> Copy cURL
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
 
             {/* Active Provider Selector Card */}
             <div className="surface-card border border-border rounded-2xl p-5 space-y-3 bg-linear-to-r from-surface-2/60 to-surface">

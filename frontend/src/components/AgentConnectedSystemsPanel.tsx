@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { AlertCircle, CheckCircle2, ExternalLink, Plug, RefreshCw } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Plug, RefreshCw } from "lucide-react";
 import {
     connectionMode,
     formatLastSync,
@@ -152,9 +152,16 @@ export default function AgentConnectedSystemsPanel({
                                         type="button"
                                         disabled={syncingId === c.connectionId}
                                         onClick={() => onSync(c.connectionId)}
-                                        className="btn-secondary rounded-lg px-2.5 py-1.5 text-[10px] font-semibold shrink-0 disabled:opacity-50"
+                                        className="btn-secondary rounded-lg px-2.5 py-1.5 text-[10px] font-semibold shrink-0 disabled:opacity-50 inline-flex items-center gap-1"
                                     >
-                                        {syncingId === c.connectionId ? "…" : "Sync now"}
+                                        {syncingId === c.connectionId ? (
+                                            <>
+                                                <Loader2 size={11} className="animate-spin" />
+                                                Syncing…
+                                            </>
+                                        ) : (
+                                            "Sync now"
+                                        )}
                                     </button>
                                 )}
                             </div>
@@ -165,16 +172,18 @@ export default function AgentConnectedSystemsPanel({
             {syncNote && (
                 <div
                     className={cn(
-                        "px-4 py-2.5 border-t border-border text-[11px] flex items-start gap-2",
+                        "px-4 py-3 border-t border-border text-xs font-medium flex items-start gap-2",
                         syncNote.tone === "ok"
-                            ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/5"
-                            : "text-red-700 dark:text-red-400 bg-red-500/5"
+                            ? "text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20"
+                            : "text-red-800 dark:text-red-300 bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20"
                     )}
+                    role="status"
+                    aria-live="polite"
                 >
                     {syncNote.tone === "ok" ? (
-                        <CheckCircle2 size={12} className="shrink-0 mt-0.5" />
+                        <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
                     ) : (
-                        <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                        <AlertCircle size={14} className="shrink-0 mt-0.5" />
                     )}
                     <span>{syncNote.text}</span>
                 </div>

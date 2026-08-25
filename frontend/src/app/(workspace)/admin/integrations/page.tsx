@@ -630,7 +630,7 @@ function IntegrationsContent() {
                 method: "POST",
                 body: JSON.stringify({}),
             });
-            setSuccess(res?.message || "Sync finished");
+            setSuccess(res?.message || "Sync complete");
             await loadConnections({ force: true });
         } catch (e: any) {
             setError(e.message || "Sync failed");
@@ -1742,11 +1742,16 @@ function IntegrationsContent() {
                                                         className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
                                                     >
                                                         {syncing ? (
-                                                            <Loader2 size={11} className="animate-spin" />
+                                                            <>
+                                                                <Loader2 size={11} className="animate-spin" />
+                                                                Syncing…
+                                                            </>
                                                         ) : (
-                                                            <Download size={11} />
+                                                            <>
+                                                                <Download size={11} />
+                                                                Sync channel messages now
+                                                            </>
                                                         )}
-                                                        Sync channel messages now
                                                     </button>
                                                 </div>
                                             </div>
@@ -1818,11 +1823,16 @@ function IntegrationsContent() {
                                                         className="text-[11px] rounded-lg border border-border px-2.5 py-1.5 hover:bg-surface-2 inline-flex items-center gap-1 disabled:opacity-50"
                                                     >
                                                         {syncing ? (
-                                                            <Loader2 size={11} className="animate-spin" />
+                                                            <>
+                                                                <Loader2 size={11} className="animate-spin" />
+                                                                Syncing…
+                                                            </>
                                                         ) : (
-                                                            <Download size={11} />
+                                                            <>
+                                                                <Download size={11} />
+                                                                Sync existing attachments now
+                                                            </>
                                                         )}
-                                                        Sync existing attachments now
                                                     </button>
                                                     <Link
                                                         href={agentChatHref}
