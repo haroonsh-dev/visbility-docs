@@ -867,11 +867,16 @@ class ChatService:
                     doc_extractions[did]["type"] = ext_type
                     doc_extractions[did]["data"].update(parsed)
 
+            from .invoice_line_item_repair import repair_invoice_extraction, format_invoice_total_analysis_lines
+
             for did, ext_info in doc_extractions.items():
-                parsed = ext_info["data"]
+                parsed = repair_invoice_extraction(ext_info["data"])
+                ext_info["data"] = parsed
                 title = doc_info.get(did, did)
                 lines.append(f"\n  Document: {title}  (id: {did})")
                 lines.append(f"  Type: {ext_info['type']}")
+                for note in format_invoice_total_analysis_lines(parsed):
+                    lines.append(note)
 
                 for key, val in parsed.items():
                     if key.startswith("_"):
@@ -897,9 +902,16 @@ class ChatService:
                 parsed_count += 1
 
             if parsed_count > 1 and totals:
-                lines.append("\n  --- Aggregated Totals ---")
+                lines.append("\n  --- Aggregated Totals (portfolio — per-file totals may differ) ---")
+                skip_sum = {"total_amount", "grand_total", "subtotal", "tax_amount", "discount_amount"}
                 for key, val in sorted(totals.items()):
-                    lines.append(f"    Sum of {key}: {val}")
+                    if key in skip_sum:
+                        lines.append(
+                            f"    Sum of {key} across {parsed_count} documents: {val} "
+                            f"(for one invoice use AUTHORITATIVE_INVOICE_TOTAL on that file only)"
+                        )
+                    else:
+                        lines.append(f"    Sum of {key}: {val}")
 
             result = "\n".join(lines)
             return result
@@ -1295,6 +1307,8 @@ class ChatService:
                     "You are Visibility Docs AI.\n\n"
                     "Use ONLY the provided document context to answer the user's question.\n"
                     "If the user asks for vendor/client lists, invoices, or CVs, extract the matching rows/fields from the context.\n"
+                    "For invoices: always use AUTHORITATIVE_INVOICE_TOTAL / total_amount from the printed summary as the invoice total.\n"
+                    "If LINE_ITEMS_WARNING is present, line rows are incomplete — state the printed total and note that row sums may not match.\n"
                     "If the answer is missing, say clearly what is not in the documents.\n"
                     "Do not invent numbers, dates, or names.\n"
                 )

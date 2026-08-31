@@ -179,3 +179,36 @@ def repair_invoice_extraction(data: dict[str, Any] | None) -> dict[str, Any]:
         out["subtotal"] = round(line_sum, 2)
 
     return out
+
+
+def format_invoice_total_analysis_lines(data: dict[str, Any] | None) -> list[str]:
+    """Context lines for RAG/chat: printed total is authoritative when line rows disagree."""
+    repaired = repair_invoice_extraction(data if isinstance(data, dict) else {})
+    if not repaired:
+        return []
+    lines: list[str] = []
+    currency = str(repaired.get("currency") or "PKR").strip() or "PKR"
+    printed = (
+        _num(repaired.get("total_amount"))
+        or _num(repaired.get("grand_total"))
+        or _num(repaired.get("Total Amount"))
+    )
+    subtotal = _num(repaired.get("subtotal"))
+    if printed is not None:
+        lines.append(
+            f"    AUTHORITATIVE_INVOICE_TOTAL: {printed} {currency} "
+            f"(printed Grand Total on document — use this for invoice total)"
+        )
+    if subtotal is not None:
+        lines.append(f"    subtotal_on_document: {subtotal} {currency}")
+    if repaired.get("_line_items_total_mismatch"):
+        line_sum = repaired.get("_line_items_sum")
+        lines.append(
+            f"    LINE_ITEMS_WARNING: extracted rows sum to {line_sum} {currency} "
+            f"but printed total is {printed} {currency}; Qty/Rate columns may be incomplete — "
+            f"never replace total_amount with the sum of partial line_items"
+        )
+    items = repaired.get("line_items")
+    if isinstance(items, list) and items and not repaired.get("_line_items_total_mismatch"):
+        lines.append(f"    line_items_count: {len(items)} (row totals match printed total)")
+    return lines

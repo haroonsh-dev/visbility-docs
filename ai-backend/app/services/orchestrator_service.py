@@ -170,7 +170,7 @@ class OrchestratorService:
                 ocr_thread.start()
 
                 log.step("CLASSIFICATION")
-                log.agent_call("classification_agent", "classification_agent.md", "Groq API")
+                log.agent_call("classification_agent", "classification_agent.md", "Active AI provider")
                 t0 = time.time()
                 classification = classification_agent.classify(direct_text, doc.get("title", ""))
                 class_duration = int((time.time() - t0) * 1000)
@@ -196,7 +196,7 @@ class OrchestratorService:
                 log.ok(f"Extracted {len(raw_text)} chars, {page_count} pages")
 
                 log.step("CLASSIFICATION")
-                log.agent_call("classification_agent", "classification_agent.md", "Groq API")
+                log.agent_call("classification_agent", "classification_agent.md", "Active AI provider")
                 self.update_stage(document_id, organization_id, "classifying", 50, "running")
                 t0 = time.time()
                 classification = classification_agent.classify(raw_text, doc.get("title", ""))
@@ -318,7 +318,7 @@ class OrchestratorService:
             direct_text = self._extract_direct_text(file_path, max_pages=2)
             if direct_text.strip():
                 log.step("CLASSIFICATION")
-                log.agent_call("classification_agent", "classification_agent.md", "Groq API (llama-8b)")
+                log.agent_call("classification_agent", "classification_agent.md", "Active AI provider")
                 log.info(f"Classifying from direct text while OCR runs in background...")
                 self.update_stage(document_id, organization_id, "classifying", 50, "running")
                 t0 = time.time()
@@ -352,7 +352,7 @@ class OrchestratorService:
             # Classify from OCR text if direct text wasn't available
             if not direct_text.strip():
                 log.step("CLASSIFICATION")
-                log.agent_call("classification_agent", "classification_agent.md", "Groq API (llama-8b)")
+                log.agent_call("classification_agent", "classification_agent.md", "Active AI provider")
                 log.info("No direct text — classifying from OCR output")
                 self.update_stage(document_id, organization_id, "classifying", 50, "running")
                 t0 = time.time()
@@ -457,7 +457,7 @@ class OrchestratorService:
                 effective_agent = agent_type
 
                 log.step("ENTITY EXTRACTION")
-                log.agent_call(effective_agent, f"phase3/{effective_agent}.md", "Groq API (llama-70b)")
+                log.agent_call(effective_agent, f"phase3/{effective_agent}.md", "Active AI provider")
                 log.info("Running in parallel with embedding...")
 
                 ext_future = pool.submit(category_agents.extract, raw_text, doc_type, effective_agent)

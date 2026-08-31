@@ -68,6 +68,7 @@ class FileType(str, Enum):
     XLSX = "xlsx"
     PPTX = "pptx"
     TXT = "txt"
+    PAGES = "pages"
     UNKNOWN = "unknown"
 
 
@@ -102,7 +103,9 @@ def detect_file_type(file_path: str) -> FileType:
         return FileType.XLSX
     if ext in {".pptx", ".ppt"}:
         return FileType.PPTX
-    if ext in {".txt", ".csv", ".json", ".xml", ".html", ".md"}:
+    if ext == ".pages":
+        return FileType.PAGES
+    if ext in {".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"}:
         return FileType.TXT
 
     logger.warning(f"Unknown file type for {file_path}, treating as scanned")
@@ -138,6 +141,79 @@ def _extract_digital_pdf(file_path: str) -> str:
     result = "\n\n".join(pages)
     result = _normalize_markdown(result)
     return result
+
+
+def _extract_pages(file_path: str) -> str:
+    """
+    Apple Pages (.pages) is a zip package. Prefer embedded Preview.pdf for text/OCR.
+    Falls back to Preview images via vision OCR when no PDF preview exists.
+    """
+    import tempfile
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            names = zf.namelist()
+            pdf_candidates = [
+                n
+                for n in names
+                if n.lower().endswith(".pdf")
+                and not n.endswith("/")
+            ]
+            # Prefer QuickLook / Preview paths
+            pdf_candidates.sort(
+                key=lambda n: (
+                    0
+                    if "preview" in n.lower() or "quicklook" in n.lower()
+                    else 1,
+                    len(n),
+                )
+            )
+            if pdf_candidates:
+                with tempfile.TemporaryDirectory(prefix="pages_pdf_") as td:
+                    target = pdf_candidates[0]
+                    out_pdf = os.path.join(td, "preview.pdf")
+                    with zf.open(target) as src, open(out_pdf, "wb") as dst:
+                        dst.write(src.read())
+                    text = _extract_digital_pdf(out_pdf)
+                    if text and len(text.strip()) >= 40:
+                        return text
+                    vision_text = process_scanned_pdf(out_pdf)
+                    if vision_text and vision_text != "[OCR failed]":
+                        return vision_text
+                    return text or ""
+
+            image_candidates = [
+                n
+                for n in names
+                if n.lower().endswith((".jpg", ".jpeg", ".png"))
+                and not n.endswith("/")
+            ]
+            image_candidates.sort(
+                key=lambda n: (
+                    0
+                    if "preview" in n.lower() or "thumbnail" in n.lower()
+                    else 1,
+                    len(n),
+                )
+            )
+            if image_candidates:
+                with tempfile.TemporaryDirectory(prefix="pages_img_") as td:
+                    target = image_candidates[0]
+                    ext = os.path.splitext(target)[1].lower() or ".jpg"
+                    out_img = os.path.join(td, f"preview{ext}")
+                    with zf.open(target) as src, open(out_img, "wb") as dst:
+                        dst.write(src.read())
+                    return process_image(out_img) or ""
+    except zipfile.BadZipFile:
+        logger.warning(f".pages file is not a zip package: {file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to extract .pages {file_path}: {e}")
+
+    return (
+        "[Could not extract text from Apple Pages file. "
+        "Export the document to PDF or DOCX and upload again for best results.]"
+    )
 
 
 def _extract_docx(file_path: str) -> str:
@@ -883,6 +959,11 @@ def process_document(file_path: str) -> dict:
         text = _extract_docx(file_path)
         page_count = max(1, len(text) // 2000)
         source = "docx"
+
+    elif file_type == FileType.PAGES:
+        text = _extract_pages(file_path)
+        page_count = max(1, len(text) // 2000)
+        source = "pages"
 
     elif file_type == FileType.XLSX:
         text = _extract_xlsx(file_path)

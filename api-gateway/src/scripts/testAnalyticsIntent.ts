@@ -7,7 +7,7 @@ import {
     questionRefersToSpecificDocument,
     extractDocumentNameTokens,
 } from '../services/financeAnalyticsService';
-import { parseFinanceIntent, wantsMonthlyTrendQuestion, wantsPortfolioFinanceScope } from '../services/financeIntent';
+import { parseFinanceIntent, wantsMonthlyTrendQuestion, wantsPortfolioFinanceScope, wantsFinanceVendorClientPortfolioAsk } from '../services/financeIntent';
 
 function assert(cond: boolean, msg: string) {
     if (!cond) throw new Error(msg);
@@ -110,6 +110,24 @@ check('wantsPortfolioFinanceScope: all clietns lists typo', () => {
 
 check('wantsPortfolioFinanceScope: chart invoice trend by month', () => {
     assert(wantsPortfolioFinanceScope('Chart invoice trend by month'), 'trend portfolio');
+});
+
+check('portfolio vendor client ask not line_items intent', () => {
+    assert(
+        wantsFinanceVendorClientPortfolioAsk('give me data of vendor clients all'),
+        'portfolio vendor client'
+    );
+    assert(
+        parseFinanceIntent('give me vendor data all clients') === 'overview',
+        'overview not line_items'
+    );
+    assert(
+        detectFinanceVisualIntent('give me vendor data all clients', 'finance_agent', {
+            hasScopedFinanceDocuments: true,
+            scopedFinanceDocCount: 13,
+        }) === 'vendor_spend',
+        'visual vendor rollup'
+    );
 });
 
 console.log(`\n${passed} checks passed`);

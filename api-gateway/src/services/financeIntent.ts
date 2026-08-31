@@ -60,6 +60,21 @@ export function wantsPortfolioFinanceScope(question: string): boolean {
     return false;
 }
 
+/** Portfolio / cross-file vendor+client asks should chart documents — not integration JSON or line-item dumps. */
+export function wantsFinanceVendorClientPortfolioAsk(question: string): boolean {
+    const q = normalizeFinanceUserQuestion(question);
+    if (wantsMonthlyTrendQuestion(question) || /\b(aging|overdue)\b/.test(q)) return false;
+    if (wantsFinanceListAllScope(question)) return true;
+    if (/\b(vendor|supplier)\b/.test(q) && /\b(client|customer)s?\b/.test(q)) return true;
+    if (/\b(all|every|full)\b/.test(q) && /\b(vendor|supplier|client|customer)\b/.test(q)) {
+        return true;
+    }
+    if (wantsPortfolioFinanceScope(question) && /\b(vendor|supplier|client|customer)\b/.test(q)) {
+        return true;
+    }
+    return false;
+}
+
 /** Single priority table for dynamic router + tests (no DB). */
 export function parseFinanceIntent(
     question: string,
@@ -69,6 +84,7 @@ export function parseFinanceIntent(
     if (/\b(line[\s-]?items?|items?\s+list|list\s+(of\s+)?items?)\b/.test(q)) return 'line_items';
     if (/\b(aging|overdue)\b/.test(q)) return 'aging';
     if (wantsMonthlyTrendQuestion(question)) return 'monthly_trend';
+    if (wantsFinanceVendorClientPortfolioAsk(question)) return 'overview';
     if (/\b(all|both|overview|everything)\b/.test(q) || (/\b(vendor|supplier)\b/.test(q) && /\b(client|customer)s?\b/.test(q))) {
         return 'overview';
     }

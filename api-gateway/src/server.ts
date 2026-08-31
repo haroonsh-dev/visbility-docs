@@ -55,6 +55,14 @@ async function start() {
         } catch (err: any) {
             logger.warn(`[chat-focus] prune failed: ${err?.message || err}`);
         }
+        try {
+            const { purgeExpiredAgentApiDocuments } = await import(
+                './services/agentApiDocumentService'
+            );
+            await purgeExpiredAgentApiDocuments();
+        } catch (err: any) {
+            logger.warn(`[agent-api] ephemeral purge failed: ${err?.message || err}`);
+        }
     };
 
     setInterval(() => {

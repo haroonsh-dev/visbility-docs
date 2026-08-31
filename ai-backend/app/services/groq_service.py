@@ -92,6 +92,102 @@ class GroqService:
         status = groq_limit_state.mark_limited(msg, model=model or self.model)
         raise GroqRateLimitExceeded(msg, status=status) from e
 
+    def _chat_via_config(
+        self,
+        cfg,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+        model_override: str | None = None,
+    ) -> str:
+        """Call one provider config (OpenAI-compatible or Groq SDK)."""
+        from openai import OpenAI
+
+        model = (model_override or cfg.model or "").strip()
+        if cfg.provider == "groq":
+            self._sync_with_provider_manager()
+            self._raise_if_locked()
+            if not self.available:
+                raise RuntimeError("Groq not configured")
+            use_model = model or self.model
+            response = self.client.chat.completions.create(
+                model=use_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return _strip_think_tags(response.choices[0].message.content or "")
+
+        if cfg.provider == "gemini":
+            base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+            client = OpenAI(api_key=cfg.api_key, base_url=base_url, timeout=120)
+            use_model = model or "gemini-2.0-flash"
+        elif cfg.provider == "anthropic":
+            # Anthropic via OpenAI-compatible gateway if base_url set; else skip
+            base_url = (cfg.base_url or "").strip()
+            if not base_url:
+                raise RuntimeError("Anthropic requires an OpenAI-compatible base_url in Settings")
+            client = OpenAI(api_key=cfg.api_key, base_url=base_url, timeout=120)
+            use_model = model or "claude-3-5-sonnet-latest"
+        else:
+            # openai + custom (Mistral, Together, OpenRouter, etc.)
+            base_url = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
+            client = OpenAI(api_key=cfg.api_key, base_url=base_url, timeout=120)
+            use_model = model or "gpt-4o"
+
+        response = client.chat.completions.create(
+            model=use_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return _strip_think_tags(response.choices[0].message.content or "")
+
+    def chat_with_active_providers(
+        self,
+        messages: list[dict],
+        temperature: float = 0.1,
+        max_tokens: int = 4096,
+        *,
+        prefer_fast_groq: bool = False,
+    ) -> str:
+        """
+        Use the provider selected in AI Settings (primary first), not hardcoded Groq models.
+        Mistral as Custom + primary → Mistral model/base URL is used for extraction/classify.
+        """
+        self._sync_with_provider_manager()
+        providers = provider_manager.get_active_providers()
+        if not providers:
+            return self.chat(messages, temperature=temperature, max_tokens=max_tokens)
+
+        errors: list[str] = []
+        for cfg in providers:
+            try:
+                if cfg.provider == "groq" and prefer_fast_groq:
+                    try:
+                        return self._chat_via_config(
+                            cfg, messages, temperature, max_tokens, "llama-3.1-8b-instant"
+                        )
+                    except Exception as fast_err:
+                        logger.warning(f"[chat_with_active] groq fast model failed: {fast_err}")
+                        return self._chat_via_config(cfg, messages, temperature, max_tokens, None)
+
+                text = self._chat_via_config(cfg, messages, temperature, max_tokens, None)
+                logger.info(
+                    f"[chat_with_active] ok provider={cfg.provider} model={cfg.model or 'default'}"
+                )
+                return text
+            except Exception as e:
+                err = f"{cfg.provider}/{cfg.model or '?'}: {e}"
+                errors.append(err)
+                logger.warning(f"[chat_with_active] failed {err}")
+                continue
+
+        raise RuntimeError(
+            "All active AI providers failed for chat. "
+            + ("; ".join(errors[:3]) if errors else "No providers configured.")
+        )
+
     def _try_fallback(self, messages: list[dict], temperature: float, max_tokens: int, failed_provider: str) -> str | None:
         """
         Try the next available provider as fallback when the primary fails.
@@ -102,33 +198,8 @@ class GroqService:
             return None
 
         try:
-            from openai import OpenAI
-            if fallback.provider == "groq":
-                client = Groq(api_key=fallback.api_key, timeout=httpx.Timeout(120.0))
-                model = fallback.model or self.model
-                response = client.chat.completions.create(
-                    model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
-                )
-                return _strip_think_tags(response.choices[0].message.content or "")
-            elif fallback.provider == "gemini":
-                base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-                client = OpenAI(api_key=fallback.api_key, base_url=base_url, timeout=120)
-                model = fallback.model or "gemini-2.0-flash"
-                response = client.chat.completions.create(
-                    model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
-                )
-                return _strip_think_tags(response.choices[0].message.content or "")
-            else:
-                # OpenAI-compatible providers (openai, custom)
-                base_url = fallback.base_url or "https://api.openai.com/v1"
-                client = OpenAI(api_key=fallback.api_key, base_url=base_url, timeout=120)
-                model = fallback.model or "gpt-4o"
-                response = client.chat.completions.create(
-                    model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
-                )
-                return _strip_think_tags(response.choices[0].message.content or "")
-        except Exception as e:
-            # Try next fallback
+            return self._chat_via_config(fallback, messages, temperature, max_tokens)
+        except Exception:
             return self._try_fallback(messages, temperature, max_tokens, fallback.provider)
 
     def chat(self, messages: list[dict], temperature: float = 0.1, max_tokens: int = 4096, model: str = None) -> str:
@@ -159,11 +230,21 @@ class GroqService:
         except APIStatusError as e:
             status_code = getattr(e, "status_code", None)
             err_msg = str(e).lower()
-            if status_code in (413, 429) or "rate" in err_msg or "too large" in err_msg or "limit" in err_msg or "tpm" in err_msg:
+            # Also fall back on missing/retired Groq models (404 model_not_found)
+            if (
+                status_code in (404, 413, 429)
+                or "rate" in err_msg
+                or "too large" in err_msg
+                or "limit" in err_msg
+                or "tpm" in err_msg
+                or "model_not_found" in err_msg
+                or "does not exist" in err_msg
+            ):
                 fallback_result = self._try_fallback(messages, temperature, max_tokens, "groq")
                 if fallback_result:
                     return fallback_result
-                self._handle_rate_limit(e, use_model)
+                if status_code in (413, 429) or "rate" in err_msg or "limit" in err_msg or "tpm" in err_msg:
+                    self._handle_rate_limit(e, use_model)
             raise
 
     def chat_vision(self, messages: list[dict], temperature: float = 0.1, max_tokens: int = 4096) -> str:

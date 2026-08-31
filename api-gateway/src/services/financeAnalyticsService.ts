@@ -74,6 +74,9 @@ export type LoadFinanceOptions = {
     vendorAliases?: Record<string, string>;
     baseCurrency?: string;
     preferredCurrency?: string;
+    /** Original user question — used for portfolio vs line-item routing. */
+    question?: string;
+    portfolioScope?: boolean;
 };
 
 export function createFinanceExtractionCache(): Map<string, Record<string, unknown>> {
@@ -2677,7 +2680,10 @@ export async function executeLineItemAnalytics(
         documentType: string;
         phase3Agent: string;
     }> = [];
-    const answerParts: string[] = ['Here are the line items from your scoped documents (from extraction):', ''];
+    let leadPrintedTotal: { currency: string; amount: number; filename: string } | null = null;
+    let anyMismatch = false;
+    const lineItemSections: string[] = [];
+    const skippedFiles: string[] = [];
 
     for (const doc of docs) {
         const data = await extractionPayloadForDoc(doc, user, loadOpts.extractionCache, loadOpts.extractionStats);
@@ -2687,6 +2693,14 @@ export async function executeLineItemAnalytics(
         const printedTotal =
             parseNumber(data.total_amount) ?? parseNumber(data.grand_total);
         const mismatch = Boolean(data._line_items_total_mismatch);
+        if (mismatch) anyMismatch = true;
+        if (printedTotal != null && !leadPrintedTotal) {
+            leadPrintedTotal = {
+                currency,
+                amount: printedTotal,
+                filename: doc.originalFilename || doc.documentId,
+            };
+        }
 
         citations.push({
             documentId: doc.documentId,
@@ -2697,35 +2711,61 @@ export async function executeLineItemAnalytics(
 
         if (rows.length) {
             if (visual) visuals.push(visual);
-            answerParts.push(`### ${doc.originalFilename}`);
-            answerParts.push('| Item | Qty | Unit price | Line total |');
-            answerParts.push('| --- | ---: | ---: | ---: |');
+            const block: string[] = [`### ${doc.originalFilename}`];
+            block.push('| Item | Qty | Unit price | Line total |');
+            block.push('| --- | ---: | ---: | ---: |');
             for (const r of rows) {
-                answerParts.push(
+                block.push(
                     `| ${r.description.replace(/\|/g, '/')} | ${r.quantity} | ${currency} ${Math.round(r.unitPrice * 100) / 100} | ${currency} ${Math.round(r.total * 100) / 100} |`
                 );
             }
             const sub =
                 parseNumber(data.subtotal) ??
                 rows.reduce((s, r) => s + r.total, 0);
-            answerParts.push('');
-            answerParts.push(
-                `Lines sum: **${currency} ${Math.round(Number(sub) * 100) / 100}**`
-            );
+            block.push('');
+            block.push(`Lines sum: **${currency} ${Math.round(Number(sub) * 100) / 100}**`);
             if (printedTotal != null) {
-                answerParts.push(
+                block.push(
                     `Invoice total (printed): **${currency} ${Math.round(printedTotal * 100) / 100}**`
                 );
             }
             if (mismatch) {
-                answerParts.push(
-                    `_Note: line-item qty/rate may still be wrong in storage — printed invoice total is preferred. Open the document → **Reclassify with AI** after restarting ai-backend to re-extract._`
+                block.push(
+                    '_Note: line-item qty/rate may still be wrong in storage — printed invoice total is preferred. Open the document → **Reclassify with AI** to re-extract._'
                 );
             }
-            answerParts.push('');
+            lineItemSections.push(block.join('\n'));
         } else {
-            answerParts.push(`- **${doc.originalFilename}** — no \`line_items\` in extraction yet (reprocess as invoice).`);
+            skippedFiles.push(doc.originalFilename || doc.documentId);
         }
+    }
+
+    const answerParts: string[] = [];
+    if (leadPrintedTotal) {
+        answerParts.push(
+            `**Invoice total (printed on document): ${leadPrintedTotal.currency} ${Math.round(leadPrintedTotal.amount * 100) / 100}**` +
+                (leadPrintedTotal.filename ? ` — _${leadPrintedTotal.filename}_` : '')
+        );
+        if (anyMismatch) {
+            answerParts.push(
+                '_Extracted line rows may not sum to this total (OCR/Qty/Rate incomplete). **Trust the printed total above** for the invoice amount._'
+            );
+        }
+        answerParts.push('', 'Line items from extraction:', '');
+    } else {
+        answerParts.push('Here are the line items from your scoped documents (from extraction):', '');
+    }
+    if (lineItemSections.length) {
+        answerParts.push(lineItemSections.join('\n\n'));
+    }
+
+    if (skippedFiles.length) {
+        const preview = skippedFiles.slice(0, 4).map((f) => `**${f}**`).join(', ');
+        const more = skippedFiles.length > 4 ? ` and **${skippedFiles.length - 4}** more` : '';
+        answerParts.push(
+            '',
+            `_**${skippedFiles.length}** document(s) have no line-item rows yet (${preview}${more}). For vendor/client totals across files, ask **“all vendor clients”** or **“vendor spend overview”**. To extract rows, open a file → **Reclassify with AI** as invoice._`
+        );
     }
 
     const records = await loadFinanceRecords(user, loadOpts);

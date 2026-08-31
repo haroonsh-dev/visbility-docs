@@ -9,7 +9,10 @@ function extractAgentApiKey(req: Request): string {
     if (headerKey) return headerKey;
     const auth = String(req.headers.authorization || '');
     if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
-    const q = String(req.query?.key || '').trim();
+    const body = req.body || {};
+    const fromBody = String(body.apiKey || body.token || body.agentKey || body.key || '').trim();
+    if (fromBody) return fromBody;
+    const q = String(req.query?.key || req.query?.apiKey || '').trim();
     return q;
 }
 
@@ -33,7 +36,7 @@ export const authenticateAgentApi = async (req: Request, res: Response, next: Ne
         if (!provided) {
             return res.status(401).json({
                 success: false,
-                message: 'Missing Agent API key. Use Authorization: Bearer <token> or X-Agent-Key.',
+                message: 'Missing Agent API key. Use Authorization: Bearer <token>, X-Agent-Key, or JSON body apiKey.',
             });
         }
 

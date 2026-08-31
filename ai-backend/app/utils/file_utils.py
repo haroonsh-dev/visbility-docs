@@ -8,7 +8,26 @@ from ..config import settings
 from ..database import SupabaseDB
 from ..services.hf_storage import hf_storage
 
-ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp", ".docx", ".xlsx", ".pptx", ".txt"}
+ALLOWED_EXTENSIONS = {
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".tiff",
+    ".tif",
+    ".bmp",
+    ".webp",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".pptx",
+    ".txt",
+    ".html",
+    ".htm",
+    ".pages",
+    ".rtf",
+    ".odt",
+}
 MAX_FILE_SIZE = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 

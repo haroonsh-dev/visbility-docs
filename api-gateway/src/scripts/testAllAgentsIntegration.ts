@@ -11,6 +11,7 @@ import {
 import {
     detectStructuredRecordAsk,
     inferRecordTypeFromQuestion,
+    isExplicitIntegrationRecordAsk,
 } from '../services/structuredRecordChatService';
 
 function assert(cond: boolean, msg: string) {
@@ -47,6 +48,26 @@ async function main() {
         }
         console.log(`✓ ${agent}: "${spec.ask}" → type=${inferred || 'any'}`);
     }
+
+    // 1b) Implicit document asks must not be treated as explicit integration-only
+    console.log('\n=== Integration explicit vs document fallthrough ===');
+    assert(
+        detectStructuredRecordAsk('give me data of vendor clients all', 'finance_agent'),
+        'portfolio vendor ask still detected for routing'
+    );
+    assert(
+        !isExplicitIntegrationRecordAsk('give me data of vendor clients all'),
+        'portfolio vendor ask is not explicit integration-only'
+    );
+    assert(
+        isExplicitIntegrationRecordAsk('show synced invoices'),
+        'explicit synced ask'
+    );
+    assert(
+        !isExplicitIntegrationRecordAsk('vendor clients'),
+        'short vendor ask is document scope'
+    );
+    console.log('✓ explicit vs implicit integration asks');
 
     // 2) Playbook detect is agent-agnostic
     console.log('\n=== Playbook detect (same for every agent) ===');

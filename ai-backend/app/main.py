@@ -184,6 +184,16 @@ async def root():
     }
 
 
+@app.get("/json/version", include_in_schema=False)
+async def json_version_probe():
+    """Chrome/Cursor DevTools probe — not a debug target; avoids noisy 404 logs."""
+    return {
+        "Browser": "Visibility Docs AI",
+        "Protocol-Version": "1.0",
+        "webSocketDebuggerUrl": "",
+    }
+
+
 @app.get("/health", tags=["status"])
 async def health():
     from .database import _get_supabase, _use_supabase

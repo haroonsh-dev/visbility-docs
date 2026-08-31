@@ -103,7 +103,38 @@ const AGENT_FALLBACK_FIELDS: Record<string, string[]> = {
 };
 
 const DOMAIN_NOUNS =
-    /\b(candidates?|employees?|resumes?|cvs?|payroll|leave|attendance|invoices?|expenses?|payments?|tax|taxes|budgets?|bank\s+statements?|purchase\s+orders?|\bpos?\b|quotations?|rfqs?|suppliers?|vendors?|delivery\s+notes?|contracts?|ndas?|agreements?|leases?|certificates?|audits?|inspections?|capas?|sops?|iso|compliance|tasks?)\b/i;
+    /\b(candidates?|employees?|resumes?|cvs?|payroll|leave|attendance|invoices?|expenses?|payments?|tax|taxes|budgets?|bank\s+statements?|purchase\s+orders?|\bpos?\b|quotations?|rfqs?|suppliers?|vendors?|clients?|customers?|delivery\s+notes?|contracts?|ndas?|agreements?|leases?|certificates?|audits?|inspections?|capas?|sops?|iso|compliance|tasks?)\b/i;
+
+/** User explicitly asked for integration/API records — not uploaded files. */
+export function isExplicitIntegrationRecordAsk(question: string): boolean {
+    const q = question.toLowerCase().trim();
+    if (!q) return false;
+
+    if (
+        /\b(synced\s+records?|integration\s+records?|structured\s+(data|records?)|api\s+records?)\b/.test(
+            q
+        )
+    ) {
+        return true;
+    }
+
+    if (
+        /\b(show|list|what|give|tell|find|check|how\s+many)\b/.test(q) &&
+        /\b(synced|integration|from\s+(clickup|sap|odoo|dynamics|drive|ats|webhook))\b/.test(q)
+    ) {
+        return true;
+    }
+
+    if (
+        /\b(show|list|find|how\s+many|any|all)\b/.test(q) &&
+        DOMAIN_NOUNS.test(q) &&
+        /\b(synced|integration|record|records|from\s+)/.test(q)
+    ) {
+        return true;
+    }
+
+    return false;
+}
 
 /** Detect asks about synced integration / API records (not file RAG). */
 export function detectStructuredRecordAsk(question: string, phase3Agent?: string): boolean {
@@ -469,6 +500,11 @@ export async function tryStructuredRecordCommand(params: {
     );
 
     if (!rows.length) {
+        // Implicit domain asks (e.g. "all vendors") should fall through to document
+        // analytics/RAG when no integration JSON exists — avoids dead-end replies.
+        if (!isExplicitIntegrationRecordAsk(params.question)) {
+            return { handled: false };
+        }
         const tips = emptyStateTips(params.phase3Agent, recordType);
         return {
             handled: true,

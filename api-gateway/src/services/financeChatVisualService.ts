@@ -37,7 +37,7 @@ import {
 } from './financeAnalyticsService';
 import Document from '../models/Document';
 import { buildDocumentFilter } from './accessScope';
-import { mapFinanceIntentToPanelView, wantsMonthlyTrendQuestion, formatFinanceCoverageNotes, wantsPortfolioFinanceScope } from './financeIntent';
+import { mapFinanceIntentToPanelView, wantsMonthlyTrendQuestion, formatFinanceCoverageNotes, wantsPortfolioFinanceScope, wantsFinanceVendorClientPortfolioAsk } from './financeIntent';
 import { getOrgFinanceSettings } from './orgFinanceSettingsService';
 
 export type FinanceVisualIntent =
@@ -99,9 +99,10 @@ function wantsLineItemBreakdown(question: string): boolean {
 
 function wantsVendorRollup(question: string): boolean {
     const q = question.toLowerCase();
+    if (wantsFinanceVendorClientPortfolioAsk(question)) return true;
     return (
         (/\b(vendor|supplier)\b/.test(q) &&
-            /\b(total|totals|sum|spend|amount|breakdown|grand|verify|correct|compare|per vendor)\b/.test(q)) ||
+            /\b(total|totals|sum|spend|amount|breakdown|grand|verify|correct|compare|per vendor|data|clients?|customers?)\b/.test(q)) ||
         /\bspend by\b/.test(q) ||
         (/\b(vendor|supplier)\b/.test(q) && /\b(chart|graph|visual)\b/.test(q))
     );
@@ -116,11 +117,23 @@ export function detectFinanceVisualIntent(
     const financeScoped = Boolean(options?.hasScopedFinanceDocuments);
     const scopedCount = options?.scopedFinanceDocCount ?? 0;
 
+    // Portfolio vendor/client/data asks → charts across files, never per-file line-item dump
+    if (
+        phase3Agent === FINANCE_AGENT &&
+        wantsFinanceVendorClientPortfolioAsk(question)
+    ) {
+        if (/\b(client|customer)\b/.test(q) && /\b(vendor|supplier)\b/.test(q)) return 'overview';
+        if (/\b(vendor|supplier)\b/.test(q)) return 'vendor_spend';
+        if (/\b(client|customer)s?\b/.test(q)) return 'client_spend';
+        return 'overview';
+    }
+
     if (
         wantsLineItemBreakdown(question) &&
+        !wantsFinanceVendorClientPortfolioAsk(question) &&
         (wantsVisualization(question) ||
             /\b(give|show|list|get)\b/.test(q) ||
-            phase3Agent === FINANCE_AGENT ||
+            (phase3Agent === FINANCE_AGENT && /\b(line[\s-]?items?|each item|item[\s-]?wise)\b/.test(q)) ||
             hasFinanceContext(question, phase3Agent) ||
             financeScoped)
     ) {
@@ -307,12 +320,25 @@ export async function tryFinanceChatVisual(params: {
     ) {
         intent = 'line_items';
     }
+    if (!intent) {
+        if (params.phase3Agent === FINANCE_AGENT) {
+            if (wantsFinanceVendorClientPortfolioAsk(params.question)) {
+                intent = 'overview';
+            } else if (/\b(vendor|supplier)\b/i.test(params.question)) {
+                intent = 'vendor_spend';
+            } else if (/\b(client|customer)s?\b/i.test(params.question)) {
+                intent = 'client_spend';
+            }
+        }
+    }
     if (!intent) return { handled: false };
 
     const loadOpts: LoadFinanceOptions = {
         documentIds: resolvedIds?.length ? resolvedIds : undefined,
         extractionCache: createFinanceExtractionCache(),
         preferredCurrency: detectCurrencyPreference(params.question),
+        question: params.question,
+        portfolioScope: wantsPortfolioFinanceScope(params.question),
     };
     const result = await executeFinanceAnalytics(params.user, intent, loadOpts);
     return applyAgentVisualPolicy(
@@ -369,8 +395,26 @@ export async function executeFinanceAnalytics(
     intent: FinanceVisualIntent,
     loadOpts: LoadFinanceOptions = {}
 ): Promise<FinanceAnalyticsResult> {
+    if (
+        intent === 'line_items' &&
+        loadOpts.question &&
+        wantsFinanceVendorClientPortfolioAsk(loadOpts.question)
+    ) {
+        intent = 'overview';
+    }
+
     if (intent === 'line_items') {
-        return executeLineItemAnalytics(user, loadOpts);
+        const lineResult = await executeLineItemAnalytics(user, loadOpts);
+        const scopedCount = loadOpts.documentIds?.length || lineResult.documentCount;
+        if (
+            scopedCount > 2 &&
+            !lineResult.visuals.length &&
+            loadOpts.question &&
+            wantsFinanceVendorClientPortfolioAsk(loadOpts.question)
+        ) {
+            return executeFinanceAnalytics(user, 'overview', loadOpts);
+        }
+        return lineResult;
     }
 
     const cacheKey = financeCacheKey(user, intent, loadOpts);

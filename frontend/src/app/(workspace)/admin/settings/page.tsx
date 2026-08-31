@@ -150,11 +150,17 @@ function SettingsContent() {
         lastUsedAt: string | null;
         allowedAgents: { id: string; label: string }[];
         askUrlTemplate: string;
+        processUrlTemplate?: string;
+        documentsUrlTemplate?: string;
         exampleAskUrl: string;
+        exampleProcessUrl?: string;
+        ephemeralTtlHours?: number;
+        partnerFlow?: string[];
     };
     const [agentApi, setAgentApi] = useState<AgentApiStatus | null>(null);
     const [agentApiFreshToken, setAgentApiFreshToken] = useState<string | null>(null);
     const [agentApiCurl, setAgentApiCurl] = useState<string | null>(null);
+    const [agentApiProcessCurl, setAgentApiProcessCurl] = useState<string | null>(null);
     const [agentApiLoading, setAgentApiLoading] = useState(true);
     const [agentApiBusy, setAgentApiBusy] = useState(false);
 
@@ -246,6 +252,7 @@ function SettingsContent() {
             });
             setAgentApiFreshToken(res?.data?.token || null);
             setAgentApiCurl(res?.data?.curlExample || null);
+            setAgentApiProcessCurl(res?.data?.curlProcessExample || null);
             setSaveSuccess(res?.message || "Agent API token ready — copy it now");
             await loadAgentApi();
         } catch (e: any) {
@@ -472,8 +479,9 @@ function SettingsContent() {
                             <h3 className="text-sm font-bold text-foreground">Agent API (for customer apps)</h3>
                         </div>
                         <p className="text-xs text-foreground-muted mt-1 leading-relaxed max-w-2xl">
-                            Give partners a token + endpoint so their own application can call your agents
-                            (Compliance, HR, Finance, …) without opening Visibility UI.
+                            One call for partners: <strong className="text-foreground">POST /process</strong> (multipart
+                            file) runs upload + OCR/extract + agent. They save <code className="text-[10px]">data.store</code> in
+                            their DB. Temp files expire after {agentApi?.ephemeralTtlHours ?? 24}h.
                         </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -506,7 +514,24 @@ function SettingsContent() {
                 ) : (
                     <div className="space-y-3">
                         <div className="space-y-1">
-                            <p className="text-[11px] text-foreground-muted">Ask URL (all agents on your plan)</p>
+                            <p className="text-[11px] text-foreground-muted">Process URL (file → OCR/extract)</p>
+                            <div className="flex gap-2 items-start">
+                                <code className="flex-1 text-xs font-mono break-all rounded-lg border border-border bg-white px-2.5 py-2">
+                                    {agentApi?.processUrlTemplate || "—"}
+                                </code>
+                                {agentApi?.processUrlTemplate && (
+                                    <button
+                                        type="button"
+                                        className="btn-secondary shrink-0 rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1"
+                                        onClick={() => void copyText(agentApi.processUrlTemplate!)}
+                                    >
+                                        <Copy size={12} /> Copy
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <p className="text-[11px] text-foreground-muted">Ask URL (agent chat)</p>
                             <div className="flex gap-2 items-start">
                                 <code className="flex-1 text-xs font-mono break-all rounded-lg border border-border bg-white px-2.5 py-2">
                                     {agentApi?.askUrlTemplate || "—"}
@@ -522,6 +547,13 @@ function SettingsContent() {
                                 )}
                             </div>
                         </div>
+                        {agentApi?.partnerFlow && agentApi.partnerFlow.length > 0 && (
+                            <ol className="text-[11px] text-foreground-muted list-decimal pl-4 space-y-0.5">
+                                {agentApi.partnerFlow.map((step) => (
+                                    <li key={step}>{step}</li>
+                                ))}
+                            </ol>
+                        )}
                         <div className="space-y-1">
                             <p className="text-[11px] text-foreground-muted">API token</p>
                             <div className="flex gap-2 items-start">
@@ -558,7 +590,7 @@ function SettingsContent() {
                         )}
                         {agentApiCurl && (
                             <div className="space-y-1">
-                                <p className="text-[11px] text-foreground-muted">Example cURL</p>
+                                <p className="text-[11px] text-foreground-muted">Example cURL — ask</p>
                                 <pre className="text-[10px] rounded-lg border border-border bg-white px-2.5 py-2 overflow-x-auto text-foreground-muted whitespace-pre-wrap">
                                     {agentApiCurl}
                                 </pre>
@@ -568,6 +600,21 @@ function SettingsContent() {
                                     onClick={() => void copyText(agentApiCurl)}
                                 >
                                     <Copy size={11} /> Copy cURL
+                                </button>
+                            </div>
+                        )}
+                        {agentApiProcessCurl && (
+                            <div className="space-y-1">
+                                <p className="text-[11px] text-foreground-muted">Example cURL — process file</p>
+                                <pre className="text-[10px] rounded-lg border border-border bg-white px-2.5 py-2 overflow-x-auto text-foreground-muted whitespace-pre-wrap">
+                                    {agentApiProcessCurl}
+                                </pre>
+                                <button
+                                    type="button"
+                                    className="text-[11px] text-accent hover:underline inline-flex items-center gap-1"
+                                    onClick={() => void copyText(agentApiProcessCurl)}
+                                >
+                                    <Copy size={11} /> Copy process cURL
                                 </button>
                             </div>
                         )}

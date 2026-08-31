@@ -362,20 +362,20 @@ class ClassificationAgent:
         log.info(f"Input text: {C.DIM}{len(text)} chars, filename='{filename}'{C.RESET}")
         try:
             t0 = __import__("time").time()
-            log.info("Calling Groq API (llama-3.1-8b-instant) for classification...")
-            raw_response = ""
+            primary = None
             try:
-                raw_response = groq_service.chat(
-                    [{"role": "user", "content": prompt}], temperature=0.05, max_tokens=1024, model="llama-3.1-8b-instant"
-                )
-            except Exception as first_err:
-                log.warn(f"Groq 8b classify error ({first_err}), retrying on 70b with truncated text...")
-                short_text = text[:4000]
-                short_prompt = prompt_template.replace("{text}", short_text[:4000]).replace("{filename}", filename)
-                raw_response = groq_service.chat(
-                    [{"role": "user", "content": short_prompt}], temperature=0.05, max_tokens=1024, model="llama-3.3-70b-versatile"
-                )
-            
+                from .provider_manager import provider_manager
+                primary = provider_manager.get_primary_provider()
+            except Exception:
+                primary = None
+            provider_name = primary.provider if primary else "groq"
+            log.info(f"Calling active AI provider ({provider_name}) for classification...")
+            raw_response = groq_service.chat_with_active_providers(
+                [{"role": "user", "content": prompt}],
+                temperature=0.05,
+                max_tokens=1024,
+                prefer_fast_groq=True,
+            )
             import re
             scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
             scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else ""
@@ -513,38 +513,44 @@ class CategoryExtractionAgent:
 
         try:
             t0 = __import__("time").time()
-            # Fast model first; escalate to 70b only if the fast pass returns empty/weak JSON
-            log.info("Calling Groq API (llama-3.1-8b-instant) for extraction...")
-            raw_response = ""
+            primary = None
             try:
-                raw_response = groq_service.chat(
-                    [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=2500, model="llama-3.1-8b-instant"
-                )
-            except Exception as rate_err:
-                log.warn(f"Groq 8b extraction error ({rate_err}), retrying on 70b with truncated text...")
-                short_doc_slice = clean_text[:4000]
-                short_prompt = prompt_base + f"\n\n<document>\n{short_doc_slice}\n</document>"
-                raw_response = groq_service.chat(
-                    [{"role": "user", "content": short_prompt}], temperature=0.0, max_tokens=2000, model="llama-3.3-70b-versatile"
-                )
+                from .provider_manager import provider_manager
+                primary = provider_manager.get_primary_provider()
+            except Exception:
+                primary = None
+            provider_name = primary.provider if primary else "groq"
+            model_name = (primary.model if primary else "") or "default"
+            log.info(f"Calling active AI provider ({provider_name}/{model_name}) for extraction...")
+            raw_response = groq_service.chat_with_active_providers(
+                [{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=2500,
+                prefer_fast_groq=True,
+            )
 
             import re
             scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
             scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else ""
 
             result = groq_service._parse_json(raw_response, {})
-            # Escalate once if fast model produced nothing useful
+            # Escalate once with truncated prompt if first pass was weak (same active providers)
             if (not isinstance(result, dict) or len(result) < 2) and clean_text:
                 try:
-                    log.warn("Fast extraction returned weak JSON — escalating to llama-3.3-70b-versatile")
-                    raw_response = groq_service.chat(
-                        [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=3000, model="llama-3.3-70b-versatile"
+                    log.warn("First extraction pass returned weak JSON — retrying with shorter document slice")
+                    short_doc_slice = clean_text[:4000]
+                    short_prompt = prompt_base + f"\n\n<document>\n{short_doc_slice}\n</document>"
+                    raw_response = groq_service.chat_with_active_providers(
+                        [{"role": "user", "content": short_prompt}],
+                        temperature=0.0,
+                        max_tokens=3000,
+                        prefer_fast_groq=False,
                     )
                     scratchpad_match = re.search(r"<scratchpad>(.*?)</scratchpad>", raw_response, re.DOTALL)
                     scratchpad_text = scratchpad_match.group(1).strip() if scratchpad_match else scratchpad_text
                     result = groq_service._parse_json(raw_response, {})
                 except Exception as escalate_err:
-                    log.warn(f"70b escalation failed: {escalate_err}")
+                    log.warn(f"Extraction retry failed: {escalate_err}")
 
             duration = __import__("time").time() - t0
             field_confidence = result.pop("_field_confidence", {}) if isinstance(result, dict) else {}

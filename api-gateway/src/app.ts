@@ -44,15 +44,39 @@ app.use(
         origin: corsOrigins,
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Integration-Key'],
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization',
+            'X-Requested-With',
+            'X-Integration-Key',
+            'X-Agent-Key',
+        ],
         exposedHeaders: ['set-cookie'],
     })
 );
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(morgan('dev'));
 // Keep JSON small — large files use multipart/multer (disk), not JSON bodies
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '2mb' }));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '12mb' }));
+// Some clients send JSON as text/plain — still parse it.
+app.use(
+    express.text({
+        type: ['text/plain', 'application/*+json'],
+        limit: process.env.JSON_BODY_LIMIT || '12mb',
+    })
+);
+app.use((req, _res, next) => {
+    if (typeof req.body === 'string' && req.body.trim()) {
+        try {
+            const parsed = JSON.parse(req.body);
+            if (parsed && typeof parsed === 'object') req.body = parsed;
+        } catch {
+            /* leave as string */
+        }
+    }
+    next();
+});
+app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '12mb' }));
 app.use(cookieParser());
 
 app.get('/', (_req, res) => {
@@ -61,6 +85,11 @@ app.get('/', (_req, res) => {
         version: '1.0.0',
         docs: '/api/health',
     });
+});
+
+// Chrome/Cursor DevTools probe — not a debug target; avoids noisy 404 logs
+app.get('/json/version', (_req, res) => {
+    res.json({ Browser: 'Visibility Docs AI API', 'Protocol-Version': '1.0', webSocketDebuggerUrl: '' });
 });
 
 app.use('/api/health', healthRoutes);

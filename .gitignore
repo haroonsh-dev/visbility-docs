@@ -31,6 +31,9 @@ Visibility_Docs_AI_VM-main update model/
 # Temporary diff files used during merges
 _diff_app_*.txt
 
+# Internship report diagrams — local only, do not publish to GitHub
+docs/
+
 # Junk / accidental artifacts — do not commit
 *.zip
 *.tsbuildinfo

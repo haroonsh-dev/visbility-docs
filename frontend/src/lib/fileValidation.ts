@@ -1,5 +1,6 @@
 export const ALLOWED_EXTENSIONS = [
-    '.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.docx', '.xlsx', '.pptx', '.txt',
+    '.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.docx', '.doc', '.xlsx', '.pptx', '.txt',
+    '.html', '.htm', '.pages', '.rtf', '.odt',
 ];
 
 export function isAllowedFile(file: File): boolean {

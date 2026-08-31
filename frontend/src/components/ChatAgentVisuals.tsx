@@ -62,16 +62,25 @@ function ChartTooltip({
     );
 }
 
+function truncateLabel(text: string, max = 18): string {
+    const t = String(text || "").trim();
+    if (t.length <= max) return t;
+    return `${t.slice(0, max - 1)}…`;
+}
+
 function SingleVisual({
     spec,
     isDark,
     embedded,
+    compact,
     onDataPointClick,
     onVisualAction,
 }: {
     spec: ChatVisualSpec;
     isDark: boolean;
     embedded?: boolean;
+    /** Tighter layout for command-center dashboard previews */
+    compact?: boolean;
     onDataPointClick?: (payload: VisualDataPointClick) => void;
     onVisualAction?: (action: NonNullable<ChatVisualSpec["actions"]>[number]) => void;
 }) {
@@ -98,8 +107,12 @@ function SingleVisual({
           }
         : {};
 
+    const barCount = spec.data.length;
     const useHorizontalBar =
-        embedded && spec.kind === "bar" && spec.data.length > 0 && spec.data.length <= 20;
+        spec.kind === "bar" &&
+        barCount > 0 &&
+        barCount <= (compact ? 14 : 20) &&
+        (embedded || compact);
     const isPie = spec.kind === "pie";
     const isEmpty =
         spec.data.length === 0 ||
@@ -108,16 +121,24 @@ function SingleVisual({
             /^(no |none$|not extracted|unknown)/i.test(String(spec.data[0]?.[categoryKey] || "")));
     const emptyMessage = spec.emptyState || "No data extracted for this chart.";
     const chartHeight = isPie
-        ? embedded
-            ? 200
-            : 220
-        : embedded
-          ? Math.max(280, Math.min(420, spec.data.length * (useHorizontalBar ? 36 : 48) + 80))
-          : spec.kind === "table"
-            ? Math.min(360, 48 + spec.data.length * 36)
-            : 260;
-    const pieOuterRadius = embedded ? 68 : 80;
-    const pieInnerRadius = embedded ? 42 : 50;
+        ? compact
+            ? 168
+            : embedded
+              ? 200
+              : 220
+        : useHorizontalBar
+          ? Math.min(compact ? 300 : 380, Math.max(compact ? 160 : 200, barCount * (compact ? 30 : 34) + 48))
+          : embedded || compact
+            ? compact
+                ? 220
+                : Math.min(280, Math.max(200, barCount * 40 + 72))
+            : spec.kind === "table"
+              ? Math.min(360, 48 + spec.data.length * 36)
+              : 260;
+    const pieOuterRadius = compact ? 58 : embedded ? 68 : 80;
+    const pieInnerRadius = compact ? 36 : embedded ? 42 : 50;
+    const headerPad = compact ? "px-3 py-2" : "px-4 py-3";
+    const titleClass = compact ? "text-xs font-bold" : "text-sm font-bold";
 
     return (
         <div
@@ -125,10 +146,10 @@ function SingleVisual({
                 isDark ? "border-white/10 bg-slate-900/40" : "border-border bg-surface shadow-sm"
             }`}
         >
-            <div className={`px-4 py-3 border-b ${isDark ? "border-white/10" : "border-border"}`}>
+            <div className={`${headerPad} border-b ${isDark ? "border-white/10" : "border-border"}`}>
                 <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                        <p className="text-sm font-bold text-inherit">{spec.title}</p>
+                        <p className={`${titleClass} text-inherit truncate`}>{spec.title}</p>
                         {spec.subtitle ? (
                             <p className={`text-[11px] mt-0.5 ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                                 {spec.subtitle}
@@ -213,7 +234,10 @@ function SingleVisual({
                 </div>
             ) : (
             <>
-            <div className="px-3 py-4" style={{ width: "100%", height: chartHeight }}>
+            <div
+                className={compact ? "px-2 py-2" : "px-3 py-4"}
+                style={{ width: "100%", height: chartHeight, minHeight: compact ? 140 : 180 }}
+            >
                 <ResponsiveContainer width="100%" height="100%">
                     {isPie ? (
                         <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
@@ -305,10 +329,11 @@ function SingleVisual({
                             <YAxis
                                 type="category"
                                 dataKey={categoryKey}
-                                width={100}
-                                tick={{ fill: axisFill, fontSize: 10 }}
+                                width={compact ? 112 : 100}
+                                tick={{ fill: axisFill, fontSize: compact ? 9 : 10 }}
                                 tickLine={false}
                                 axisLine={false}
+                                tickFormatter={(v) => truncateLabel(String(v), compact ? 16 : 20)}
                             />
                             <Tooltip content={<ChartTooltip currency={spec.currency} />} />
                             {spec.series.map((s, i) => (
@@ -318,7 +343,7 @@ function SingleVisual({
                                     name={s.label}
                                     fill={s.color || PALETTE[i]}
                                     radius={[0, 6, 6, 0]}
-                                    maxBarSize={28}
+                                    maxBarSize={compact ? 22 : 28}
                                     {...barClickProps}
                                 />
                             ))}
@@ -400,6 +425,7 @@ type Props = {
     visuals: ChatVisualSpec[];
     isDark?: boolean;
     embedded?: boolean;
+    compact?: boolean;
     onDataPointClick?: (payload: VisualDataPointClick) => void;
     onVisualAction?: (action: NonNullable<ChatVisualSpec["actions"]>[number]) => void;
 };
@@ -408,6 +434,7 @@ export default function ChatAgentVisuals({
     visuals,
     isDark = false,
     embedded = false,
+    compact = false,
     onDataPointClick,
     onVisualAction,
 }: Props) {
@@ -424,6 +451,7 @@ export default function ChatAgentVisuals({
                     spec={spec}
                     isDark={isDark}
                     embedded={embedded}
+                    compact={compact}
                     onDataPointClick={onDataPointClick}
                     onVisualAction={onVisualAction}
                 />

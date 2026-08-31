@@ -1143,6 +1143,8 @@ export async function runDynamicAnalytics(params: {
                         extractionCache: financeExtractionCache,
                         extractionStats,
                         preferredCurrency: detectCurrencyPreference(params.question),
+                        question: params.question,
+                        portfolioScope: portfolioFinance,
                     });
                     financeCoverage = result.coverage ?? financeCoverage;
                     financeAnalyticsView = mapFinanceIntentToPanelView(intent);

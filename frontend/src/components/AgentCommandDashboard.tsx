@@ -134,6 +134,47 @@ function formatUpdated(iso: string | null | undefined): string | null {
     return `${Math.floor(mins / 60)}h ago`;
 }
 
+function SituationBanner({
+    verdict,
+    metrics,
+    updatedLabel,
+}: {
+    verdict: ReturnType<typeof deriveAgentVerdict>;
+    metrics: WorkspaceMetrics;
+    updatedLabel: string | null;
+}) {
+    const vStyle = VERDICT_STYLES[verdict.status];
+    const VerdictIcon = vStyle.icon;
+
+    return (
+        <div className={cn("rounded-xl border px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2", vStyle.bg)}>
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <VerdictIcon size={18} className={cn("shrink-0", vStyle.className)} />
+                <div className="min-w-0">
+                    <p className={cn("text-sm font-bold leading-tight", vStyle.className)}>{verdict.statusLabel}</p>
+                    <p className="text-xs text-foreground-muted mt-0.5 line-clamp-2 leading-relaxed">{verdict.summary}</p>
+                </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <span className="inline-flex items-center rounded-full border border-border/80 bg-background/70 px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
+                    {metrics.totalDocs} docs
+                </span>
+                <span className="inline-flex items-center rounded-full border border-border/80 bg-background/70 px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
+                    {metrics.chartedDocs} charted
+                </span>
+                <span className="inline-flex items-center rounded-full border border-border/80 bg-background/70 px-2.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground">
+                    {metrics.healthScore}% ready
+                </span>
+                {updatedLabel && (
+                    <span className="inline-flex items-center rounded-full border border-border/80 bg-background/70 px-2.5 py-0.5 text-[10px] font-medium text-foreground-muted">
+                        {updatedLabel}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+}
+
 function IntelligenceRail({
     verdict,
     accent,
@@ -301,6 +342,14 @@ export default function AgentCommandDashboard({
 
     const quickAsks = AGENT_QUICK_ASKS[agentId] || [];
     const updatedLabel = formatUpdated(lastUpdated);
+
+    const contextualQuickAsks = useMemo(() => {
+        const fromVerdict = verdict.recommendations
+            .map((r) => r.prompt)
+            .filter((p): p is string => Boolean(p));
+        const fromPriorities = (priorities || []).map((p) => p.prompt).filter((p): p is string => Boolean(p));
+        return [...new Set([...fromVerdict.slice(0, 2), ...fromPriorities.slice(0, 1), ...quickAsks])].slice(0, 5);
+    }, [verdict.recommendations, priorities, quickAsks]);
     const cvShortlist = useMemo(
         () => (agentId === "hr_agent" ? resolveCvShortlist(hrShortlist, visuals, 8) : []),
         [agentId, hrShortlist, visuals]
@@ -500,14 +549,14 @@ export default function AgentCommandDashboard({
                 </div>
             </div>
 
-            {quickAsks.length > 0 && (
+            {contextualQuickAsks.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 -mt-1">
-                    {quickAsks.slice(0, 4).map((prompt) => (
+                    {contextualQuickAsks.map((prompt) => (
                         <button
                             key={prompt}
                             type="button"
                             onClick={() => onAsk(prompt)}
-                            className="rounded-full border border-border bg-background/70 px-2.5 py-1 text-[10px] font-medium hover:border-accent/40 hover:bg-surface-2 transition-colors"
+                            className="rounded-full border border-border bg-background/80 px-3 py-1.5 text-[10px] font-medium text-foreground hover:border-accent/50 hover:bg-accent/5 hover:text-accent transition-colors"
                         >
                             {prompt}
                         </button>
@@ -516,6 +565,10 @@ export default function AgentCommandDashboard({
             )}
 
             <AgentKpiStrip kpis={kpis} accent={accent} />
+
+            {!isEmpty && (
+                <SituationBanner verdict={verdict} metrics={metrics} updatedLabel={updatedLabel} />
+            )}
 
             {shortlistNote && (
                 <div
@@ -633,22 +686,29 @@ export default function AgentCommandDashboard({
                     <div className="xl:col-span-8 space-y-4 order-2 xl:order-1">
                         {visuals.length > 0 && (
                             <section className="rounded-2xl border border-border bg-surface/30 overflow-hidden">
-                                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                                    <p className="text-xs font-bold text-foreground">Performance overview</p>
+                                <div className="px-4 py-2.5 border-b border-border flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-bold text-foreground">Performance overview</p>
+                                        <p className="text-[10px] text-foreground-muted mt-0.5">
+                                            {visuals.length} chart{visuals.length === 1 ? "" : "s"} from your portfolio
+                                        </p>
+                                    </div>
                                     <button
                                         type="button"
                                         onClick={onOpenAnalytics}
-                                        className="text-[10px] font-semibold text-accent hover:underline"
+                                        className="shrink-0 text-[10px] font-semibold text-accent hover:underline"
                                     >
                                         Open analytics →
                                     </button>
                                 </div>
-                                <div className="p-4">
+                                <div className="p-3 sm:p-4">
                                     <AgentChartPreviews
                                         visuals={visuals}
                                         maxCharts={2}
                                         onOpenCharts={onOpenAnalytics}
                                         hideHeader
+                                        layout="stack"
+                                        compact
                                     />
                                 </div>
                             </section>

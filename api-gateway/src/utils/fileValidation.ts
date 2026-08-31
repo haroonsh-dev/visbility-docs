@@ -6,11 +6,15 @@ const ALLOWED_EXTENSIONS = new Set([
     '.tif',
     '.tiff',
     '.docx',
+    '.doc',
     '.xlsx',
     '.pptx',
     '.txt',
     '.html',
     '.htm',
+    '.pages', // Apple Pages — extract via embedded Preview.pdf when possible
+    '.rtf',
+    '.odt',
 ]);
 
 const ALLOWED_MIME_PREFIXES = [
@@ -18,10 +22,16 @@ const ALLOWED_MIME_PREFIXES = [
     'image/',
     'text/plain',
     'text/html',
+    'text/rtf',
+    'application/rtf',
     'application/vnd.openxmlformats-officedocument',
     'application/msword',
     'application/vnd.ms-excel',
     'application/vnd.ms-powerpoint',
+    'application/vnd.apple.pages',
+    'application/x-iwork-pages-sffpages',
+    'application/vnd.oasis.opendocument.text',
+    'application/zip', // .pages is often reported as zip
 ];
 
 export function getExtension(filename: string): string {

@@ -749,6 +749,7 @@ class RAGService:
 
             doc_titles = self._fetch_doc_titles(unique_ids, organization_id)
             parts = ["[Structured Document Summary]"]
+            from .invoice_line_item_repair import repair_invoice_extraction, format_invoice_total_analysis_lines
             for row in rows:
                 if not isinstance(row, dict):
                     continue
@@ -762,6 +763,7 @@ class RAGService:
                     extracted = raw or {}
                 if not isinstance(extracted, dict) or not extracted:
                     continue
+                extracted = repair_invoice_extraction(extracted)
 
                 did = row.get("document_id", "")
                 title, dtype, p3a = doc_titles.get(did, ("", "", ""))
@@ -771,6 +773,8 @@ class RAGService:
                     parts.append(f"Type: {dtype}")
                 if p3a:
                     parts.append(f"Agent: {p3a}")
+                for note in format_invoice_total_analysis_lines(extracted):
+                    parts.append(note.replace("    ", "", 1) if note.startswith("    ") else note)
 
                 # Finance docs benefit from compact, field-exact summaries.
                 for key, value in extracted.items():
